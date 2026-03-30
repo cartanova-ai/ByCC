@@ -1,6 +1,6 @@
 import {
-  type SonamuFile,
   SonamuProvider as BaseSonamuProvider,
+  type SonamuFile,
   useSonamuBaseContext,
 } from "@sonamu-kit/react-components";
 import type { ReactNode } from "react";

@@ -11,9 +11,9 @@
 */
 import type { AxiosRequestConfig } from "axios";
 import axios from "axios";
+import { EventSource } from "eventsource";
 import qs from "qs";
 import { type core, z } from "zod";
-import { EventSource } from "eventsource";
 import { getCurrentLocale } from "../i18n/sd.generated";
 
 // ISO 8601 및 타임존 포맷의 날짜 문자열을 Date 객체로 변환하는 reviver
@@ -60,7 +60,7 @@ export async function fetch(options: AxiosRequestConfig) {
     });
     return res.data;
   } catch (e: unknown) {
-    if (axios.isAxiosError(e) && e.response && e.response.data) {
+    if (axios.isAxiosError(e) && e.response?.data) {
       const d = e.response.data as {
         message: string;
         issues: core.$ZodIssue[];

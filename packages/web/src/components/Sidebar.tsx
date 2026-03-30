@@ -5,9 +5,9 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarHeader,
+  SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenu,
 } from "@sonamu-kit/react-components/components";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type React from "react";
@@ -15,6 +15,7 @@ import { useSonamuContext } from "@/contexts/sonamu-provider";
 import { SD } from "@/i18n/sd.generated";
 import HomeIcon from "~icons/lucide/home";
 import LogOutIcon from "~icons/lucide/log-out";
+
 // TODO: 필요한 아이콘 추가
 // import UsersIcon from "~icons/lucide/users";
 // import SettingsIcon from "~icons/lucide/settings";

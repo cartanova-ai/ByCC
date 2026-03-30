@@ -1,3 +1,8 @@
+/**
+ * @generated
+ * 직접 수정하지 마세요.
+ */
+
 import { dehydrate, QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { Suspense } from "react";

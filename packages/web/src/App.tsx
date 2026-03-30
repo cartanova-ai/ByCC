@@ -25,16 +25,14 @@ function App({ children }: AppProps) {
   const showSidebar = !hideSidebarPaths.includes(pathname);
 
   return (
-    <>
-      <SidebarProvider className="h-screen">
-        <div className="flex h-screen md:flex-row flex-col w-full">
-          {showSidebar && <Sidebar />}
-          <div className="flex-1 p-8 md:p-4 bg-white overflow-auto">
-            <Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
-          </div>
+    <SidebarProvider className="h-screen">
+      <div className="flex h-screen md:flex-row flex-col w-full">
+        {showSidebar && <Sidebar />}
+        <div className="flex-1 p-8 md:p-4 bg-white overflow-auto">
+          <Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
         </div>
-      </SidebarProvider>
-    </>
+      </div>
+    </SidebarProvider>
   );
 }
 
