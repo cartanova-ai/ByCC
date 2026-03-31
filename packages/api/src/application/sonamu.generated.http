@@ -31,9 +31,9 @@ POST {{baseUrl}}/api/bycc/updateToken
 Content-Type: application/json
 
 {
-  "masked": "MASKED",
+  "token": "TOKEN",
   "name": "NAME",
-  "token": "TOKEN"
+  "newToken": "NEWTOKEN"
 }
 
 ###
@@ -42,7 +42,7 @@ POST {{baseUrl}}/api/bycc/removeToken
 Content-Type: application/json
 
 {
-  "masked": "MASKED"
+  "token": "TOKEN"
 }
 
 ###

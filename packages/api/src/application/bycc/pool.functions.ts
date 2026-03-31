@@ -2,13 +2,13 @@
  * ClaudePool — 멀티 토큰 프로세스 풀.
  *
  * 2-layer 아키텍처: ClaudePool → Worker (flat)
- * - Map<tokenId, Worker[]>로 토큰별 워커 관리
+ * - Map<token, Worker[]>로 토큰별 워커 관리 (원본 토큰이 키)
  * - least-queue-depth 라우팅
  * - 투명한 쿼터 failover (QuotaError 시 다른 토큰으로 자동 재시도)
- * - 토큰 파일(~/.bycc/tokens.json) 영속성까지 책임
+ * - 토큰 파일(~/.bycc/bycc-tokens.json) 영속성까지 책임
  */
 import type { CliResult, PoolConfig, QueryInput, TokenStats } from "./bycc.types";
-import { maskToken, QuotaError } from "./bycc.types";
+import { QuotaError } from "./bycc.types";
 import { addTokenToFile, loadTokens, removeTokenFromFile } from "./tokens.functions";
 import { Worker, type WorkerConfig } from "./worker.functions";
 
@@ -34,36 +34,32 @@ class ClaudePool {
     });
   }
 
-  addToken(token: string): string {
-    const entry = addTokenToFile(token);
+  addToken(token: string): void {
+    addTokenToFile(token);
     this.createWorkers(token);
-
-    return maskToken(entry.token);
   }
 
-  removeToken(masked: string): boolean {
-    const entries = loadTokens();
-    const entry = entries.find((e) => maskToken(e.token) === masked);
-    if (!entry) return false;
+  removeToken(token: string): boolean {
+    if (!this.workers.has(token)) return false;
 
-    removeTokenFromFile(entry.token);
-    this.destroyWorkers(maskToken(entry.token));
+    removeTokenFromFile(token);
+    this.destroyWorkers(token);
     return true;
   }
 
   getStats(): TokenStats[] {
     const entries = loadTokens();
-    return [...this.workers.keys()].map((masked) => ({
-      token: masked,
-      name: entries.find((e) => maskToken(e.token) === masked)?.name,
-      requests: this.requestCounts.get(masked) ?? 0,
-      active: !this.quotaExhausted.has(masked),
+    return [...this.workers.keys()].map((token) => ({
+      token,
+      name: entries.find((e) => e.token === token)?.name,
+      requests: this.requestCounts.get(token) ?? 0,
+      active: !this.quotaExhausted.has(token),
     }));
   }
 
   selectWorker(): Worker | null {
     const candidates = [...this.workers.entries()]
-      .filter(([masked]) => !this.quotaExhausted.has(masked))
+      .filter(([token]) => !this.quotaExhausted.has(token))
       .flatMap(([, workers]) => workers);
 
     if (candidates.length === 0) return null;
@@ -106,8 +102,7 @@ class ClaudePool {
   }
 
   createWorkers(token: string): void {
-    const masked = maskToken(token);
-    if (this.workers.has(masked)) return;
+    if (this.workers.has(token)) return;
 
     const workerConfig: WorkerConfig = {
       token,
@@ -118,20 +113,20 @@ class ClaudePool {
     };
 
     const workers = Array.from({ length: this.size }, () => new Worker(workerConfig));
-    this.workers.set(masked, workers);
-    this.requestCounts.set(masked, 0);
+    this.workers.set(token, workers);
+    this.requestCounts.set(token, 0);
   }
 
-  destroyWorkers(masked: string): void {
-    const workers = this.workers.get(masked);
+  destroyWorkers(token: string): void {
+    const workers = this.workers.get(token);
     if (!workers) return;
 
     workers.forEach((w) => {
       w.kill();
     });
-    this.workers.delete(masked);
-    this.quotaExhausted.delete(masked);
-    this.requestCounts.delete(masked);
+    this.workers.delete(token);
+    this.quotaExhausted.delete(token);
+    this.requestCounts.delete(token);
   }
 }
 

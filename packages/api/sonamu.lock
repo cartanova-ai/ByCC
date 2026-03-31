@@ -1,27 +1,27 @@
 [
   {
     "path": "src/application/bycc/bycc.frame.ts",
-    "checksum": "92dac40d0e95e26de88ac83b07147414b3d3221a"
+    "checksum": "cf3a4862edc37a1f454ba4b251afe5f57b67fcb1"
   },
   {
     "path": "src/application/bycc/bycc.types.ts",
-    "checksum": "b2ada9e70f8c3fadf3fb88b0f22bc8ffc84d6359"
+    "checksum": "b1add3122bd8a1a56bd67d13f74f85de09cbd626"
   },
   {
     "path": "src/application/bycc/pool.functions.ts",
-    "checksum": "737cfdf6d4ff4c55a7174813ff25b409a6325247"
+    "checksum": "81d2bd45ea09eff36517907c099eb19cea65c604"
   },
   {
     "path": "src/application/bycc/tokens.functions.ts",
-    "checksum": "4beb558ad346dd019761a2aa4e42d2f646217073"
+    "checksum": "bf206b56b1735f687b2a6890c3cff8de636c80c1"
   },
   {
     "path": "src/application/bycc/worker.functions.ts",
-    "checksum": "c06e6514f59be7e7a6e5d21cf025a0c6429506cd"
+    "checksum": "edb73904ef2704123592ccccb4ff1fac87b0f092"
   },
   {
     "path": "src/application/sonamu.generated.ts",
-    "checksum": "75fd7c732887233b4662ceeb884f2599233f398b"
+    "checksum": "11f9401411bdbed73d7d964d9a89047a7189c900"
   },
   {
     "path": "src/i18n/en.ts",

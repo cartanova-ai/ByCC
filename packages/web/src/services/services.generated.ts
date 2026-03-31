@@ -63,7 +63,7 @@ export namespace ByccService {
       ...options,
     });
 
-  export async function addToken(token: string): Promise<{ added: boolean; token: string }> {
+  export async function addToken(token: string): Promise<{ added: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/bycc/addToken`,
@@ -77,34 +77,34 @@ export namespace ByccService {
     });
 
   export async function updateToken(
-    masked: string,
+    token: string,
     name?: string,
-    token?: string,
+    newToken?: string,
   ): Promise<{ updated: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/bycc/updateToken`,
-      data: { masked, name, token },
+      data: { token, name, newToken },
     });
   }
 
   export const useUpdateTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { masked: string; name: string; token: string }) =>
-        updateToken(params.masked, params.name, params.token),
+      mutationFn: (params: { token: string; name: string; newToken: string }) =>
+        updateToken(params.token, params.name, params.newToken),
     });
 
-  export async function removeToken(masked: string): Promise<{ removed: boolean }> {
+  export async function removeToken(token: string): Promise<{ removed: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/bycc/removeToken`,
-      data: { masked },
+      data: { token },
     });
   }
 
   export const useRemoveTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { masked: string }) => removeToken(params.masked),
+      mutationFn: (params: { token: string }) => removeToken(params.token),
     });
 
   export async function health(): Promise<HealthResponse> {

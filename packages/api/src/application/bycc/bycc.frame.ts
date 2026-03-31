@@ -28,27 +28,30 @@ class ByccFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async addToken(token: string): Promise<{ added: boolean; token: string }> {
-    const masked = pool.addToken(token);
-    return { added: true, token: masked };
+  async addToken(token: string): Promise<{ added: boolean }> {
+    pool.addToken(token);
+    return { added: true };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async updateToken(masked: string, name?: string, token?: string): Promise<{ updated: boolean }> {
-    const entry = updateTokenInFile(masked, { name, token });
+  async updateToken(
+    token: string,
+    name?: string,
+    newToken?: string,
+  ): Promise<{ updated: boolean }> {
+    const entry = updateTokenInFile(token, { name, token: newToken });
     if (!entry) return { updated: false };
 
-    // 토큰 값이 변경되면 풀의 워커도 교체
-    if (token) {
-      pool.destroyWorkers(masked);
-      pool.createWorkers(token);
+    if (newToken) {
+      pool.destroyWorkers(token);
+      pool.createWorkers(newToken);
     }
     return { updated: true };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async removeToken(masked: string): Promise<{ removed: boolean }> {
-    const removed = pool.removeToken(masked);
+  async removeToken(token: string): Promise<{ removed: boolean }> {
+    const removed = pool.removeToken(token);
     return { removed };
   }
 

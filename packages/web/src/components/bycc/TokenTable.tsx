@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { TokenStats } from "@/services/bycc/bycc.types";
+import { maskToken } from "@/services/bycc/bycc.types";
 import { ByccService } from "@/services/services.generated";
 import CheckIcon from "~icons/lucide/check";
 import CopyIcon from "~icons/lucide/copy";
@@ -16,7 +17,7 @@ interface TokenTableProps {
 }
 
 export function TokenTable({ data, isLoading }: TokenTableProps) {
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TokenStats | null>(null);
   const [editTarget, setEditTarget] = useState<TokenStats | null>(null);
   const [editName, setEditName] = useState("");
   const [editToken, setEditToken] = useState("");
@@ -29,7 +30,7 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    await removeMutation.mutateAsync({ masked: deleteTarget });
+    await removeMutation.mutateAsync({ token: deleteTarget.token });
     await queryClient.invalidateQueries({ queryKey: ["Bycc"] });
     setDeleteTarget(null);
   };
@@ -45,9 +46,9 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
   const handleUpdate = async () => {
     if (!editTarget) return;
     await updateMutation.mutateAsync({
-      masked: editTarget.token,
+      token: editTarget.token,
       name: editName.trim(),
-      token: editToken.trim(),
+      newToken: editToken.trim(),
     });
     await queryClient.invalidateQueries({ queryKey: ["Bycc"] });
     setEditTarget(null);
@@ -111,7 +112,9 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                 }`}
               >
                 <td className="px-5 py-3">
-                  <code className="text-[13px] font-mono text-sand-800">{token.token}</code>
+                  <code className="text-[13px] font-mono text-sand-800">
+                    {maskToken(token.token)}
+                  </code>
                 </td>
                 <td className="px-5 py-3">
                   {token.name ? (
@@ -138,7 +141,7 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                     <button
                       type="button"
                       className="p-1 rounded text-sand-400 hover:text-red-500 transition-colors duration-150"
-                      onClick={() => setDeleteTarget(token.token)}
+                      onClick={() => setDeleteTarget(token)}
                     >
                       <TrashIcon className="size-4" />
                     </button>
@@ -227,9 +230,9 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                 <input
                   id="token-value"
                   type={showEditToken ? "text" : "password"}
-                  value={editToken}
+                  value={editToken || (showEditToken ? editTarget.token : "")}
                   onChange={(e) => setEditToken(e.target.value)}
-                  placeholder={showEditToken ? editTarget.token : "●●●●●●●●●●●●●●●●"}
+                  placeholder={showEditToken ? "" : "●●●●●●●●●●●●●●●●"}
                   className="mt-1 w-full border border-sand-200 rounded-md px-3 py-2 text-sm text-sand-900 bg-white placeholder:text-sand-400 focus:outline-none focus:border-sienna-300"
                 />
               </div>
@@ -268,7 +271,11 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
               <h3 className="text-base font-medium text-sand-900">Remove Token</h3>
               <p className="text-sm text-sand-700 mt-2">
                 Are you sure you want to remove{" "}
-                <code className="text-[13px] font-mono text-sand-800">{deleteTarget}</code>?
+                <code className="text-[13px] font-mono text-sand-800">
+                  {maskToken(deleteTarget.token)}
+                </code>
+                {deleteTarget.name && <span className="text-sand-500"> ({deleteTarget.name})</span>}
+                ?
               </p>
             </div>
             <div className="px-5 py-3 border-t border-sand-100 flex items-center justify-end gap-2">

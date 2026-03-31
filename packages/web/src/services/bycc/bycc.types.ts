@@ -47,7 +47,7 @@ export const AddTokenInput = z.object({
 export type AddTokenInput = z.infer<typeof AddTokenInput>;
 
 export const RemoveTokenInput = z.object({
-  masked: z.string(),
+  token: z.string(),
 });
 export type RemoveTokenInput = z.infer<typeof RemoveTokenInput>;
 

@@ -44,7 +44,7 @@ export class Worker {
 
   constructor(config: WorkerConfig) {
     this.config = config;
-    this.tokenId = maskToken(config.token);
+    this.tokenId = config.token;
   }
 
   getQueueDepth(): number {
@@ -105,14 +105,16 @@ export class Worker {
 
     child.on("close", () => {
       this.process = null;
-      this.rejectPending(new ProcessError(`CLI process closed (token: ${this.tokenId})`));
+      this.rejectPending(
+        new ProcessError(`CLI process closed (token: ${maskToken(this.tokenId)})`),
+      );
       this.drainQueue();
     });
 
     child.on("error", (err) => {
       this.process = null;
       this.rejectPending(
-        new ProcessError(`CLI process error: ${err.message} (token: ${this.tokenId})`),
+        new ProcessError(`CLI process error: ${err.message} (token: ${maskToken(this.tokenId)})`),
       );
       this.drainQueue();
     });
@@ -144,7 +146,9 @@ export class Worker {
             text = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
 
             if (text.startsWith("You've hit")) {
-              this.pending.reject(new QuotaError(`Quota exhausted (token: ${this.tokenId})`));
+              this.pending.reject(
+                new QuotaError(`Quota exhausted (token: ${maskToken(this.tokenId)})`),
+              );
               clearTimeout(this.pending.timer);
               this.pending = null;
               this.drainQueue();
@@ -199,7 +203,9 @@ export class Worker {
     return new Promise<CliResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending = null;
-        reject(new TimeoutError(`Timeout after ${timeout / 1000}s (token: ${this.tokenId})`));
+        reject(
+          new TimeoutError(`Timeout after ${timeout / 1000}s (token: ${maskToken(this.tokenId)})`),
+        );
         this.kill();
       }, timeout);
 
@@ -225,7 +231,7 @@ export class Worker {
     this.sessionId = null;
     this.callCount = 0;
     this.needsRecycle = false;
-    this.rejectPending(new ProcessError(`Worker killed (token: ${this.tokenId})`));
+    this.rejectPending(new ProcessError(`Worker killed (token: ${maskToken(this.tokenId)})`));
     this.drainQueue();
   }
 }

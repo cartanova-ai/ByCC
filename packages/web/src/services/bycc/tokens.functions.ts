@@ -12,7 +12,6 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSyn
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { maskToken } from "./bycc.types";
 
 const TokenEntry = z.object({
   token: z.string(),
@@ -79,12 +78,12 @@ export function addTokenToFile(token: string, name?: string, dir?: string): Toke
 }
 
 export function updateTokenInFile(
-  masked: string,
+  token: string,
   updates: { name?: string; token?: string },
   dir?: string,
 ): TokenEntry | null {
   const entries = loadTokens(dir);
-  const entry = entries.find((e) => maskToken(e.token) === masked);
+  const entry = entries.find((e) => e.token === token);
   if (!entry) return null;
 
   if (updates.name !== undefined) entry.name = updates.name;
