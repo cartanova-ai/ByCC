@@ -1,0 +1,31 @@
+services:
+  bycc:
+    build: .
+    ports:
+      - "44900:44900"
+    volumes:
+      - ~/.bycc:/root/.bycc:ro
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      PORT: "44900"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: postgres # mockDB 사용
+      DB_PASSWORD: bycc # mockDB 사용
+      DB_NAME: bycc # mockDB 사용
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: bycc
+      POSTGRES_DB: bycc
+    volumes:
+      - bycc-db:/var/lib/postgresql/data
+
+volumes:
+  bycc-db:
