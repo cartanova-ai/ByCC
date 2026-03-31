@@ -1,4 +1,3 @@
-import { SidebarProvider } from "@sonamu-kit/react-components/components";
 import { useRouterState } from "@tanstack/react-router";
 import { type ReactNode, Suspense, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
@@ -8,13 +7,10 @@ interface AppProps {
   children?: ReactNode;
 }
 
-// 사이드바를 숨길 경로 목록
-// TODO: 로그인/회원가입 페이지 추가 시 여기에 추가
-const hideSidebarPaths = ["/login", "/admin/login", "/signup"];
+const hideSidebarPaths = ["/login", "/signup"];
 
 function App({ children }: AppProps) {
   useEffect(() => {
-    // 브라우저 locale 감지
     const browserLocale = navigator.language.split("-")[0];
     if (SUPPORTED_LOCALES.includes(browserLocale as (typeof SUPPORTED_LOCALES)[number])) {
       setLocale(browserLocale as (typeof SUPPORTED_LOCALES)[number]);
@@ -25,14 +21,16 @@ function App({ children }: AppProps) {
   const showSidebar = !hideSidebarPaths.includes(pathname);
 
   return (
-    <SidebarProvider className="h-screen">
-      <div className="flex h-screen md:flex-row flex-col w-full">
-        {showSidebar && <Sidebar />}
-        <div className="flex-1 p-8 md:p-4 bg-white overflow-auto">
-          <Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
-        </div>
-      </div>
-    </SidebarProvider>
+    <div className="flex h-screen w-full bg-white">
+      {showSidebar && <Sidebar />}
+      <main className="flex-1 overflow-auto p-4 md:p-8">
+        <Suspense
+          fallback={<div className="text-sand-400 text-center py-8 text-sm">로딩 중...</div>}
+        >
+          {children}
+        </Suspense>
+      </main>
+    </div>
   );
 }
 

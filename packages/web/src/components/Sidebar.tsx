@@ -1,28 +1,7 @@
-import {
-  Button,
-  Sidebar as SidebarComponent,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@sonamu-kit/react-components/components";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type React from "react";
-import { useSonamuContext } from "@/contexts/sonamu-provider";
-import { SD } from "@/i18n/sd.generated";
 import HomeIcon from "~icons/lucide/home";
-import LogOutIcon from "~icons/lucide/log-out";
-
-// TODO: 필요한 아이콘 추가
-// import UsersIcon from "~icons/lucide/users";
-// import SettingsIcon from "~icons/lucide/settings";
-
-interface SidebarProps {
-  className?: string;
-}
+import KeyRoundIcon from "~icons/lucide/key-round";
 
 interface MenuItemProps {
   title: string;
@@ -30,81 +9,51 @@ interface MenuItemProps {
   icon?: React.FC<React.SVGProps<SVGSVGElement>>;
 }
 
-// 관리자용 메뉴
-const adminMenuItems: MenuItemProps[] = [
-  { title: "Dashboard", path: "/admin", icon: HomeIcon },
-  // TODO: 엔티티 추가 시 메뉴 추가
-  // { title: "Users", path: "/admin/users", icon: UsersIcon },
-  // { title: "Settings", path: "/admin/settings", icon: SettingsIcon },
+const menuItems: MenuItemProps[] = [
+  { title: "Dashboard", path: "/", icon: HomeIcon },
+  { title: "Tokens", path: "/tokens", icon: KeyRoundIcon },
 ];
 
-// 일반 사용자용 메뉴
-const userMenuItems: MenuItemProps[] = [
-  { title: "Home", path: "/", icon: HomeIcon },
-  // TODO: 사용자용 메뉴 추가
-  // { title: "Profile", path: "/profile", icon: UserIcon },
-];
+interface SidebarProps {
+  className?: string;
+}
 
 export default function Sidebar({ className }: SidebarProps) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { auth } = useSonamuContext();
-  const session = auth?.useSession?.();
-  const user = session?.data?.user ?? null;
-  const logout = () => auth?.signOut?.();
-
-  // 경로에 따라 메뉴 및 타이틀 분기
-  const isAdmin = pathname.startsWith("/admin");
-  const menuItems = isAdmin ? adminMenuItems : userMenuItems;
-  const title = isAdmin ? "Admin" : "Sonamu App";
 
   const isActive = (path: string) => {
-    if (path === "/admin" || path === "/") {
-      return pathname === path || pathname === `${path}/`;
-    }
+    if (path === "/") return pathname === "/" || pathname === "";
     return pathname.startsWith(path);
   };
 
   return (
-    <SidebarComponent collapsible="none" className={`h-screen sticky top-0 ${className || ""}`}>
-      {/* Header */}
-      <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
-        <div className="flex items-center gap-2">
-          <span className="text-base font-semibold">{title}</span>
-        </div>
-        {user && (
-          <div className="text-sm text-sidebar-foreground/70 mt-1">
-            {user.name ?? user.email ?? "User"}
-          </div>
-        )}
-      </SidebarHeader>
+    <aside
+      className={`hidden md:flex w-56 bg-sand-50 flex-col shrink-0 border-r border-sand-200 ${className ?? ""}`}
+    >
+      <div className="px-5 py-5 border-b border-sand-200">
+        <span className="text-base font-semibold text-sand-900">ByCC</span>
+        <p className="text-[11px] text-sand-400 mt-0.5">Token Management</p>
+      </div>
 
-      {/* Menu Content */}
-      <SidebarContent className="flex-1 overflow-y-auto">
-        <SidebarGroup className="px-2 py-2">
-          <SidebarMenu>
-            {menuItems.map((item) => (
-              <SidebarMenuItem key={item.path}>
-                <SidebarMenuButton asChild isActive={isActive(item.path)}>
-                  <Link to={item.path} className="!no-underline">
-                    {item.icon && <item.icon className="size-4" />}
-                    <span>{item.title}</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroup>
-      </SidebarContent>
-
-      {/* Footer */}
-      {user && (
-        <SidebarFooter className="border-t border-sidebar-border px-4 py-3">
-          <Button variant="destructive" onClick={logout} className="w-full">
-            <LogOutIcon className="size-4 mr-2" />
-            {SD("common.logout")}
-          </Button>
-        </SidebarFooter>
-      )}
-    </SidebarComponent>
+      <nav className="flex-1 px-3 py-3 space-y-1">
+        {menuItems.map((item) => {
+          const active = isActive(item.path);
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm no-underline transition-colors duration-150 ${
+                active
+                  ? "bg-sand-100 text-sand-800 font-medium"
+                  : "text-sand-500 hover:bg-sand-100/60 hover:text-sand-700"
+              }`}
+            >
+              {item.icon && <item.icon className={`size-4 ${active ? "text-sienna-400" : ""}`} />}
+              <span>{item.title}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </aside>
   );
 }
