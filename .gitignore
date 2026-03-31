@@ -1,6 +1,8 @@
 # Dependencies
 node_modules/
 
+docs/
+
 # Production builds
 dist/
 web-dist/
@@ -59,6 +61,9 @@ Thumbs.db
 
 # Slack Confirm
 .slack-confirm-*
+
+# Tokens (sensitive)
+bycc-tokens.json
 
 # Claude
 .claude/skills/sonamu
