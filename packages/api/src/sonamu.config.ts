@@ -8,11 +8,23 @@ import { drivers } from "sonamu/storage";
 
 dotenv.config({ path: path.join(import.meta.dirname, "../.env") });
 
-const host = "localhost";
-const port = 44900;
+const host = process.env.HOST ?? "localhost";
+const port = Number(process.env.PORT ?? 44900);
 
 export default defineConfig({
   projectName: process.env.PROJECT_NAME ?? "SonamuProject",
+  database: {
+    defaultOptions: {
+      connection: {
+        host: process.env.DB_HOST ?? "localhost",
+        port: Number(process.env.DB_PORT ?? 5444),
+        user: process.env.DB_USER ?? "postgres",
+        password: process.env.DB_PASSWORD ?? "1234",
+        database: process.env.DB_NAME ?? "",
+      },
+    },
+    name: "default",
+  },
   api: {
     dir: "api",
     timezone: "Asia/Seoul",
