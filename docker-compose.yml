@@ -17,8 +17,8 @@ services:
     ports:
       - "44900:44900"
     volumes:
-      # 토큰 파일을 호스트에서 읽기 전용으로 마운트
-      - ~/.bycc:/root/.bycc:ro
+      # 토큰 + 사용량 파일 (bycc-tokens.json, bycc-usage.json)
+      - ~/.bycc:/root/.bycc
     environment:
       NODE_ENV: development
       HOST: "0.0.0.0"
