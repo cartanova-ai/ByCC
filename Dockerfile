@@ -15,6 +15,9 @@ WORKDIR /app
 RUN npm i -g pnpm@10.32.0
 RUN npm i -g @anthropic-ai/claude-code
 
+# Claude CLI 온보딩 스킵
+RUN mkdir -p /root/.claude && echo '{"hasCompletedOnboarding":true,"theme":"dark"}' > /root/.claude/settings.json
+
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=44900
