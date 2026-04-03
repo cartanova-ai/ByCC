@@ -63,17 +63,17 @@ export namespace ByccService {
       ...options,
     });
 
-  export async function addToken(token: string): Promise<{ added: boolean }> {
+  export async function addToken(token: string, name?: string): Promise<{ added: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/bycc/addToken`,
-      data: { token },
+      data: { token, name },
     });
   }
 
   export const useAddTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { token: string }) => addToken(params.token),
+      mutationFn: (params: { token: string; name: string }) => addToken(params.token, params.name),
     });
 
   export async function updateToken(

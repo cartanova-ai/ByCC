@@ -35,8 +35,8 @@ class ClaudePool {
     });
   }
 
-  addToken(token: string): void {
-    addTokenToFile(token);
+  addToken(token: string, name?: string): void {
+    addTokenToFile(token, name);
     this.createWorkers(token);
   }
 

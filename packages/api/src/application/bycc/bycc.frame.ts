@@ -28,8 +28,8 @@ class ByccFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async addToken(token: string): Promise<{ added: boolean }> {
-    pool.addToken(token);
+  async addToken(token: string, name?: string): Promise<{ added: boolean }> {
+    pool.addToken(token, name);
     return { added: true };
   }
 
@@ -39,7 +39,7 @@ class ByccFrameClass extends BaseFrameClass {
     name?: string,
     newToken?: string,
   ): Promise<{ updated: boolean }> {
-    const entry = updateTokenInFile(token, { name, token: newToken });
+    const entry = updateTokenInFile(token, { name, token: newToken || undefined });
     if (!entry) return { updated: false };
 
     if (newToken) {

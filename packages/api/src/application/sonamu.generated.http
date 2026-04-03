@@ -22,7 +22,8 @@ POST {{baseUrl}}/api/bycc/addToken
 Content-Type: application/json
 
 {
-  "token": "TOKEN"
+  "token": "TOKEN",
+  "name": "NAME"
 }
 
 ###

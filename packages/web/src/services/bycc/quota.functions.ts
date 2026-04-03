@@ -5,17 +5,19 @@
 /**
  * 쿼터 추적 — 토큰별 5시간 윈도우 사용량 누적 + 조회.
  *
- * bycc-usage.json (config와 별도 파일)에 저장.
+ * <project-root>/data/bycc-usage.json에 저장.
  * 매 요청마다 recordUsage()로 합산, getQuotaStatus()로 조회.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const FIVE_HOUR_LIMIT = 275_000; // Team Premium 추정치 (tokens)
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
 
-const DEFAULT_DIR = process.env.BYCC_TOKEN_DIR ?? join(homedir(), ".bycc");
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = join(__dirname, "../../../../..");
+const DEFAULT_DIR = process.env.BYCC_TOKEN_DIR ?? join(PROJECT_ROOT, "data");
 const USAGE_FILE = "bycc-usage.json";
 
 type UsageEntry = {

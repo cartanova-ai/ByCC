@@ -3,14 +3,14 @@
  * API에서 동기화된 파일입니다. 직접 수정하지 마세요.
  */
 /**
- * 토큰 파일 관리 — ~/.bycc/bycc-tokens.json
+ * 토큰 파일 관리 — <project-root>/data/bycc-tokens.json
  *
- * Claude Code의 ~/.claude/ 패턴을 따름.
+ * 프로젝트 루트의 data/ 디렉터리에 저장.
  * 디렉터리 0o700, 파일 0o600 퍼미션으로 토큰 보안.
  */
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const TokenEntry = z.object({
@@ -21,7 +21,9 @@ const TokenEntry = z.object({
 });
 export type TokenEntry = z.infer<typeof TokenEntry>;
 
-const DEFAULT_DIR = process.env.BYCC_TOKEN_DIR ?? join(homedir(), ".bycc");
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = join(__dirname, "../../../../..");
+const DEFAULT_DIR = process.env.BYCC_TOKEN_DIR ?? join(PROJECT_ROOT, "data");
 const DEFAULT_FILE = "bycc-tokens.json";
 
 function ensureDir(dir: string): void {

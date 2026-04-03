@@ -9,7 +9,7 @@
  * - Map<token, Worker[]>로 토큰별 워커 관리 (원본 토큰이 키)
  * - least-queue-depth 라우팅
  * - 투명한 쿼터 failover (QuotaError 시 다른 토큰으로 자동 재시도)
- * - 토큰 파일(~/.bycc/bycc-tokens.json) 영속성까지 책임
+ * - 토큰 파일(data/bycc-tokens.json) 영속성까지 책임
  */
 import type { CliResult, PoolConfig, QueryInput, TokenStats } from "./bycc.types";
 import { QuotaError } from "./bycc.types";
@@ -39,8 +39,8 @@ class ClaudePool {
     });
   }
 
-  addToken(token: string): void {
-    addTokenToFile(token);
+  addToken(token: string, name?: string): void {
+    addTokenToFile(token, name);
     this.createWorkers(token);
   }
 
@@ -90,7 +90,7 @@ class ClaudePool {
         const result = await worker.query(input, timeoutMs);
         this.requestCounts.set(worker.tokenId, (this.requestCounts.get(worker.tokenId) ?? 0) + 1);
 
-        // usage 기록 실패해도 쿼리 결과는 반환
+        // best-effort: usage 기록 실패해도 쿼리 결과는 반환
         try {
           recordUsage(
             worker.tokenId,

@@ -8,6 +8,7 @@ import PlusIcon from "~icons/lucide/plus";
 export function AddTokenModal() {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState("");
+  const [name, setName] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,13 +21,17 @@ export function AddTokenModal() {
 
     setError(null);
     try {
-      const result = await addMutation.mutateAsync({ token: trimmed });
+      const result = await addMutation.mutateAsync({
+        token: trimmed,
+        name: name.trim() || undefined,
+      });
       if (!result.added) {
         setError("이미 등록된 토큰입니다");
         return;
       }
       await queryClient.invalidateQueries({ queryKey: ["Bycc"] });
       setToken("");
+      setName("");
       setShowToken(false);
       setOpen(false);
     } catch {
@@ -37,6 +42,7 @@ export function AddTokenModal() {
   const close = () => {
     setOpen(false);
     setToken("");
+    setName("");
     setShowToken(false);
     setError(null);
   };
@@ -63,6 +69,22 @@ export function AddTokenModal() {
             </div>
 
             <div className="px-5 py-4 space-y-3">
+              <div>
+                <label
+                  htmlFor="token-name"
+                  className="text-[10px] uppercase tracking-wider text-sand-500 font-medium"
+                >
+                  Name
+                </label>
+                <input
+                  id="token-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. prod, dev, team-a"
+                  className="mt-1 w-full border border-sand-200 rounded-md px-3 py-2 text-sm text-sand-900 bg-white placeholder:text-sand-300 focus:outline-none focus:border-sienna-300"
+                />
+              </div>
               <div>
                 <label
                   htmlFor="oauth-token"
