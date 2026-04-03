@@ -5,7 +5,8 @@
  * 디렉터리 0o700, 파일 0o600 퍼미션으로 토큰 보안.
  */
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const TokenEntry = z.object({
@@ -16,6 +17,7 @@ const TokenEntry = z.object({
 });
 export type TokenEntry = z.infer<typeof TokenEntry>;
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "../../../../..");
 const DEFAULT_DIR = process.env.BYCC_TOKEN_DIR ?? join(PROJECT_ROOT, "data");
 const DEFAULT_FILE = "bycc-tokens.json";
