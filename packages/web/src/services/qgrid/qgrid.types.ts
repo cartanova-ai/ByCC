@@ -87,9 +87,18 @@ export type UsageResponse = z.infer<typeof UsageResponse>;
 
 // ─── Health ───
 
+export const SubscriberStatus = z.object({
+  connected: z.boolean(),
+  connectedAt: z.date().nullable(),
+  lastReconcileAt: z.date().nullable(),
+  attempt: z.number(),
+});
+export type SubscriberStatus = z.infer<typeof SubscriberStatus>;
+
 export const HealthResponse = z.object({
   status: z.string(),
   activeTokens: z.number(),
+  subscriber: SubscriberStatus.nullable(),
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 

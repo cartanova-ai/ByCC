@@ -93,6 +93,7 @@ export type SubscriberStatus = z.infer<typeof SubscriberStatus>;
 export const HealthResponse = z.object({
   status: z.string(),
   activeTokens: z.number(),
+  subscriber: SubscriberStatus.nullable(),
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 
