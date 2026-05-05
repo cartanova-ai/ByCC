@@ -94,16 +94,38 @@ export class QgridDispatcherClass {
   }
 
   async query(input: QueryInput, timeoutMs?: number): Promise<CliResult> {
-    const sel = this.selectToken();
-    if (!sel) throw new QuotaError("No tokens available");
+    const electedToken = this.selectToken();
+    if (!electedToken) throw new QuotaError("No tokens available");
 
     // await 전에 count 선반영. 병렬 요청이 동시에 도착해도 각자 다른 토큰을 고르도록.
-    this.requestCounts.set(sel.token, (this.requestCounts.get(sel.token) ?? 0) + 1);
+    this.requestCounts.set(electedToken.name, this.countOf(electedToken.name) + 1);
 
-    logger.info(`→ ${sel.name} (model: ${input.model ?? DEFAULT_MODEL})`);
+    let token = electedToken.token;
+    // expires_at 임박이면 refresh.
+    // refresh 후 DB save → trigger NOTIFY → subscriber 가 받아 캐시 갱신 (다른 dispatcher 도 동기화)
+    if (
+      electedToken.expires_at &&
+      Number(electedToken.expires_at) - Date.now() < REFRESH_SAFETY_MS &&
+      electedToken.refresh_token
+    ) {
+      try {
+        const { QgridFrame } = await import("./qgrid.frame");
+        token = await QgridFrame.refreshToken({
+          id: electedToken.id,
+          token: electedToken.token,
+          name: electedToken.name,
+          refresh_token: electedToken.refresh_token,
+        });
+      } catch (e) {
+        logger.warn(`refresh failed for ${electedToken.name}: ${(e as Error).message}`);
+        // refresh 실패 시 기존 token 으로 진행. executeClaude 가 401 받으면 caller 처리.
+      }
+    }
 
-    const result = await executeClaude(input, sel.token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    return { ...result, tokenName: sel.name, model: input.model ?? DEFAULT_MODEL };
+    logger.info(`→ ${electedToken.name} (model: ${input.model ?? DEFAULT_MODEL})`);
+
+    const result = await executeClaude(input, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    return { ...result, tokenName: electedToken.name, model: input.model ?? DEFAULT_MODEL };
   }
 }
 
