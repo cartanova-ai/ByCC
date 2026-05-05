@@ -86,7 +86,10 @@ importers:
         version: 0.43.0
       oxlint:
         specifier: ^1.58.0
-        version: 1.59.0
+        version: 1.59.0(oxlint-tsgolint@0.22.1)
+      oxlint-tsgolint:
+        specifier: ^0.22.1
+        version: 0.22.1
       tsdown:
         specifier: 'catalog:'
         version: 0.12.9(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(typescript@6.0.2)
@@ -164,7 +167,7 @@ importers:
         version: 12.7.2
       sonamu:
         specifier: ^0.9.4
-        version: 0.9.4(f1e35bccb4a3271380356703435d3346)
+        version: 0.9.4(cf9c3d134ff256822a81cff5a9a53af8)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -276,7 +279,7 @@ importers:
         version: 12.7.2
       sonamu:
         specifier: ^0.9.4
-        version: 0.9.4(fc3ccb07c00d054f5152ff9d1a8c2c44)
+        version: 0.9.4(eeaebeb10e60f0a25af6aa113a7e1306)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -1577,6 +1580,36 @@ packages:
   '@oxfmt/binding-win32-x64-msvc@0.43.0':
     resolution: {integrity: sha512-4bPgdQux2ZLWn3bf2TTXXMHcJB4lenmuxrLqygPmvCJ104Yqzj1UctxSRzR31TiJ4MLaG22RK8dUsVpJtrCz5g==}
     engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [win32]
+
+  '@oxlint-tsgolint/darwin-arm64@0.22.1':
+    resolution: {integrity: sha512-4150Lpgc1YM09GcjA6GSrra1JoPjC7aOpfywLjWEY4vW0Sd1qKzqHF1WRaiw0/qUZ40OATYdv3aRd7ipPkWQbw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@oxlint-tsgolint/darwin-x64@0.22.1':
+    resolution: {integrity: sha512-vFWcPWYOgZs4HWcgS1EjUZg33NLcNfEYU49KGImmCfZWkflENrmBYV4HN/C0YeAPum6ZZ/goPSvQrB/cOD+NfA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@oxlint-tsgolint/linux-arm64@0.22.1':
+    resolution: {integrity: sha512-6LiUpP0Zir3+29FvBm7Y28q/dBjSHqTZ5MhG1Ckw4fGhI4cAvbcwXaKvbjx1TP7rRmBNOoq/M5xdpHjTb+GAew==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@oxlint-tsgolint/linux-x64@0.22.1':
+    resolution: {integrity: sha512-fuX1hEQfpHauUbXADsfqVhRzrUrGabzGXbj5wsp2vKhV5uk/Rze8Mba9GdjFGECzvXudMGqHqxB4r6jGRdhxVA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@oxlint-tsgolint/win32-arm64@0.22.1':
+    resolution: {integrity: sha512-8SZidAj+jrbZf9ZjBEYW0tiNZ+KasqB2zgW26qdiPpQSF/DzURnPmXz651IeA9YsmbVdHGIooEHUmev6QJdquA==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@oxlint-tsgolint/win32-x64@0.22.1':
+    resolution: {integrity: sha512-QweSk9H5lFh5Y+WUf2Kq/OAN88V6+62ZwGhP38gqdRotI90luXSMkruFTj7Q2rYrzH4ZVNaSqx7NY8JpSfIzqg==}
     cpu: [x64]
     os: [win32]
 
@@ -5409,6 +5442,10 @@ packages:
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
 
+  oxlint-tsgolint@0.22.1:
+    resolution: {integrity: sha512-YUSGSLUnoolsu8gxISEDio3q1rtsCozwfOzASUn3DT2mR2EeQ93uEEnen7s+6LpF+lyTQFln1pQfqwBh/fsVEg==}
+    hasBin: true
+
   oxlint@1.59.0:
     resolution: {integrity: sha512-0xBLeGGjP4vD9pygRo8iuOkOzEU1MqOnfiOl7KYezL/QvWL8NUg6n03zXc7ZVqltiOpUxBk2zgHI3PnRIEdAvw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -8164,6 +8201,24 @@ snapshots:
     optional: true
 
   '@oxfmt/binding-win32-x64-msvc@0.43.0':
+    optional: true
+
+  '@oxlint-tsgolint/darwin-arm64@0.22.1':
+    optional: true
+
+  '@oxlint-tsgolint/darwin-x64@0.22.1':
+    optional: true
+
+  '@oxlint-tsgolint/linux-arm64@0.22.1':
+    optional: true
+
+  '@oxlint-tsgolint/linux-x64@0.22.1':
+    optional: true
+
+  '@oxlint-tsgolint/win32-arm64@0.22.1':
+    optional: true
+
+  '@oxlint-tsgolint/win32-x64@0.22.1':
     optional: true
 
   '@oxlint/binding-android-arm-eabi@1.59.0':
@@ -12445,7 +12500,16 @@ snapshots:
       '@oxfmt/binding-win32-ia32-msvc': 0.43.0
       '@oxfmt/binding-win32-x64-msvc': 0.43.0
 
-  oxlint@1.59.0:
+  oxlint-tsgolint@0.22.1:
+    optionalDependencies:
+      '@oxlint-tsgolint/darwin-arm64': 0.22.1
+      '@oxlint-tsgolint/darwin-x64': 0.22.1
+      '@oxlint-tsgolint/linux-arm64': 0.22.1
+      '@oxlint-tsgolint/linux-x64': 0.22.1
+      '@oxlint-tsgolint/win32-arm64': 0.22.1
+      '@oxlint-tsgolint/win32-x64': 0.22.1
+
+  oxlint@1.59.0(oxlint-tsgolint@0.22.1):
     optionalDependencies:
       '@oxlint/binding-android-arm-eabi': 1.59.0
       '@oxlint/binding-android-arm64': 1.59.0
@@ -12466,6 +12530,7 @@ snapshots:
       '@oxlint/binding-win32-arm64-msvc': 1.59.0
       '@oxlint/binding-win32-ia32-msvc': 1.59.0
       '@oxlint/binding-win32-x64-msvc': 1.59.0
+      oxlint-tsgolint: 0.22.1
 
   p-defer@3.0.0: {}
 
@@ -13203,7 +13268,7 @@ snapshots:
       seroval: 1.5.1
       seroval-plugins: 1.5.1(seroval@1.5.1)
 
-  sonamu@0.9.4(f1e35bccb4a3271380356703435d3346):
+  sonamu@0.9.4(cf9c3d134ff256822a81cff5a9a53af8):
     dependencies:
       '@aws-sdk/client-s3': 3.1019.0
       '@aws-sdk/lib-storage': 3.1019.0(@aws-sdk/client-s3@3.1019.0)
@@ -13247,7 +13312,7 @@ snapshots:
       node-cron: 4.2.1
       node-sql-parser: 5.4.0
       oxfmt: 0.43.0
-      oxlint: 1.59.0
+      oxlint: 1.59.0(oxlint-tsgolint@0.22.1)
       pg: 8.20.0(pg-native@3.7.0)
       prompts: 2.4.2
       qs: 6.15.0
@@ -13298,7 +13363,7 @@ snapshots:
       - tsx
       - yaml
 
-  sonamu@0.9.4(fc3ccb07c00d054f5152ff9d1a8c2c44):
+  sonamu@0.9.4(eeaebeb10e60f0a25af6aa113a7e1306):
     dependencies:
       '@aws-sdk/client-s3': 3.1019.0
       '@aws-sdk/lib-storage': 3.1019.0(@aws-sdk/client-s3@3.1019.0)
@@ -13342,7 +13407,7 @@ snapshots:
       node-cron: 4.2.1
       node-sql-parser: 5.4.0
       oxfmt: 0.43.0
-      oxlint: 1.59.0
+      oxlint: 1.59.0(oxlint-tsgolint@0.22.1)
       pg: 8.20.0(pg-native@3.7.0)
       prompts: 2.4.2
       qs: 6.15.0

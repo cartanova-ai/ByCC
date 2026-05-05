@@ -65,7 +65,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
   const projectFilter = search.project ?? "";
 
   const { data: tokensData } = TokenService.useTokens("A");
-  const tokenNames = (tokensData?.rows ?? []).map((t) => t.name).filter(Boolean) as string[];
+  const tokenNames = (tokensData?.rows ?? []).map((t) => t.name).filter(Boolean);
 
   const { data: projectData } = QgridService.useProjectNames();
   const projectNames = projectData?.names ?? [];

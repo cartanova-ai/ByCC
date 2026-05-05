@@ -3,13 +3,13 @@
  * 직접 수정하지 마세요.
  */
 
-import { PuriWrapper, DatabaseSchemaExtend, PuriLoaderQueries } from "sonamu";
+import { type PuriWrapper, type DatabaseSchemaExtend, type PuriLoaderQueries } from "sonamu";
 
 import {
-  RequestLogSubsetKey,
-  TokenSubsetKey,
-  RequestLogBaseSchema,
-  TokenBaseSchema,
+  type RequestLogSubsetKey,
+  type TokenSubsetKey,
+  type RequestLogBaseSchema,
+  type TokenBaseSchema,
 } from "./sonamu.generated";
 
 // SubsetQuery: RequestLog

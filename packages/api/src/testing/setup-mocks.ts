@@ -1,4 +1,4 @@
-import type { PathLike } from "fs";
+import { type PathLike } from "fs";
 
 // import { Naite } from "sonamu";
 import { vi } from "vitest";

@@ -119,7 +119,6 @@ describe("queryQgrid", () => {
       status: 200,
     });
   });
-
 });
 
 // --- generateText (ai-sdk 호환) ---

@@ -97,7 +97,9 @@
         "duration_ms",
         "cost_usd"
       ],
-      "cone": { "note": "리스트 조회용 Preview 서브셋. TEXT 컬럼(user_prompt, system_prompt, response) 제외" }
+      "cone": {
+        "note": "리스트 조회용 Preview 서브셋. TEXT 컬럼(user_prompt, system_prompt, response) 제외"
+      }
     }
   },
   "enums": {

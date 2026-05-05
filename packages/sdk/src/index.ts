@@ -102,7 +102,7 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
 
   const { text, ...rest } = await res.json();
   if (!returnType || !schemaEntry) {
-    return { ...rest, data: text } as any;
+    return { ...rest, data: text };
   }
 
   // structured output 은 서버가 이미 JSON 문자열로 직렬화해서 넘겨줌. 파싱 + zod 검증만.
@@ -110,7 +110,7 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
   try {
     const parsed = JSON.parse(text);
     const unwrapped = schemaEntry.wrapped ? parsed.result : parsed;
-    return { ...rest, data: z.parse(returnType, unwrapped) } as any;
+    return { ...rest, data: z.parse(returnType, unwrapped) };
   } catch (e) {
     throw new QgridError(
       "PARSE_FAILED",
@@ -144,7 +144,7 @@ function extractSchema(output: unknown): z.ZodType | undefined {
   if (!("type" in output) || !("schema" in output)) return undefined;
   const def = output as OutputDefinition<unknown>;
   if (def.type === "text" || !def.schema) return undefined;
-  return def.schema as z.ZodType;
+  return def.schema;
 }
 
 type BaseParams = Omit<
@@ -157,7 +157,6 @@ type BaseParams = Omit<
   projectName?: string;
   serverUrl?: string;
 };
-
 
 type GenerateTextResponse<T> = {
   text: string;

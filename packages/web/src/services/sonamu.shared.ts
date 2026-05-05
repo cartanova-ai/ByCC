@@ -10,7 +10,7 @@ import { type InfiniteData } from "@tanstack/react-query";
 /*
   fetch
 */
-import type { AxiosRequestConfig } from "axios";
+import { type AxiosRequestConfig } from "axios";
 import axios from "axios";
 import { EventSource } from "eventsource";
 import qs from "qs";

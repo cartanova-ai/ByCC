@@ -11,7 +11,7 @@ import TrashIcon from "~icons/lucide/trash-2";
 
 import { maskToken } from "@/services/qgrid/qgrid.types";
 import { QgridService } from "@/services/services.generated";
-import type { TokenSubsetMapping } from "@/services/sonamu.generated";
+import { type TokenSubsetMapping } from "@/services/sonamu.generated";
 import { TokenSaveParams } from "@/services/token/token.types";
 
 type Token = TokenSubsetMapping["A"];

@@ -1,6 +1,5 @@
 /** biome-ignore-all lint/correctness/noUnusedImports: d.ts */
-
-import {} from "sonamu";
+/* oxlint-disable no-empty-imports */
 
 declare module "sonamu" {
   export interface ContextExtend {
@@ -15,3 +14,5 @@ declare module "sonamu" {
     // CustomGuardKey: true
   }
 }
+
+export {};
