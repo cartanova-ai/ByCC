@@ -5,12 +5,19 @@ import { getPrettyFormatter } from "@logtape/pretty";
 import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
-import { drivers } from "sonamu/storage";
 
 dotenv.config({ path: path.join(import.meta.dirname, "../.env") });
 
 const host = process.env.HOST ?? "localhost";
 const port = Number(process.env.PORT ?? 44900);
+
+const connConfig = {
+  host: process.env.QGRID_DB_HOST ?? "localhost",
+  port: Number(process.env.QGRID_DB_PORT ?? 44901),
+  user: process.env.QGRID_DB_USER ?? "postgres",
+  password: process.env.QGRID_DB_PASSWORD ?? "postgres",
+  database: process.env.QGRID_DB_NAME ?? "qgrid",
+};
 
 export default defineConfig({
   projectName: process.env.PROJECT_NAME ?? "SonamuProject",
@@ -18,10 +25,7 @@ export default defineConfig({
     name: process.env.QGRID_DB_NAME ?? "qgrid",
     defaultOptions: {
       connection: {
-        host: process.env.QGRID_DB_HOST ?? "localhost",
-        port: Number(process.env.QGRID_DB_PORT ?? 44901),
-        user: process.env.QGRID_DB_USER ?? "postgres",
-        password: process.env.QGRID_DB_PASSWORD ?? "postgres",
+        ...connConfig,
         keepAlive: true,
         keepAliveInitialDelayMillis: 10000,
       },
@@ -164,31 +168,6 @@ export default defineConfig({
         }
       },
     },
-    storage: {
-      drivers: {
-        fs: drivers.fs({
-          location: path.join(import.meta.dirname, "/../public/uploaded"),
-          visibility: "public",
-          urlBuilder: {
-            async generateURL(key) {
-              return `/api/public/uploaded/${key}`;
-            },
-            async generateSignedURL(key) {
-              return `/api/public/uploaded/${key}`;
-            },
-          },
-        }),
-        s3: drivers.s3({
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
-          },
-          region: process.env.S3_REGION ?? "ap-northeast-2",
-          bucket: process.env.S3_BUCKET ?? "sonamu_default_bucket",
-          visibility: "private",
-        }),
-      },
-    },
     cache: {
       default: "main",
       stores: {
@@ -216,19 +195,34 @@ export default defineConfig({
         }
 
         const { QgridDispatcher } = await import("./application/qgrid/qgrid.dispatcher");
+        const { ensureTokensTrigger } = await import("./application/qgrid/token-trigger-setup");
+        const { TokenSubscriber } = await import("./application/qgrid/token-subscriber");
+
+        let triggerReady = true;
         try {
-          const { TokenModel } = await import("./application/token/token.model");
-          const entries = await TokenModel.findActive("A");
-          for (const e of entries) QgridDispatcher.addToken(e.token, e.name);
-          console.log(
-            `🌲 Server listening on http://${host}:${port} (${QgridDispatcher.tokens.size} tokens loaded)`,
-          );
+          await ensureTokensTrigger(connConfig);
         } catch (e) {
-          console.warn(`⚠ Dispatcher init failed: ${(e as Error).message}`);
-          console.log(`🌲 Server listening on http://${host}:${port} (no tokens)`);
+          triggerReady = false;
+          console.warn(
+            `⚠ Token trigger setup failed: ${(e as Error).message}. Continuing with LISTEN/reconcile.`,
+          );
         }
+
+        const subscriber = new TokenSubscriber(connConfig, QgridDispatcher);
+        QgridDispatcher.subscriber = subscriber;
+
+        const started = await subscriber.start();
+        const tokenInfo = started
+          ? `${QgridDispatcher.tokens.size} active tokens, LISTEN active`
+          : `degraded — token sync retry scheduled`;
+        const triggerInfo = triggerReady ? "" : ", trigger setup failed";
+        console.log(`🌲 Server listening on http://${host}:${port} (${tokenInfo}${triggerInfo})`);
       },
-      onShutdown: () => {
+      onShutdown: async () => {
+        const { QgridDispatcher } = await import("./application/qgrid/qgrid.dispatcher");
+        if (QgridDispatcher.subscriber) {
+          await QgridDispatcher.subscriber.stop();
+        }
         console.log("graceful shutdown");
       },
       onError: (error, _request, reply) => {

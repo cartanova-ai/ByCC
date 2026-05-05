@@ -4,6 +4,8 @@
  * - 매 요청마다 새 claude CLI 프로세스 spawn → 응답 후 종료
  * - system 은 --append-system-prompt 로 분리 전달 (user turn 오염 방지)
  * - least-used round-robin 으로 토큰 선택
+ * - 메모리 캐시 (Map<id, TokenSubsetA>) 는 TokenSubscriber 가 pg LISTEN/NOTIFY 로 갱신
+ * - query 시 expires_at 비교 → 임박 시 preemptive refresh
  * - QuotaError 는 그대로 상위 전파 (자동 failover 없음, UI 에서 수동 토글)
  *
  * env allowlist: PATH, TMPDIR, CLAUDE_CODE_OAUTH_TOKEN + CLAUDE_CODE_DISABLE_*
@@ -13,8 +15,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
+import { type TokenSubsetA } from "../sonamu.generated";
 import { type CliResult, type QueryInput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
+import { type TokenSubscriber } from "./token-subscriber";
 
 const logger = getLogger(["qgrid"]);
 
@@ -32,10 +36,18 @@ const QGRID_CLAUDE_SETTINGS = {
   cleanupPeriodDays: 1,
 };
 
-class QgridDispatcherClass {
-  tokens = new Map<string, string>();
+// 토큰 만료 임박 임계값 — token.expiredAt이 1분 안에 만료된다면 query 시 체크하고 refresh.
+const REFRESH_SAFETY_MS = 60_000;
+
+export class QgridDispatcherClass {
+  tokens = new Map<number, TokenSubsetA>();
+
+  // key기반(tokenName) 누적 카운터. token 이 OAuth refresh 로 로테이트되도 tokenName 은 불변이라 카운터 유지됨
   requestCounts = new Map<string, number>();
   rrIndex = 0;
+
+  // sonamu.config onStart 에서 처리하는 변수
+  subscriber: TokenSubscriber | null = null;
 
   constructor() {
     mkdirSync(`${CLAUDE_CWD}/.claude`, { recursive: true });
@@ -45,23 +57,40 @@ class QgridDispatcherClass {
     );
   }
 
+  countOf(name: string): number {
+    return this.requestCounts.get(name) ?? 0;
+  }
+
+  // TokenSubscriber 콜백 — 캐시 mutation
+  upsertCache(id: number, row: TokenSubsetA): void {
+    this.tokens.set(id, row);
+  }
+
+  removeCache(id: number): void {
+    this.tokens.delete(id);
+  }
+
+  replaceCache(rows: TokenSubsetA[]): void {
+    this.tokens = new Map(rows.map((r) => [r.id, r]));
+  }
+
   getStats(): TokenStats[] {
-    return [...this.tokens.entries()].map(([token, name]) => ({
-      token,
-      name,
-      requests: this.requestCounts.get(token) ?? 0,
+    return [...this.tokens.values()].map((r) => ({
+      token: r.token,
+      name: r.name,
+      requests: this.countOf(r.name),
     }));
   }
 
-  selectToken(): { token: string; name: string } | null {
-    const entries = [...this.tokens.entries()];
-    if (entries.length === 0) return null;
+  selectToken(): TokenSubsetA | null {
+    const rows = [...this.tokens.values()];
+    if (rows.length === 0) return null;
 
-    const minCount = Math.min(...entries.map(([t]) => this.requestCounts.get(t) ?? 0));
-    const idle = entries.filter(([t]) => (this.requestCounts.get(t) ?? 0) === minCount);
+    const minCount = Math.min(...rows.map((r) => this.countOf(r.name)));
+    const idle = rows.filter((r) => this.countOf(r.name) === minCount);
     const picked = idle[this.rrIndex % idle.length]!;
     this.rrIndex++;
-    return { token: picked[0], name: picked[1] };
+    return picked;
   }
 
   async query(input: QueryInput, timeoutMs?: number): Promise<CliResult> {
@@ -75,21 +104,6 @@ class QgridDispatcherClass {
 
     const result = await executeClaude(input, sel.token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
     return { ...result, tokenName: sel.name, model: input.model ?? DEFAULT_MODEL };
-  }
-
-  addToken(token: string, name: string): void {
-    if (this.tokens.has(token)) return;
-    this.tokens.set(token, name);
-    this.requestCounts.set(token, 0);
-  }
-
-  removeToken(token: string): void {
-    this.tokens.delete(token);
-    this.requestCounts.delete(token);
-  }
-
-  hasToken(token: string): boolean {
-    return this.tokens.has(token);
   }
 }
 
