@@ -85,7 +85,6 @@ class QgridFrameClass extends BaseFrameClass {
         ...(refreshToken && refreshToken.length > 0 ? { refresh_token: refreshToken } : {}),
       },
     ]);
-    QgridDispatcher.addToken(token, name);
     return { added: true };
   }
 
@@ -109,28 +108,19 @@ class QgridFrameClass extends BaseFrameClass {
         ...(hasRefreshToken ? { refresh_token: refreshToken } : {}),
       },
     ]);
-
-    if (hasNewToken) {
-      QgridDispatcher.removeToken(token);
-      QgridDispatcher.addToken(newToken, name ?? entry.name);
-    }
     return { updated: true };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async removeToken(token: string): Promise<{ removed: boolean }> {
-    if (!QgridDispatcher.hasToken(token)) return { removed: false };
-
     const entry = await TokenModel.findByToken("A", token);
-    if (entry) await TokenModel.del([entry.id]);
-    QgridDispatcher.removeToken(token);
+    if (!entry) return { removed: false };
+    await TokenModel.del([entry.id]);
     return { removed: true };
   }
 
   /**
-   * @param id token_id
-   * 토큰 활성화/비활성화 토글 (dispatcher 등록/제거 & DB의 active 필드 업데이트)
-   * @returns 토큰 활성화 여부
+   * 토큰 활성화/비활성화 토글 DB의 active 필드 업데이트
    */
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async toggleToken(id: number): Promise<{ active: boolean }> {
@@ -139,13 +129,6 @@ class QgridFrameClass extends BaseFrameClass {
 
     const newActive = !entry.active;
     await TokenModel.save([{ id, token: entry.token, active: newActive, name: entry.name }]);
-
-    if (newActive) {
-      QgridDispatcher.addToken(entry.token, entry.name);
-    } else {
-      QgridDispatcher.removeToken(entry.token);
-    }
-
     return { active: newActive };
   }
 
@@ -181,7 +164,6 @@ class QgridFrameClass extends BaseFrameClass {
       if (tokens.accountUuid) {
         const oldEntries = await TokenModel.findByAccountUuid("A", tokens.accountUuid);
         if (oldEntries.length > 0) {
-          for (const old of oldEntries) QgridDispatcher.removeToken(old.token);
           await TokenModel.del(oldEntries.map((o) => o.id));
         }
       }
@@ -195,7 +177,6 @@ class QgridFrameClass extends BaseFrameClass {
           account_uuid: tokens.accountUuid,
         },
       ]);
-      QgridDispatcher.addToken(tokens.accessToken, pending.name);
 
       return reply.redirect(`/?oauth=success&name=${encodeURIComponent(pending.name)}`);
     } catch (e) {
@@ -251,14 +232,16 @@ class QgridFrameClass extends BaseFrameClass {
         name: token.name ?? "",
       },
     ]);
-    QgridDispatcher.removeToken(token.token);
-    QgridDispatcher.addToken(refreshed.accessToken, token.name);
     return refreshed.accessToken;
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async health(): Promise<HealthResponse> {
-    return { status: "ok", activeTokens: QgridDispatcher.tokens.size };
+    return {
+      status: "ok",
+      activeTokens: QgridDispatcher.tokens.size,
+      subscriber: QgridDispatcher.subscriber?.status() ?? null,
+    };
   }
 }
 
