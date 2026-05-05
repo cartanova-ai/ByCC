@@ -5,8 +5,9 @@
 
 /* oxlint-disable */
 
-import { zArrayable, SonamuQueryMode, ApplySonamuFilter } from "./sonamu.shared";
 import { z } from "zod";
+
+import { zArrayable, SonamuQueryMode, ApplySonamuFilter } from "./sonamu.shared";
 
 // Enums: RequestLog
 export const RequestLogOrderBy = z.enum(["id-desc"]).describe("RequestLogOrderBy");

@@ -1,54 +1,98 @@
 [
   {
-    "path": "src/application/qgrid/qgrid.frame.ts",
+    "path": "api/src/application/qgrid/qgrid.frame.ts",
     "checksum": "482503827db55417dea5bd39ef2650ab53085b17"
   },
   {
-    "path": "src/application/qgrid/qgrid.types.ts",
+    "path": "api/src/application/qgrid/qgrid.types.ts",
     "checksum": "162c239d0ef2773f5d48e5258cc52e6774758d81"
   },
   {
-    "path": "src/application/request-log/request-log.entity.json",
+    "path": "api/src/application/queries.generated.ts",
+    "checksum": "66868cd9c08a216d1aa3b69d1de5a2d6070f0268"
+  },
+  {
+    "path": "api/src/application/request-log/request-log.entity.json",
     "checksum": "c0eb93ec776bc4bfb494083be827ea9223f83888"
   },
   {
-    "path": "src/application/request-log/request-log.model.ts",
+    "path": "api/src/application/request-log/request-log.model.ts",
     "checksum": "af9f8be8f48d2554b0745e530752652a2bfea9cc"
   },
   {
-    "path": "src/application/request-log/request-log.types.ts",
+    "path": "api/src/application/request-log/request-log.types.ts",
     "checksum": "2a56b79160a425c00a7f9b04e0f59f99f0ab2d1a"
   },
   {
-    "path": "src/application/sonamu.generated.ts",
+    "path": "api/src/application/sonamu.generated.http",
+    "checksum": "397aeae945e64008a795f9dd25c5ba1e2fbec00e"
+  },
+  {
+    "path": "api/src/application/sonamu.generated.sso.ts",
+    "checksum": "81946dfd615bb158308f122e0475c8213070123c"
+  },
+  {
+    "path": "api/src/application/sonamu.generated.ts",
     "checksum": "8543f570538ad5a54043e20494c2c5309333cfca"
   },
   {
-    "path": "src/application/token/token.entity.json",
+    "path": "api/src/application/token/token.entity.json",
     "checksum": "f8a982fb95d0ba171489b48ae63a796050ea7a86"
   },
   {
-    "path": "src/application/token/token.model.ts",
+    "path": "api/src/application/token/token.model.ts",
     "checksum": "e2afd50df1330a8734b94c54a8ed8ad67dc9dfe6"
   },
   {
-    "path": "src/application/token/token.types.ts",
+    "path": "api/src/application/token/token.types.ts",
     "checksum": "17bf93c6f8282b8b6fb8c9da5e2eef91f55e7c2e"
   },
   {
-    "path": "src/i18n/en.ts",
+    "path": "api/src/i18n/en.ts",
     "checksum": "c7186e9419c6faf1f6190989d23ab2fed37cd4fd"
   },
   {
-    "path": "src/i18n/ko.ts",
+    "path": "api/src/i18n/ko.ts",
     "checksum": "7b87d1068a03b994946867f9e16b7281eaad8685"
   },
   {
-    "path": "src/i18n/sd.generated.ts",
+    "path": "api/src/i18n/sd.generated.ts",
     "checksum": "6c8db9211aa5e39c2f554ddd639f4ea904a8f0d9"
   },
   {
-    "path": "src/sonamu.config.ts",
+    "path": "api/src/sonamu.config.ts",
     "checksum": "9257c7ff37f9a9695264d98aff4d276eec353f9e"
+  },
+  {
+    "path": "web/src/i18n/en.ts",
+    "checksum": "d291375447c4cd0b65de3be38216f919effb1254"
+  },
+  {
+    "path": "web/src/i18n/ko.ts",
+    "checksum": "4b83f7579cac76325953156d405f319ece5fe7dd"
+  },
+  {
+    "path": "web/src/i18n/sd.generated.ts",
+    "checksum": "9d11286f3b418bdd6848ab602c520f42cb83cd6f"
+  },
+  {
+    "path": "web/src/services/qgrid/qgrid.types.ts",
+    "checksum": "b396760ae66760c752b3be15030dcb770b62ce4b"
+  },
+  {
+    "path": "web/src/services/request-log/request-log.types.ts",
+    "checksum": "e009b73dd3cc3c8cdc3378b7f35fdbe02e3cd2d7"
+  },
+  {
+    "path": "web/src/services/services.generated.ts",
+    "checksum": "5b91167a0edb7e0fb20c6c7eac64b15a77a6a0a7"
+  },
+  {
+    "path": "web/src/services/sonamu.generated.ts",
+    "checksum": "07eb7ac344cdb684fbd6887c77700cbfbf7f4561"
+  },
+  {
+    "path": "web/src/services/token/token.types.ts",
+    "checksum": "bdc2b0c85e59be6c9535cf76d3daf63160a5d59e"
   }
 ]

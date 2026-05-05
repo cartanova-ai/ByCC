@@ -3,8 +3,8 @@
  * 최초 1회 생성되며, 이후에는 덮어쓰지 않습니다.
  * 필요시 직접 수정할 수 있습니다.
  */
-/** biome-ignore-all lint/correctness/useExhaustiveDependencies: shared */
-/** biome-ignore-all lint/suspicious/noExplicitAny: shared */
+
+/* oxlint-disable react-hooks/exhaustive-deps */ // shared
 
 import { type InfiniteData } from "@tanstack/react-query";
 /*
@@ -14,6 +14,7 @@ import { type AxiosRequestConfig } from "axios";
 import axios from "axios";
 import { EventSource } from "eventsource";
 import qs from "qs";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type core, z } from "zod";
 
 import { getCurrentLocale } from "@/i18n/sd.generated";
@@ -325,11 +326,24 @@ export type SSEStreamState = {
   retryCount: number;
   isEnded: boolean;
 };
-export type EventHandlers<T> = {
-  [K in keyof T]: (data: T[K]) => void;
+export type WebSocketChannelOptions = {
+  enabled?: boolean;
+  retry?: number;
+  retryInterval?: number;
+  protocols?: string | string[];
 };
-
-import { useCallback, useEffect, useRef, useState } from "react";
+export type WebSocketChannelState<TSend extends Record<string, any>> = {
+  isConnected: boolean;
+  error: string | null;
+  retryCount: number;
+  readyState: number;
+  send<K extends keyof TSend>(event: K, data: TSend[K]): void;
+  close(code?: number, reason?: string): void;
+};
+// outbound event 전체를 강제하지 않도록 handler를 optional map으로 둠
+export type EventHandlers<T> = {
+  [K in keyof T]?: (data: T[K]) => void;
+};
 
 export function useSSEStream<T extends Record<string, any>>(
   url: string,
@@ -379,13 +393,16 @@ export function useSSEStream<T extends Record<string, any>>(
       const fullUrl = queryString ? `${url}?${queryString}` : url;
 
       const eventSource = new EventSource(fullUrl, {
-        fetch: (url, init) =>
-          globalThis.fetch(url, {
+        // eventsource v4는 Fetch API 호환 함수 필요 (Response 객체 반환)
+        // Sonamu의 axios 기반 fetch는 파싱된 데이터를 반환하므로 네이티브 fetch 사용
+        fetch: (input, init) =>
+          globalThis.fetch(input, {
             ...init,
             headers: {
               ...init?.headers,
               "Accept-Language": getCurrentLocale(),
             },
+            credentials: "include",
           }),
       });
       eventSourceRef.current = eventSource;
@@ -414,6 +431,9 @@ export function useSSEStream<T extends Record<string, any>>(
           return; // 이미 새로운 연결이 있으면 무시
         }
 
+        // EventSource 내장 자동 재연결 방지를 위해 즉시 close
+        eventSource.close();
+
         setState((prev) => ({
           ...prev,
           isConnected: false,
@@ -421,30 +441,33 @@ export function useSSEStream<T extends Record<string, any>>(
           isEnded: false,
         }));
 
-        // 자동 재연결 시도
-        if (state.retryCount < retry) {
-          retryTimeoutRef.current = setTimeout(() => {
-            // 여전히 같은 연결인지 확인
-            if (eventSourceRef.current === eventSource) {
-              setState((prev) => ({
-                ...prev,
-                retryCount: prev.retryCount + 1,
-                isEnded: false,
-              }));
-              connect();
-            }
-          }, retryInterval);
-        } else {
-          setState((prev) => ({
-            ...prev,
-            error: `Connection failed after ${retry} attempts`,
-          }));
-        }
+        // 자체 재연결 로직 (EventSource 내장 재연결 대신)
+        setState((prev) => {
+          if (prev.retryCount < retry) {
+            retryTimeoutRef.current = setTimeout(() => {
+              // cleanup으로 정리되지 않았는지 확인
+              if (retryTimeoutRef.current !== null) {
+                setState((inner) => ({
+                  ...inner,
+                  retryCount: inner.retryCount + 1,
+                  isEnded: false,
+                }));
+                connect();
+              }
+            }, retryInterval);
+            return prev;
+          } else {
+            eventSourceRef.current = null;
+            return {
+              ...prev,
+              error: `Connection failed after ${retry} attempts`,
+            };
+          }
+        });
       };
 
       // 공통 'end' 이벤트 처리 (사용자 정의 이벤트와 별도)
       eventSource.addEventListener("end", () => {
-        console.log("SSE 연결 정상종료");
         if (eventSourceRef.current === eventSource) {
           eventSource.close();
           eventSourceRef.current = null;
@@ -473,7 +496,7 @@ export function useSSEStream<T extends Record<string, any>>(
             }
 
             try {
-              const data = JSON.parse(event.data);
+              const data = JSON.parse(event.data, dateReviver);
               handler(data);
             } catch (error) {
               console.error(`Failed to parse SSE data for event ${eventType}:`, error);
@@ -494,7 +517,7 @@ export function useSSEStream<T extends Record<string, any>>(
         }
 
         try {
-          const data = JSON.parse(event.data);
+          const data = JSON.parse(event.data, dateReviver);
           // 'message' 핸들러가 있으면 호출
           const messageHandler = handlersRef.current["message" as keyof T];
           if (messageHandler) {
@@ -514,9 +537,16 @@ export function useSSEStream<T extends Record<string, any>>(
     }
   };
 
-  // 연결 시작
+  // 연결 시작 (단일 effect로 연결 lifecycle 관리)
   useEffect(() => {
     if (enabled) {
+      // state 초기화
+      setState({
+        isConnected: false,
+        error: null,
+        retryCount: 0,
+        isEnded: false,
+      });
       connect();
     }
 
@@ -533,14 +563,273 @@ export function useSSEStream<T extends Record<string, any>>(
     };
   }, [url, JSON.stringify(params), enabled]);
 
-  // 파라미터가 변경되면 재연결
+  return state;
+}
+
+export function useWebSocketChannel<
+  TReceive extends Record<string, any>,
+  TSend extends Record<string, any>,
+>(
+  url: string,
+  params: Record<string, any>,
+  handlers: EventHandlers<TReceive>,
+  options: WebSocketChannelOptions = {},
+): WebSocketChannelState<TSend> {
+  const { enabled = true, retry = 3, retryInterval = 3000, protocols } = options;
+
+  const [state, setState] = useState<Omit<WebSocketChannelState<TSend>, "send" | "close">>({
+    isConnected: false,
+    error: null,
+    retryCount: 0,
+    readyState: 3,
+  });
+
+  const socketRef = useRef<WebSocket | null>(null);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlersRef = useRef(handlers);
+  const manualCloseRef = useRef(false);
+  // 최신 연결 식별자를 따로 두어 stale socket 이벤트가 상태를 덮지 못하게 함
+  const connectionIdRef = useRef(0);
+
   useEffect(() => {
-    if (enabled && eventSourceRef.current) {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
+  const close = (code?: number, reason?: string) => {
+    manualCloseRef.current = true;
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+    if (socketRef.current) {
+      socketRef.current.close(code, reason);
+    }
+  };
+
+  const send = <K extends keyof TSend>(event: K, data: TSend[K]) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setState((prev) => ({
+        ...prev,
+        error: "WebSocket is not connected",
+      }));
+      return;
+    }
+
+    socket.send(
+      JSON.stringify({
+        event,
+        data,
+      }),
+    );
+  };
+
+  const connect = () => {
+    if (!enabled) {
+      return;
+    }
+
+    const connectionId = ++connectionIdRef.current;
+    manualCloseRef.current = false;
+
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+
+    const fullUrl = resolveWebSocketUrl(url, params);
+    const socket = new WebSocket(fullUrl, protocols);
+    socketRef.current = socket;
+
+    setState((prev) => ({
+      ...prev,
+      isConnected: false,
+      error: null,
+      readyState: socket.readyState,
+    }));
+
+    // socketRef.current !== socket 가드는 이전 연결의 늦은 콜백을 무시하기 위한 장치임
+    socket.addEventListener("open", () => {
+      if (socketRef.current !== socket) {
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        isConnected: true,
+        error: null,
+        retryCount: 0,
+        readyState: socket.readyState,
+      }));
+    });
+
+    socket.addEventListener("message", (event) => {
+      if (socketRef.current !== socket) {
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(event.data, dateReviver) as {
+          event: keyof TReceive;
+          data: TReceive[keyof TReceive];
+        };
+        const handler = handlersRef.current[payload.event];
+        if (handler) {
+          handler(payload.data);
+        }
+      } catch (error) {
+        console.error("Failed to parse WebSocket message:", error);
+      }
+    });
+
+    socket.addEventListener("error", () => {
+      if (socketRef.current !== socket) {
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        isConnected: false,
+        error: "WebSocket connection failed",
+        readyState: socket.readyState,
+      }));
+    });
+
+    socket.addEventListener("close", (event) => {
+      if (socketRef.current !== socket) {
+        return;
+      }
+
+      socketRef.current = null;
+
+      setState((prev) => ({
+        ...prev,
+        isConnected: false,
+        readyState: socket.readyState,
+      }));
+
+      if (manualCloseRef.current || connectionIdRef.current !== connectionId) {
+        return;
+      }
+
+      // 정책 위반/과대 payload close는 재시도보다 명시적 에러 노출이 우선임
+      if (!isRetryableWebSocketCloseCode(event.code)) {
+        setState((prev) => ({
+          ...prev,
+          error:
+            event.code === 1008 || event.code === 1009
+              ? `WebSocket rejected by server (code: ${event.code})`
+              : `WebSocket closed (code: ${event.code})`,
+        }));
+        return;
+      }
+
+      setState((prev) => {
+        if (prev.retryCount >= retry) {
+          return {
+            ...prev,
+            error: `Connection failed after ${retry} attempts`,
+          };
+        }
+
+        retryTimeoutRef.current = setTimeout(() => {
+          if (connectionIdRef.current !== connectionId) {
+            return;
+          }
+
+          setState((inner) => ({
+            ...inner,
+            retryCount: inner.retryCount + 1,
+          }));
+          connect();
+        }, retryInterval);
+
+        return prev;
+      });
+    });
+  };
+
+  useEffect(() => {
+    if (enabled) {
+      setState({
+        isConnected: false,
+        error: null,
+        retryCount: 0,
+        readyState: 3,
+      });
       connect();
     }
-  }, [JSON.stringify(params)]);
 
-  return state;
+    return () => {
+      connectionIdRef.current += 1;
+      manualCloseRef.current = true;
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
+  }, [url, JSON.stringify(params), enabled, JSON.stringify(protocols)]);
+
+  return {
+    ...state,
+    send,
+    close,
+  };
+}
+
+function isRetryableWebSocketCloseCode(code: number): boolean {
+  if (code === 1000) {
+    return false;
+  }
+
+  return ![1002, 1003, 1007, 1008, 1009].includes(code);
+}
+
+function resolveWebSocketUrl(url: string, params: Record<string, any>): string {
+  const queryString = qs.stringify(params);
+  const withQuery = queryString ? `${url}?${queryString}` : url;
+
+  if (withQuery.startsWith("ws://") || withQuery.startsWith("wss://")) {
+    return withQuery;
+  }
+
+  const baseUrl = resolveWebSocketBaseUrl();
+  return new URL(withQuery, baseUrl).toString();
+}
+
+function resolveWebSocketBaseUrl(): string {
+  const configuredBaseUrl = axios.defaults.baseURL;
+  // HTTP client와 WS client가 다른 origin으로 갈라지지 않게 axios baseURL을 우선 존중함
+  if (configuredBaseUrl) {
+    const absoluteBaseUrl =
+      typeof window !== "undefined"
+        ? new URL(configuredBaseUrl, window.location.origin).toString()
+        : configuredBaseUrl;
+    return toWebSocketBaseUrl(absoluteBaseUrl);
+  }
+
+  if (typeof window !== "undefined") {
+    return toWebSocketBaseUrl(window.location.origin);
+  }
+
+  return toWebSocketBaseUrl("http://localhost:44900");
+}
+
+function toWebSocketBaseUrl(baseUrl: string): string {
+  if (baseUrl.startsWith("ws://") || baseUrl.startsWith("wss://")) {
+    return baseUrl;
+  }
+
+  return baseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 }
 
 /*
@@ -604,7 +893,7 @@ export function dedupeAndFlatten<TRow extends { id?: unknown }>(
   for (const page of data.pages) {
     for (const row of page?.rows ?? []) {
       const id = row?.id;
-      if (id != null) {
+      if (id !== null) {
         if (seen.has(id)) {
           continue;
         }
