@@ -2,13 +2,13 @@
  * QgridDispatcher — OAuth 토큰 선택 + claude CLI fresh spawn 디스패처 싱글턴.
  *
  * - 매 요청마다 새 claude CLI 프로세스 spawn → 응답 후 종료
- * - system 은 --append-system-prompt 로 분리 전달 (user turn 오염 방지)
  * - least-used round-robin 으로 토큰 선택
  * - 메모리 캐시 (Map<id, TokenSubsetA>) 는 TokenSubscriber 가 pg LISTEN/NOTIFY 로 갱신
  * - query 시 expires_at 비교 → 임박 시 preemptive refresh
  * - QuotaError 는 그대로 상위 전파 (자동 failover 없음, UI 에서 수동 토글)
  *
- * env allowlist: PATH, TMPDIR, CLAUDE_CODE_OAUTH_TOKEN + CLAUDE_CODE_DISABLE_*
+ * env allowlist: PATH, TMPDIR, CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CONFIG_DIR
+ *   + CLAUDE_CODE_DISABLE_* + CLAUDE_CODE_ATTRIBUTION_HEADER
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -24,12 +24,16 @@ const logger = getLogger(["qgrid"]);
 
 const DEFAULT_MODEL = "sonnet";
 const DEFAULT_TIMEOUT_MS = 600_000;
+const DEFAULT_EFFORT = "high";
 
 // claude CLI 의 cwd. 이 경로의 .claude/settings.json 이 project scope 로 로드되어
 // 혹시라도 있을 user scope (~/.claude/settings.json)를 덮어씀 (--setting-sources project 와 함께).
 const CLAUDE_CWD = "/tmp/qgrid";
 
-// qgrid 전용 project settings — user scope 격리용
+// 글로벌 user config 격리 경로. (CC에서 환경변수로 읽는변수)
+const CLAUDE_CONFIG_DIR = "/tmp/qgrid-config";
+
+// qgrid 전용 project/global settings — user scope 격리용
 const QGRID_CLAUDE_SETTINGS = {
   alwaysThinkingEnabled: false, // thinking block 차단
   includeGitInstructions: false, // system prompt 의 git 가이드 제거
@@ -50,11 +54,14 @@ export class QgridDispatcherClass {
   subscriber: TokenSubscriber | null = null;
 
   constructor() {
+    const settingsJson = JSON.stringify(QGRID_CLAUDE_SETTINGS, null, 2);
+
     mkdirSync(`${CLAUDE_CWD}/.claude`, { recursive: true });
-    writeFileSync(
-      `${CLAUDE_CWD}/.claude/settings.json`,
-      JSON.stringify(QGRID_CLAUDE_SETTINGS, null, 2),
-    );
+    writeFileSync(`${CLAUDE_CWD}/.claude/settings.json`, settingsJson);
+
+    mkdirSync(CLAUDE_CONFIG_DIR, { recursive: true });
+    writeFileSync(`${CLAUDE_CONFIG_DIR}/.claude.json`, "{}");
+    writeFileSync(`${CLAUDE_CONFIG_DIR}/settings.json`, settingsJson);
   }
 
   countOf(name: string): number {
@@ -147,11 +154,14 @@ async function executeClaude(
   const args: string[] = [
     "-p",
     ...toolArgs,
+    "--disallowedTools",
+    // CC에서 자동 활성화되는 deferred 도구. 토큰 최적화를위해 차단
+    ...(["Monitor", "PushNotification", "RemoteTrigger"] as const),
     "--output-format",
     "stream-json",
     "--verbose",
+    // --max-turns: structured output 은 tool_use + tool_result 로 2턴 소비
     "--max-turns",
-    // structured output 은 tool_use + tool_result 로 2턴 소비
     useStructuredOutput ? "2" : "1",
     "--permission-mode",
     "bypassPermissions",
@@ -159,15 +169,19 @@ async function executeClaude(
     "project",
     "--model",
     model,
-    // thinking 비활성화는 project settings (alwaysThinkingEnabled: false) 에서 처리
-    "--exclude-dynamic-system-prompt-sections", // cwd/env 를 user msg 로 이동 → prefix cache 안정화
-    "--no-session-persistence", // ~/.claude/projects/ 의 orphan jsonl 누적 방지
+    // --system-prompt는 반드시 명시해야함. 옵션 생략 시 CC가 default system prompt를 자동으로 주입함(23k)
+    "--system-prompt",
+    input.system ?? "",
+    "--thinking",
+    "disabled",
+    "--effort",
+    input.effort ?? DEFAULT_EFFORT,
+    "--no-session-persistence",
+    // 모든 skills 비활성화
+    "--disable-slash-commands",
   ];
   if (useStructuredOutput) {
     args.push("--json-schema", input.jsonSchema!);
-  }
-  if (input.system) {
-    args.push("--append-system-prompt", input.system);
   }
   args.push(input.prompt);
 
@@ -175,15 +189,22 @@ async function executeClaude(
     PATH: process.env.PATH,
     TMPDIR: process.env.TMPDIR,
     CLAUDE_CODE_OAUTH_TOKEN: token,
+    // CLAUDE_CONFIG_DIR 환경변수로 주입
+    CLAUDE_CONFIG_DIR,
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
     CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+    CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
   };
 
   return new Promise<CliResult>((resolve, reject) => {
     const child = spawn("claude", args, {
       stdio: ["ignore", "pipe", "ignore"],
       env,
+      // 격리 (두 단계):
+      // 1. CLAUDE_CWD — project scope 격리 (cwd 의 .claude/settings.json)
+      // 2. CLAUDE_CONFIG_DIR — user scope 격리 cwd 격리만으론 부족.
       cwd: CLAUDE_CWD,
     });
 
