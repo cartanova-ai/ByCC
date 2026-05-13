@@ -138,7 +138,8 @@ Content-Type: application/json
   "timeout": 0,
   "model": "MODEL",
   "projectName": "PROJECTNAME",
-  "jsonSchema": "JSONSCHEMA"
+  "jsonSchema": "JSONSCHEMA",
+  "effort": "low"
 }
 
 ###

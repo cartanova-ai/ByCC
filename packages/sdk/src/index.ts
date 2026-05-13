@@ -35,6 +35,9 @@ export class QgridError extends Error {
   }
 }
 
+// CC --effort 와 동일. 답변 깊이/추론량 제어. 미지정 시 서버 기본값(high).
+export type QgridEffort = "low" | "medium" | "high";
+
 type SchemaCacheEntry = { json: string; wrapped: boolean };
 const jsonSchemaCache = new WeakMap<z.ZodType, SchemaCacheEntry>();
 
@@ -68,10 +71,11 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
   model?: QgridModel;
   projectName?: string;
   returnType?: T;
+  effort?: QgridEffort;
   abortSignal?: AbortSignal;
   serverUrl?: string;
 }): Promise<T extends z.ZodType ? QgridTypedResponse<z.infer<T>> : QgridResponse> {
-  const { prompt, system, model, projectName, returnType } = params;
+  const { prompt, system, model, projectName, returnType, effort } = params;
   const cliModel = model ? toCliModel(model) : undefined;
   const url = params.serverUrl ?? process.env.QGRID_URL ?? "http://localhost:44900";
   const signal = params.abortSignal ?? AbortSignal.timeout(300_000);
@@ -89,6 +93,7 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
       model: cliModel,
       projectName: projectName ?? process.env.QGRID_PROJECT_NAME,
       jsonSchema: schemaEntry?.json,
+      effort,
     }),
     signal,
   });
@@ -155,6 +160,7 @@ type BaseParams = Omit<
   system?: string;
   model?: QgridModel;
   projectName?: string;
+  effort?: QgridEffort;
   serverUrl?: string;
 };
 
@@ -182,6 +188,7 @@ export async function generateText(
   const rest = {
     model: params.model,
     projectName: params.projectName,
+    effort: params.effort,
     serverUrl: params.serverUrl,
     abortSignal: params.abortSignal,
   };

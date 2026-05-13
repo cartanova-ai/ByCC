@@ -2,12 +2,16 @@ import { z } from "zod";
 
 // ─── Query ───
 
+export const Effort = z.enum(["low", "medium", "high"]);
+export type Effort = z.infer<typeof Effort>;
+
 export const QueryInput = z.object({
   system: z.string().optional(),
   prompt: z.string(),
   model: z.string().optional(),
   timeout: z.number().optional(),
   jsonSchema: z.string().optional(),
+  effort: Effort.optional(),
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 

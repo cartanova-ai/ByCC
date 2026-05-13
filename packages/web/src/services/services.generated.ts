@@ -18,6 +18,7 @@ import { type AxiosProgressEvent } from "axios";
 import qs from "qs";
 
 import {
+  Effort,
   CliResult,
   TokenStats,
   OAuthStartResult,
@@ -315,11 +316,12 @@ export namespace QgridService {
     model?: string,
     projectName?: string,
     jsonSchema?: string,
+    effort?: Effort,
   ): Promise<CliResult> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/query`,
-      data: { prompt, system, timeout, model, projectName, jsonSchema },
+      data: { prompt, system, timeout, model, projectName, jsonSchema, effort },
     });
   }
 
@@ -332,6 +334,7 @@ export namespace QgridService {
         model: string;
         projectName: string;
         jsonSchema: string;
+        effort: Effort;
       }) =>
         query(
           params.prompt,
@@ -340,6 +343,7 @@ export namespace QgridService {
           params.model,
           params.projectName,
           params.jsonSchema,
+          params.effort,
         ),
     });
 

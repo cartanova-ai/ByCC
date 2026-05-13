@@ -15,6 +15,7 @@ import {
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type CliResult,
+  type Effort,
   type HealthResponse,
   type OAuthStartResult,
   type TokenStats,
@@ -38,8 +39,12 @@ class QgridFrameClass extends BaseFrameClass {
     model?: string,
     projectName?: string,
     jsonSchema?: string,
+    effort?: Effort,
   ): Promise<CliResult> {
-    const result = await QgridDispatcher.query({ system, prompt, model, jsonSchema }, timeout);
+    const result = await QgridDispatcher.query(
+      { system, prompt, model, jsonSchema, effort },
+      timeout,
+    );
 
     RequestLogModel.save([
       {
