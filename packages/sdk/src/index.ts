@@ -17,11 +17,15 @@ export type QgridModel =
   | "anthropic/claude-opus-4.1"
   | "anthropic/claude-opus-4.5"
   | "anthropic/claude-opus-4.6"
-  | "anthropic/claude-opus-4.7";
+  | "anthropic/claude-opus-4.7"
+  | "openai/gpt-5.4"
+  | "openai/gpt-5.5"
+  | "openai/gpt-5.3-codex"
+  | (string & {});
 
-// "anthropic/claude-sonnet-4.6" → "claude-sonnet-4-6"
-function toCliModel(model: QgridModel): string {
-  return model.replace(/^anthropic\//, "").replace(/\./g, "-");
+function toServerModel(model: QgridModel): string {
+  if (model.includes("/")) return model;
+  return `anthropic/${model}`;
 }
 
 export class QgridError extends Error {
@@ -76,7 +80,7 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
   serverUrl?: string;
 }): Promise<T extends z.ZodType ? QgridTypedResponse<z.infer<T>> : QgridResponse> {
   const { prompt, system, model, projectName, returnType, effort } = params;
-  const cliModel = model ? toCliModel(model) : undefined;
+  const serverModel = model ? toServerModel(model) : undefined;
   const url = params.serverUrl ?? process.env.QGRID_URL ?? "http://localhost:44900";
   const signal = params.abortSignal ?? AbortSignal.timeout(300_000);
 
@@ -90,7 +94,7 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
     body: JSON.stringify({
       prompt,
       system,
-      model: cliModel,
+      model: serverModel,
       projectName: projectName ?? process.env.QGRID_PROJECT_NAME,
       jsonSchema: schemaEntry?.json,
       effort,
