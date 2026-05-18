@@ -2,9 +2,12 @@ import path from "path";
 
 import { getConsoleSink } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
+import type { FastifyReply } from "fastify";
 import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
+
+import { QgridFrame } from "./application/qgrid/qgrid.frame";
 
 dotenv.config({ path: path.join(import.meta.dirname, "../.env") });
 
@@ -12,17 +15,22 @@ const host = process.env.HOST ?? "localhost";
 const port = Number(process.env.PORT ?? 44900);
 
 const connConfig = {
-  host: process.env.QGRID_DB_HOST ?? "localhost",
-  port: Number(process.env.QGRID_DB_PORT ?? 44901),
-  user: process.env.QGRID_DB_USER ?? "postgres",
-  password: process.env.QGRID_DB_PASSWORD ?? "postgres",
-  database: process.env.QGRID_DB_NAME ?? "qgrid",
+  // host: process.env.QGRID_DB_HOST ?? "localhost",
+  // port: Number(process.env.QGRID_DB_PORT ?? 5432),
+  // user: process.env.QGRID_DB_USER ?? "postgres",
+  // password: process.env.QGRID_DB_PASSWORD ?? "postgres",
+  // database: process.env.QGRID_DB_NAME ?? "qgrid",
+  host: "localhost",
+  port: 5432,
+  user: "postgres",
+  password: "postgres",
+  database: "qgrid",
 };
 
 export default defineConfig({
   projectName: process.env.PROJECT_NAME ?? "SonamuProject",
   database: {
-    name: process.env.QGRID_DB_NAME ?? "qgrid",
+    name: "qgrid",
     defaultOptions: {
       connection: {
         ...connConfig,
@@ -33,20 +41,8 @@ export default defineConfig({
     environments: {
       fixture: {
         connection: {
-          host: process.env.DEV0_DB_HOST,
-          port: Number(process.env.DEV0_DB_PORT),
-          database: process.env.QGRID_DB_NAME + "_fixture",
-          user: process.env.DEV0_DB_USER,
-          password: process.env.DEV0_DB_PASSWORD,
-        },
-      },
-      test: {
-        connection: {
-          host: "0.0.0.0",
-          port: 54321,
-          database: "qgrid_test",
-          user: "postgres",
-          password: "postgres",
+          ...connConfig,
+          database: process.env.QGRID_DB_NAME,
         },
       },
     },
@@ -114,10 +110,23 @@ export default defineConfig({
           if (!code || !state) {
             return reply.redirect("/?oauth=error&reason=missing_params");
           }
-          // Frame의 oauthCallback으로 위임
           try {
-            const { QgridFrame } = await import("./application/qgrid/qgrid.frame");
             await QgridFrame.handleOAuthCallback(code, state, reply);
+          } catch (e) {
+            return reply.redirect(
+              `/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`,
+            );
+          }
+        });
+
+        // OAuth 콜백 — OpenAI /callback/openai로 리다이렉트
+        server.get("/callback/openai", async (request, reply) => {
+          const { code, state } = request.query as { code?: string; state?: string };
+          if (!code || !state) {
+            return reply.redirect("/?oauth=error&reason=missing_params");
+          }
+          try {
+            await QgridFrame.handleOpenAICallback(code, state, reply);
           } catch (e) {
             return reply.redirect(
               `/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`,
@@ -212,6 +221,18 @@ export default defineConfig({
         QgridDispatcher.subscriber = subscriber;
 
         const started = await subscriber.start();
+
+        // OpenAI dispatcher (codex app-server worker pool)
+        try {
+          const { OpenAIDispatcher } = await import("./utils/providers/openai/openai-dispatcher");
+          const openaiDispatcher = new OpenAIDispatcher();
+          await openaiDispatcher.start();
+          QgridDispatcher.openaiDispatcher = openaiDispatcher;
+          console.log(`✓ OpenAI dispatcher: ${openaiDispatcher.readyWorkerCount} workers ready`);
+        } catch (e) {
+          console.warn(`⚠ OpenAI dispatcher failed: ${(e as Error).message}`);
+        }
+
         const tokenInfo = started
           ? `${QgridDispatcher.tokens.size} active tokens, LISTEN active`
           : `degraded — token sync retry scheduled`;
@@ -220,6 +241,9 @@ export default defineConfig({
       },
       onShutdown: async () => {
         const { QgridDispatcher } = await import("./application/qgrid/qgrid.dispatcher");
+        if (QgridDispatcher.openaiDispatcher) {
+          await QgridDispatcher.openaiDispatcher.stop();
+        }
         if (QgridDispatcher.subscriber) {
           await QgridDispatcher.subscriber.stop();
         }

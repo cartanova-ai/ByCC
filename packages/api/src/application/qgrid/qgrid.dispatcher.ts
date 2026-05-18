@@ -18,7 +18,11 @@ import { getLogger } from "@logtape/logtape";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { type CliResult, type QueryInput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
+import { getAccessToken, getExpiresAt, getRefreshToken } from "../../utils/providers/common/credentials";
+import { strictify } from "../../utils/providers/common/strictifier";
+import { OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubscriber } from "./token-subscriber";
+import assert from "node:assert";
 
 const logger = getLogger(["qgrid"]);
 
@@ -52,6 +56,7 @@ export class QgridDispatcherClass {
 
   // sonamu.config onStart 에서 처리하는 변수
   subscriber: TokenSubscriber | null = null;
+  openaiDispatcher: OpenAIDispatcher | null = null;
 
   constructor() {
     const settingsJson = JSON.stringify(QGRID_CLAUDE_SETTINGS, null, 2);
@@ -83,14 +88,15 @@ export class QgridDispatcherClass {
 
   getStats(): TokenStats[] {
     return [...this.tokens.values()].map((r) => ({
-      token: r.token,
+      token: maskToken(getAccessToken(r.credentials)),
       name: r.name,
+      provider: r.provider,
       requests: this.countOf(r.name),
     }));
   }
 
-  selectToken(): TokenSubsetA | null {
-    const rows = [...this.tokens.values()];
+  selectToken(provider = "anthropic"): TokenSubsetA | null {
+    const rows = [...this.tokens.values()].filter((r) => r.provider === provider);
     if (rows.length === 0) return null;
 
     const minCount = Math.min(...rows.map((r) => this.countOf(r.name)));
@@ -101,31 +107,55 @@ export class QgridDispatcherClass {
   }
 
   async query(input: QueryInput, timeoutMs?: number): Promise<CliResult> {
+    // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
+    if (input.model?.includes("/")) {
+      const [provider, model] = input.model.split("/", 2);
+      assert(model, 'unknown model');
+      if (provider === "openai") {
+        if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+        const result = await this.openaiDispatcher.generate({
+          model: model,
+          input: [{ type: "text", text: input.prompt }],
+          systemPrompt: input.system,
+          outputSchema: input.jsonSchema ? strictify(JSON.parse(input.jsonSchema)) : undefined,
+          effort: input.effort,
+        });
+        return {
+          text: result.text,
+          tokenName: result.tokenName,
+          model: result.model,
+          usage: {
+            input_tokens: result.usage.inputTokens,
+            output_tokens: result.usage.outputTokens,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: result.usage.cachedInputTokens,
+          },
+          durationMs: result.durationMs,
+          costUsd: 0,
+        };
+      }
+    }
+
+    // Anthropic (기존 claude -p 경로)
     const electedToken = this.selectToken();
     if (!electedToken) throw new QuotaError("No tokens available");
 
     // await 전에 count 선반영. 병렬 요청이 동시에 도착해도 각자 다른 토큰을 고르도록.
     this.requestCounts.set(electedToken.name, this.countOf(electedToken.name) + 1);
 
-    let token = electedToken.token;
-    // expires_at 임박이면 refresh.
-    // refresh 후 DB save → trigger NOTIFY → subscriber 가 받아 캐시 갱신 (다른 dispatcher 도 동기화)
+    let token = getAccessToken(electedToken.credentials);
+    // expires_at 임박이면 preemptive refresh
+    const expiresAt = getExpiresAt(electedToken.credentials);
     if (
-      electedToken.expires_at &&
-      Number(electedToken.expires_at) - Date.now() < REFRESH_SAFETY_MS &&
-      electedToken.refresh_token
+      expiresAt &&
+      expiresAt - Date.now() < REFRESH_SAFETY_MS &&
+      getRefreshToken(electedToken.credentials)
     ) {
       try {
         const { QgridFrame } = await import("./qgrid.frame");
-        token = await QgridFrame.refreshToken({
-          id: electedToken.id,
-          token: electedToken.token,
-          name: electedToken.name,
-          refresh_token: electedToken.refresh_token,
-        });
+        token = await QgridFrame.refreshToken(electedToken);
       } catch (e) {
         logger.warn(`refresh failed for ${electedToken.name}: ${(e as Error).message}`);
-        // refresh 실패 시 기존 token 으로 진행. executeClaude 가 401 받으면 caller 처리.
       }
     }
 
