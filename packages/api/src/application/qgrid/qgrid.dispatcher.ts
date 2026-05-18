@@ -19,6 +19,7 @@ import { type TokenSubsetA } from "../sonamu.generated";
 import { type CliResult, type QueryInput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
 import { getAccessToken, getExpiresAt, getRefreshToken } from "../../utils/providers/common/credentials";
+import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { strictify } from "../../utils/providers/common/strictifier";
 import { OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubscriber } from "./token-subscriber";
@@ -131,7 +132,11 @@ export class QgridDispatcherClass {
             cache_read_input_tokens: result.usage.cachedInputTokens,
           },
           durationMs: result.durationMs,
-          costUsd: 0,
+          costUsd: calculateCostUsd(result.model, {
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            cachedInputTokens: result.usage.cachedInputTokens,
+          }),
         };
       }
     }
