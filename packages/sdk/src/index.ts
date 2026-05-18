@@ -8,6 +8,13 @@ type AiGenerateTextParams = Parameters<typeof _aiGenerateText>[0];
 type AiGenerateTextResult = Awaited<ReturnType<typeof _aiGenerateText>>;
 
 export type QgridModel =
+  // OpenAI (codex app-server 실측 2026-05-18)
+  | "openai/gpt-5.5"
+  | "openai/gpt-5.4"
+  | "openai/gpt-5.4-mini"
+  | "openai/gpt-5.3-codex"
+  | "openai/gpt-5.2"
+  // Anthropic
   | "anthropic/claude-haiku-4.5"
   | "anthropic/claude-sonnet-4"
   | "anthropic/claude-sonnet-4.5"
@@ -18,9 +25,6 @@ export type QgridModel =
   | "anthropic/claude-opus-4.5"
   | "anthropic/claude-opus-4.6"
   | "anthropic/claude-opus-4.7"
-  | "openai/gpt-5.4"
-  | "openai/gpt-5.5"
-  | "openai/gpt-5.3-codex"
   | (string & {});
 
 function toServerModel(model: QgridModel): string {
