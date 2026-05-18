@@ -45,7 +45,7 @@ import {
   dedupeAndFlatten,
   useRefreshable,
 } from "./sonamu.shared";
-import { TokenListParams, TokenSaveParams } from "./token/token.types";
+import { TokenListParams, TokenSaveParams, TokenCredentials } from "./token/token.types";
 
 export namespace TokenService {
   export async function getToken<T extends TokenSubsetKey>(
@@ -411,57 +411,47 @@ export namespace QgridService {
     );
 
   export async function addToken(
-    token: string,
+    provider: string,
+    credentials: TokenCredentials,
     name: string,
-    refreshToken?: string,
   ): Promise<{ added: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/addToken`,
-      data: { token, name, refreshToken },
+      data: { provider, credentials, name },
     });
   }
 
   export const useAddTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { token: string; name: string; refreshToken: string }) =>
-        addToken(params.token, params.name, params.refreshToken),
+      mutationFn: (params: { provider: string; credentials: TokenCredentials; name: string }) =>
+        addToken(params.provider, params.credentials, params.name),
     });
 
-  export async function updateToken(
-    token: string,
-    name?: string,
-    newToken?: string,
-    refreshToken?: string,
-  ): Promise<{ updated: boolean }> {
+  export async function updateToken(id: number, name?: string): Promise<{ updated: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/updateToken`,
-      data: { token, name, newToken, refreshToken },
+      data: { id, name },
     });
   }
 
   export const useUpdateTokenMutation = () =>
     useMutation({
-      mutationFn: (params: {
-        token: string;
-        name: string;
-        newToken: string;
-        refreshToken: string;
-      }) => updateToken(params.token, params.name, params.newToken, params.refreshToken),
+      mutationFn: (params: { id: number; name: string }) => updateToken(params.id, params.name),
     });
 
-  export async function removeToken(token: string): Promise<{ removed: boolean }> {
+  export async function removeToken(id: number): Promise<{ removed: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/removeToken`,
-      data: { token },
+      data: { id },
     });
   }
 
   export const useRemoveTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { token: string }) => removeToken(params.token),
+      mutationFn: (params: { id: number }) => removeToken(params.id),
     });
 
   export async function toggleToken(id: number): Promise<{ active: boolean }> {
@@ -488,6 +478,19 @@ export namespace QgridService {
   export const useOauthStartMutation = () =>
     useMutation({
       mutationFn: (params: { name: string }) => oauthStart(params.name),
+    });
+
+  export async function oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/oauthStartOpenAI`,
+      data: { name },
+    });
+  }
+
+  export const useOauthStartOpenAIMutation = () =>
+    useMutation({
+      mutationFn: (params: { name: string }) => oauthStartOpenAI(params.name),
     });
 
   export async function usage(tokenName?: string): Promise<UsageResponse> {

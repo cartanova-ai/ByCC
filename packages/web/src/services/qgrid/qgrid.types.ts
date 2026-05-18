@@ -51,6 +51,7 @@ export type RemoveTokenInput = z.infer<typeof RemoveTokenInput>;
 export const TokenStats = z.object({
   token: z.string(),
   name: z.string(),
+  provider: z.string(),
   requests: z.number(),
 });
 export type TokenStats = z.infer<typeof TokenStats>;

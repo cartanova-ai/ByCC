@@ -61,11 +61,9 @@ export const tokenSubsetQueries = {
     return qbWrapper.from("tokens").select({
       id: "tokens.id",
       created_at: "tokens.created_at",
-      token: "tokens.token",
+      provider: "tokens.provider",
+      credentials: "tokens.credentials",
       name: "tokens.name",
-      refresh_token: "tokens.refresh_token",
-      expires_at: "tokens.expires_at",
-      account_uuid: "tokens.account_uuid",
       active: "tokens.active",
       ord: "tokens.ord",
     });

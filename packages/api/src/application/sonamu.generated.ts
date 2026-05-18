@@ -8,6 +8,26 @@
 import { zArrayable, SonamuQueryMode, ApplySonamuFilter } from "sonamu";
 import { z } from "zod";
 
+// CustomScalar: TokenCredentials
+const TokenCredentials = z.union([
+  z.object({
+    accessToken: z.string(),
+    refreshToken: z.string(),
+    expiresAt: z.number(),
+    accountUuid: z.string(),
+  }),
+  z.object({
+    accessToken: z.string(),
+    refreshToken: z.string(),
+    idToken: z.string().optional(),
+    accessTokenExpiresAt: z.number(),
+    idTokenExpiresAt: z.number().optional(),
+    accountId: z.string(),
+    planType: z.string().optional(),
+  }),
+]);
+type TokenCredentials = z.infer<typeof TokenCredentials>;
+
 // Enums: RequestLog
 export const RequestLogOrderBy = z.enum(["id-desc"]).describe("RequestLogOrderBy");
 export type RequestLogOrderBy = z.infer<typeof RequestLogOrderBy>;
@@ -63,24 +83,14 @@ export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
 export const TokenBaseSchema = z.object({
   id: z.int(),
   created_at: z.date(),
-  token: z.string(),
+  provider: z.string().max(20),
+  credentials: TokenCredentials,
   name: z.string(),
-  refresh_token: z.string().nullable(),
-  expires_at: z.bigint().nullable(),
-  account_uuid: z.string().nullable(),
   active: z.boolean(),
   ord: z.int(),
 });
 export type TokenBaseSchema = z.infer<typeof TokenBaseSchema> & {
-  readonly __hasDefault__: readonly [
-    "created_at",
-    "refresh_token",
-    "expires_at",
-    "account_uuid",
-    "active",
-    "ord",
-    "id",
-  ];
+  readonly __hasDefault__: readonly ["created_at", "active", "ord", "id"];
 };
 
 // BaseListParams: RequestLog
@@ -112,7 +122,6 @@ export const TokenBaseListParams = z
     queryMode: SonamuQueryMode,
     id: zArrayable(z.number().int().positive()),
     sonamuFilter: z.custom<ApplySonamuFilter<TokenBaseSchema, never, never>>(),
-    token: z.string(),
   })
   .partial();
 export type TokenBaseListParams = z.infer<typeof TokenBaseListParams>;
@@ -160,11 +169,9 @@ export type RequestLogSubsetKey = z.infer<typeof RequestLogSubsetKey>;
 export const TokenSubsetA = z.object({
   id: z.int(),
   created_at: z.date(),
-  token: z.string(),
+  provider: z.string().max(20),
+  credentials: TokenCredentials,
   name: z.string(),
-  refresh_token: z.string().nullable(),
-  expires_at: z.bigint().nullable(),
-  account_uuid: z.string().nullable(),
   active: z.boolean(),
   ord: z.int(),
 });
