@@ -1,10 +1,13 @@
 import { getLogger } from "@logtape/logtape";
 import { type FastifyReply } from "fastify";
 import { api, BaseFrameClass } from "sonamu";
+import { getCacheManagerRef } from "sonamu/cache";
 
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
 import { TokenModel } from "../token/token.model";
-import { type RefreshTokenParams } from "../token/token.types";
+import { TokenCredentials } from "../token/token.types";
+import { type TokenSubsetA } from "../sonamu.generated";
+import { getAccessToken, getExpiresAt, getRefreshToken } from "../../utils/providers/common/credentials";
 import {
   buildAuthUrl,
   exchangeCodeForTokens,
@@ -12,6 +15,11 @@ import {
   generatePKCE,
   refreshAccessToken,
 } from "./oauth";
+import {
+  buildOpenAIAuthUrl,
+  exchangeOpenAICode,
+  generateOpenAIPKCE,
+} from "../../utils/providers/openai/openai-oauth";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type CliResult,
@@ -22,7 +30,30 @@ import {
   type UsageResponse,
 } from "./qgrid.types";
 
-const pendingOAuth = new Map<string, { codeVerifier: string; name: string; redirectUri: string }>();
+type PendingOAuth = { codeVerifier: string; name: string; redirectUri: string };
+const OAUTH_STATE_PREFIX = "oauth:state:";
+const OAUTH_STATE_TTL = "5m";
+
+async function setOAuthState(state: string, data: PendingOAuth): Promise<void> {
+  const cache = getCacheManagerRef();
+  if (!cache) throw new Error("CacheManager not initialized");
+  await cache.set({ key: `${OAUTH_STATE_PREFIX}${state}`, value: JSON.stringify(data), ttl: OAUTH_STATE_TTL });
+}
+
+async function getOAuthState(state: string): Promise<PendingOAuth | undefined> {
+  const cache = getCacheManagerRef();
+  if (!cache) throw new Error("CacheManager not initialized");
+  const raw = await cache.get<string>({ key: `${OAUTH_STATE_PREFIX}${state}` });
+  if (!raw) return undefined;
+  return JSON.parse(raw) as PendingOAuth;
+}
+
+async function deleteOAuthState(state: string): Promise<void> {
+  const cache = getCacheManagerRef();
+  if (!cache) return;
+  await cache.delete(`${OAUTH_STATE_PREFIX}${state}`);
+}
+
 const logger = getLogger(["qgrid"]);
 const oauthLogger = getLogger(["qgrid", "oauth"]);
 
@@ -82,12 +113,12 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async addToken(token: string, name: string, refreshToken?: string): Promise<{ added: boolean }> {
+  async addToken(provider: string, credentials: TokenCredentials, name: string): Promise<{ added: boolean }> {
     await TokenModel.save([
       {
-        token,
+        provider,
+        credentials,
         name,
-        ...(refreshToken && refreshToken.length > 0 ? { refresh_token: refreshToken } : {}),
       },
     ]);
     return { added: true };
@@ -95,30 +126,26 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async updateToken(
-    token: string,
+    id: number,
     name?: string,
-    newToken?: string,
-    refreshToken?: string,
   ): Promise<{ updated: boolean }> {
-    const entry = await TokenModel.findByToken("A", token);
+    const entry = await TokenModel.findOne("A", { id });
     if (!entry) return { updated: false };
 
-    const hasNewToken = newToken !== undefined && newToken.length > 0;
-    const hasRefreshToken = refreshToken !== undefined && refreshToken.length > 0;
     await TokenModel.save([
       {
         id: entry.id,
-        token: hasNewToken ? newToken : entry.token,
+        provider: entry.provider,
+        credentials: entry.credentials,
         name: name !== undefined ? name : entry.name,
-        ...(hasRefreshToken ? { refresh_token: refreshToken } : {}),
       },
     ]);
     return { updated: true };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async removeToken(token: string): Promise<{ removed: boolean }> {
-    const entry = await TokenModel.findByToken("A", token);
+  async removeToken(id: number): Promise<{ removed: boolean }> {
+    const entry = await TokenModel.findOne("A", { id });
     if (!entry) return { removed: false };
     await TokenModel.del([entry.id]);
     return { removed: true };
@@ -133,7 +160,7 @@ class QgridFrameClass extends BaseFrameClass {
     if (!entry) return { active: false };
 
     const newActive = !entry.active;
-    await TokenModel.save([{ id, token: entry.token, active: newActive, name: entry.name }]);
+    await TokenModel.save([{ id, provider: entry.provider, credentials: entry.credentials, active: newActive, name: entry.name }]);
     return { active: newActive };
   }
 
@@ -145,18 +172,18 @@ class QgridFrameClass extends BaseFrameClass {
     const redirectUri = `http://localhost:${serverPort}/callback`;
     const authUrl = buildAuthUrl(codeChallenge, state, redirectUri);
 
-    pendingOAuth.set(state, { codeVerifier, name, redirectUri });
-    setTimeout(() => pendingOAuth.delete(state), 300_000);
+    await setOAuthState(state, { codeVerifier, name, redirectUri });
 
     return { authUrl };
   }
 
   async handleOAuthCallback(code: string, state: string, reply: FastifyReply): Promise<void> {
-    const pending = pendingOAuth.get(state);
+    const pending = await getOAuthState(state);
     if (!pending) {
+      logger.warn("oauth callback: invalid_state");
       return reply.redirect("/?oauth=error&reason=invalid_state");
     }
-    pendingOAuth.delete(state);
+    await deleteOAuthState(state);
 
     try {
       const tokens = await exchangeCodeForTokens(
@@ -167,7 +194,7 @@ class QgridFrameClass extends BaseFrameClass {
       );
 
       if (tokens.accountUuid) {
-        const oldEntries = await TokenModel.findByAccountUuid("A", tokens.accountUuid);
+        const oldEntries = await TokenModel.findByAccountIdentifier("A", "anthropic", tokens.accountUuid);
         if (oldEntries.length > 0) {
           await TokenModel.del(oldEntries.map((o) => o.id));
         }
@@ -175,15 +202,70 @@ class QgridFrameClass extends BaseFrameClass {
 
       await TokenModel.save([
         {
-          token: tokens.accessToken,
+          provider: "anthropic",
+          credentials: {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt ?? 0,
+            accountUuid: tokens.accountUuid ?? "",
+          },
           name: pending.name,
-          refresh_token: tokens.refreshToken,
-          expires_at: tokens.expiresAt ? BigInt(tokens.expiresAt) : null,
-          account_uuid: tokens.accountUuid,
         },
       ]);
 
       return reply.redirect(`/?oauth=success&name=${encodeURIComponent(pending.name)}`);
+    } catch (e) {
+      return reply.redirect(`/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`);
+    }
+  }
+
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
+    const { codeVerifier, codeChallenge, state } = generateOpenAIPKCE();
+
+    const serverPort = process.env.PORT ?? "44900";
+    const redirectUri = `http://localhost:${serverPort}/callback/openai`;
+    const authUrl = buildOpenAIAuthUrl(codeChallenge, state, redirectUri);
+
+    await setOAuthState(state, { codeVerifier, name, redirectUri });
+
+    return { authUrl };
+  }
+
+  async handleOpenAICallback(code: string, state: string, reply: FastifyReply): Promise<void> {
+    const pending = await getOAuthState(state);
+    if (!pending) {
+      return reply.redirect("/?oauth=error&reason=invalid_state");
+    }
+    await deleteOAuthState(state);
+
+    try {
+      const tokens = await exchangeOpenAICode(code, pending.codeVerifier, pending.redirectUri);
+
+      if (tokens.accountId) {
+        const oldEntries = await TokenModel.findByAccountIdentifier("A", "openai", tokens.accountId);
+        if (oldEntries.length > 0) {
+          await TokenModel.del(oldEntries.map((o) => o.id));
+        }
+      }
+
+      await TokenModel.save([
+        {
+          provider: "openai",
+          credentials: {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            idToken: tokens.idToken,
+            accessTokenExpiresAt: tokens.expiresIn
+              ? Date.now() + tokens.expiresIn * 1000
+              : Date.now() + 10 * 24 * 3600 * 1000,
+            accountId: tokens.accountId ?? "",
+          },
+          name: pending.name,
+        },
+      ]);
+
+      return reply.redirect(`/?oauth=success&name=${encodeURIComponent(pending.name)}&provider=openai`);
     } catch (e) {
       return reply.redirect(`/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`);
     }
@@ -194,14 +276,27 @@ class QgridFrameClass extends BaseFrameClass {
     const { rows: allTokens } = await TokenModel.findMany("A");
     const entry = tokenName
       ? allTokens.find((e) => e.name === tokenName)
-      : allTokens.findLast((e) => e.active);
+      : allTokens.findLast((e) => e.active && e.provider === "anthropic");
 
     if (!entry) return { error: "NOT_FOUND" };
 
-    let accessToken = entry.token;
-    const isExpired = entry.expires_at && Number(entry.expires_at) < Date.now();
+    if (entry.provider === "openai") {
+      try {
+        const rateLimits = await QgridDispatcher.openaiDispatcher?.getRateLimits(entry.name);
+        return rateLimits as UsageResponse;
+      } catch (e) {
+        return { error: `OpenAI usage failed: ${(e as Error).message}` };
+      }
+    }
 
-    if (isExpired && entry.refresh_token) {
+    if (entry.provider !== "anthropic") {
+      return { error: `usage API not supported for provider: ${entry.provider}` };
+    }
+
+    let accessToken = getAccessToken(entry.credentials);
+    const isExpired = getExpiresAt(entry.credentials) < Date.now();
+
+    if (isExpired && getRefreshToken(entry.credentials)) {
       try {
         accessToken = await this.refreshToken(entry);
       } catch (e) {
@@ -212,7 +307,7 @@ class QgridFrameClass extends BaseFrameClass {
 
     const result = await fetchUsage(accessToken);
 
-    if (result.error && entry.refresh_token) {
+    if (result.error && getRefreshToken(entry.credentials)) {
       try {
         accessToken = await this.refreshToken(entry);
         return await fetchUsage(accessToken);
@@ -225,16 +320,23 @@ class QgridFrameClass extends BaseFrameClass {
     return result;
   }
 
-  async refreshToken(token: RefreshTokenParams): Promise<string> {
-    if (!token.refresh_token) throw new Error("No refresh token");
-    const refreshed = await refreshAccessToken(token.refresh_token);
+  async refreshToken(token: TokenSubsetA): Promise<string> {
+    const creds = token.credentials;
+    const rt = getRefreshToken(creds);
+    if (!rt) throw new Error("No refresh token");
+    const refreshed = await refreshAccessToken(rt);
+    const updated = TokenCredentials.parse({
+      ...creds,
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: refreshed.expiresAt,
+    });
     await TokenModel.save([
       {
         id: token.id,
-        token: refreshed.accessToken,
-        refresh_token: refreshed.refreshToken,
-        expires_at: BigInt(refreshed.expiresAt),
-        name: token.name ?? "",
+        provider: token.provider,
+        credentials: updated,
+        name: token.name,
       },
     ]);
     return refreshed.accessToken;
