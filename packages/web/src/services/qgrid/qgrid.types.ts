@@ -63,30 +63,18 @@ export const OAuthStartResult = z.object({
 });
 export type OAuthStartResult = z.infer<typeof OAuthStartResult>;
 
-const RateLimit = z
+const RateWindow = z
   .object({
     utilization: z.number().nullable(),
-    resets_at: z.string().nullable(),
+    resetsAt: z.string().nullable(),
   })
   .nullable();
 
 export const UsageResponse = z.object({
   error: z.string().optional(),
-  five_hour: RateLimit.optional(),
-  seven_day: RateLimit.optional(),
-  seven_day_opus: RateLimit.optional(),
-  seven_day_sonnet: RateLimit.optional(),
-  seven_day_oauth_apps: RateLimit.optional(),
-  seven_day_cowork: RateLimit.optional(),
-  extra_usage: z
-    .object({
-      is_enabled: z.boolean(),
-      monthly_limit: z.number().nullable(),
-      used_credits: z.number().nullable(),
-      utilization: z.number().nullable(),
-    })
-    .nullable()
-    .optional(),
+  provider: z.string().optional(),
+  fiveHour: RateWindow.optional(),
+  sevenDay: RateWindow.optional(),
 });
 export type UsageResponse = z.infer<typeof UsageResponse>;
 

@@ -9,6 +9,7 @@ import { TokenCredentials } from "../token/token.types";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { getAccessToken, getExpiresAt, getRefreshToken } from "../../utils/providers/common/credentials";
 import {
+  type AnthropicUsageRaw,
   buildAuthUrl,
   exchangeCodeForTokens,
   fetchUsage,
@@ -51,7 +52,7 @@ async function getOAuthState(state: string): Promise<PendingOAuth | undefined> {
 async function deleteOAuthState(state: string): Promise<void> {
   const cache = getCacheManagerRef();
   if (!cache) return;
-  await cache.delete(`${OAUTH_STATE_PREFIX}${state}`);
+  await cache.delete({ key: `${OAUTH_STATE_PREFIX}${state}` });
 }
 
 const logger = getLogger(["qgrid"]);
@@ -282,8 +283,22 @@ class QgridFrameClass extends BaseFrameClass {
 
     if (entry.provider === "openai") {
       try {
-        const rateLimits = await QgridDispatcher.openaiDispatcher?.getRateLimits(entry.name);
-        return rateLimits as UsageResponse;
+        const raw = (await QgridDispatcher.openaiDispatcher?.getRateLimits(entry.name)) as {
+          rateLimits?: {
+            primary?: { usedPercent: number; windowDurationMins: number; resetsAt: number };
+            secondary?: { usedPercent: number; windowDurationMins: number; resetsAt: number };
+          };
+        };
+        const rl = raw?.rateLimits;
+        return {
+          provider: "openai",
+          fiveHour: rl?.primary
+            ? { utilization: rl.primary.usedPercent / 100, resetsAt: new Date(rl.primary.resetsAt * 1000).toISOString() }
+            : null,
+          sevenDay: rl?.secondary
+            ? { utilization: rl.secondary.usedPercent / 100, resetsAt: new Date(rl.secondary.resetsAt * 1000).toISOString() }
+            : null,
+        };
       } catch (e) {
         return { error: `OpenAI usage failed: ${(e as Error).message}` };
       }
@@ -305,19 +320,20 @@ class QgridFrameClass extends BaseFrameClass {
       }
     }
 
-    const result = await fetchUsage(accessToken);
-
-    if (result.error && getRefreshToken(entry.credentials)) {
+    const raw = await fetchUsage(accessToken);
+    if (raw.error && getRefreshToken(entry.credentials)) {
       try {
         accessToken = await this.refreshToken(entry);
-        return await fetchUsage(accessToken);
+        const retried = await fetchUsage(accessToken);
+        if (retried.error) return { error: retried.error };
+        return convertAnthropicUsage(retried);
       } catch (e) {
         oauthLogger.warn(`refresh failed for ${entry.name}: ${(e as Error).message}`);
         return { error: "re-login required" };
       }
     }
-
-    return result;
+    if (raw.error) return { error: raw.error };
+    return convertAnthropicUsage(raw);
   }
 
   async refreshToken(token: TokenSubsetA): Promise<string> {
@@ -353,3 +369,15 @@ class QgridFrameClass extends BaseFrameClass {
 }
 
 export const QgridFrame = new QgridFrameClass();
+
+function convertAnthropicUsage(raw: AnthropicUsageRaw): UsageResponse {
+  return {
+    provider: "anthropic",
+    fiveHour: raw.five_hour
+      ? { utilization: raw.five_hour.utilization, resetsAt: raw.five_hour.resets_at }
+      : null,
+    sevenDay: raw.seven_day
+      ? { utilization: raw.seven_day.utilization, resetsAt: raw.seven_day.resets_at }
+      : null,
+  };
+}

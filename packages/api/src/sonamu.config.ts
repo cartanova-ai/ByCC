@@ -2,7 +2,6 @@ import path from "path";
 
 import { getConsoleSink } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
-import type { FastifyReply } from "fastify";
 import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";

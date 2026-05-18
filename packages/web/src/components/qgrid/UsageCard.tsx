@@ -80,38 +80,24 @@ function TokenUsage({ token }: { token: Token }) {
     );
   }
 
-  if (!data?.five_hour) {
+  if (!data?.fiveHour && !data?.sevenDay) {
     return <p className="text-[11px] text-sand-400 py-1">No usage data</p>;
   }
 
   return (
     <div className="space-y-1.5 py-1">
-      {data.five_hour && (
+      {data.fiveHour && (
         <UsageRow
           label="5h"
-          utilization={data.five_hour.utilization}
-          resetsAt={data.five_hour.resets_at}
+          utilization={data.fiveHour.utilization}
+          resetsAt={data.fiveHour.resetsAt}
         />
       )}
-      {data.seven_day && (
+      {data.sevenDay && (
         <UsageRow
-          label="7d All"
-          utilization={data.seven_day.utilization}
-          resetsAt={data.seven_day.resets_at}
-        />
-      )}
-      {data.seven_day_sonnet && (
-        <UsageRow
-          label="7d Sonnet"
-          utilization={data.seven_day_sonnet.utilization}
-          resetsAt={data.seven_day_sonnet.resets_at}
-        />
-      )}
-      {data.seven_day_opus && (
-        <UsageRow
-          label="7d Opus"
-          utilization={data.seven_day_opus.utilization}
-          resetsAt={data.seven_day_opus.resets_at}
+          label="7d"
+          utilization={data.sevenDay.utilization}
+          resetsAt={data.sevenDay.resetsAt}
         />
       )}
     </div>
@@ -150,6 +136,9 @@ function SortableTokenCard({ token }: { token: Token }) {
         <span className="text-sm font-medium text-sand-800 truncate">
           {token.name ?? "Unnamed"}
         </span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 bg-sand-200 text-sand-500 uppercase">
+          {token.provider}
+        </span>
         <span
           className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${token.active ? "bg-sage-100 text-sage-600" : "bg-sand-200 text-sand-500"}`}
         >
@@ -164,12 +153,16 @@ function SortableTokenCard({ token }: { token: Token }) {
   );
 }
 
+const PROVIDERS = ["all", "openai", "anthropic"] as const;
+type ProviderFilter = (typeof PROVIDERS)[number];
+
 export function UsageCard() {
   const { data, isLoading } = TokenService.useTokens("A", { orderBy: "ord-asc" });
   const queryClient = useQueryClient();
   const reorderMutation = TokenService.useReorderMutation();
 
   const [localTokens, setLocalTokens] = useState<Token[]>([]);
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
 
   useEffect(() => {
     if (data?.rows) setLocalTokens(data.rows);
@@ -237,15 +230,39 @@ export function UsageCard() {
     );
   }
 
+  const filteredTokens =
+    providerFilter === "all"
+      ? localTokens
+      : localTokens.filter((t) => t.provider === providerFilter);
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={localTokens.map((t) => String(t.id))} strategy={rectSortingStrategy}>
-        <div className="grid grid-cols-2 gap-3">
-          {localTokens.map((token) => (
-            <SortableTokenCard key={token.id} token={token} />
-          ))}
-        </div>
-      </SortableContext>
-    </DndContext>
+    <div className="space-y-3">
+      <div className="flex gap-1">
+        {PROVIDERS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors duration-150 ${
+              providerFilter === p
+                ? "bg-sand-900 text-white"
+                : "bg-sand-100 text-sand-600 hover:bg-sand-200"
+            }`}
+            onClick={() => setProviderFilter(p)}
+          >
+            {p === "all" ? "All" : p === "openai" ? "OpenAI" : "Anthropic"}
+          </button>
+        ))}
+      </div>
+
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={filteredTokens.map((t) => String(t.id))} strategy={rectSortingStrategy}>
+          <div className="grid grid-cols-2 gap-3">
+            {filteredTokens.map((token) => (
+              <SortableTokenCard key={token.id} token={token} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
   );
 }

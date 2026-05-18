@@ -5,7 +5,11 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { getLogger } from "@logtape/logtape";
 
-import { type UsageResponse } from "./qgrid.types";
+export type AnthropicUsageRaw = {
+  error?: string;
+  five_hour?: { utilization: number | null; resets_at: string | null } | null;
+  seven_day?: { utilization: number | null; resets_at: string | null } | null;
+};
 
 const logger = getLogger(["qgrid", "oauth"]);
 
@@ -136,10 +140,10 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
   };
 }
 
-const usageCache: Record<string, { data: UsageResponse; cachedAt: number }> = {};
+const usageCache: Record<string, { data: AnthropicUsageRaw; cachedAt: number }> = {};
 const USAGE_API_CACHE_TTL = 60_000; // 1분
 
-export async function fetchUsage(accessToken: string): Promise<UsageResponse> {
+export async function fetchUsage(accessToken: string): Promise<AnthropicUsageRaw> {
   const cacheKey = accessToken.slice(-10);
   const cached = usageCache[cacheKey];
   if (cached && Date.now() - cached.cachedAt < USAGE_API_CACHE_TTL) {
@@ -177,7 +181,7 @@ export async function fetchUsage(accessToken: string): Promise<UsageResponse> {
     return errorResult;
   }
 
-  const data = (await res.json()) as UsageResponse;
+  const data = (await res.json()) as AnthropicUsageRaw;
   // cache invalidate
   usageCache[cacheKey] = { data, cachedAt: Date.now() };
   return data;
