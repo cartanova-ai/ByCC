@@ -179,14 +179,12 @@ export class TokenSubscriber {
           ?.onTokenAdded(payload.id, row.name, creds as OpenAICredentials)
           .catch((e) => logger.warn(`openai worker spawn failed: ${(e as Error).message}`));
       } else if (row.active) {
-        this.dispatcher.openaiDispatcher
-          ?.onTokenActivated(payload.id);
+        this.dispatcher.openaiDispatcher?.onTokenActivated(payload.id);
         this.dispatcher.openaiDispatcher
           ?.onTokenUpdated(payload.id, row.name, creds as OpenAICredentials)
           .catch((e) => logger.warn(`openai worker update failed: ${(e as Error).message}`));
       } else {
-        this.dispatcher.openaiDispatcher
-          ?.onTokenDeactivated(payload.id);
+        this.dispatcher.openaiDispatcher?.onTokenDeactivated(payload.id);
       }
     }
     logger.info(`NOTIFY ${payload.op} id=${payload.id} (${row.name}) active=${row.active}`);

@@ -142,7 +142,8 @@ Content-Type: application/json
     "timeout": 0,
     "jsonSchema": "JSONSCHEMA",
     "effort": "low",
-    "history": "HISTORY"
+    "history": "HISTORY",
+    "projectName": "PROJECTNAME"
   }
 }
 

@@ -111,11 +111,14 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
   }
 
   if (data?.error) {
+    const isExpired = data.error.includes("re-login") || data.error.includes("token_revoked") || data.error.includes("401");
     return (
       <div className="py-1">
-        <p className="text-[11px] text-amber-600">Session expired</p>
+        <p className="text-[11px] text-amber-600">
+          {isExpired ? "Session expired" : "Unavailable"}
+        </p>
         <p className="text-[10px] text-sand-400 mt-0.5">
-          Please re-login via OAuth or update your token
+          {isExpired ? "Please re-login via OAuth" : data.error}
         </p>
       </div>
     );

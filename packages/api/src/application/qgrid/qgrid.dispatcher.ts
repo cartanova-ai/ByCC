@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
+import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
 import {
   getAccessToken,
   getExpiresAt,
@@ -120,11 +121,11 @@ export class QgridDispatcherClass {
         if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
         const result = await this.openaiDispatcher.generate({
           model: model,
-          input: [{ type: "text", text: input.prompt }],
+          input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
           systemPrompt: input.system,
-          outputSchema: input.jsonSchema ? strictify(JSON.parse(input.jsonSchema)) : undefined,
+          outputSchema: input.jsonSchema ? strictify(JSON.parse(input.jsonSchema)) as JsonValue : undefined,
           effort: input.effort,
-          history: input.history ? (JSON.parse(input.history) as unknown[]) : undefined,
+          history: input.history ? JSON.parse(input.history) : undefined,
         });
         return {
           text: result.text,

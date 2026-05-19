@@ -1,7 +1,7 @@
 [
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
-    "checksum": "0d0e350aac7de676a3b94034d3f3b1a4da8d1561"
+    "checksum": "2f5ad03056b0d7f4952508ab1741c24db16dd605"
   },
   {
     "path": "api/src/application/qgrid/qgrid.types.ts",
@@ -25,7 +25,7 @@
   },
   {
     "path": "api/src/application/sonamu.generated.http",
-    "checksum": "7b80b8b41dc35854ea3c7f27aea6f7fe078e8a3f"
+    "checksum": "865d067dd3f06c9aff9e080ab48f55bfd07688dc"
   },
   {
     "path": "api/src/application/sonamu.generated.sso.ts",

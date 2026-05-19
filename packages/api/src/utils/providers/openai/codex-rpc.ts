@@ -11,11 +11,27 @@ import { createInterface, type Interface } from "node:readline";
 
 import { getLogger } from "@logtape/logtape";
 
+import type { TurnCompletedNotification } from "../../../codex-protocol/v2/TurnCompletedNotification";
+import type { ItemCompletedNotification } from "../../../codex-protocol/v2/ItemCompletedNotification";
+import type { ThreadTokenUsageUpdatedNotification } from "../../../codex-protocol/v2/ThreadTokenUsageUpdatedNotification";
+import type { ErrorNotification } from "../../../codex-protocol/v2/ErrorNotification";
+import type { AgentMessageDeltaNotification } from "../../../codex-protocol/v2/AgentMessageDeltaNotification";
+import type { AccountLoginCompletedNotification } from "../../../codex-protocol/v2/AccountLoginCompletedNotification";
+
 const logger = getLogger(["qgrid", "codex-rpc"]);
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 // ── Types ───────────────────────────────────────────────────────────
+
+export type NotificationMap = {
+  "turn/completed": TurnCompletedNotification;
+  "item/completed": ItemCompletedNotification;
+  "item/agentMessage/delta": AgentMessageDeltaNotification;
+  "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification;
+  "error": ErrorNotification;
+  "account/login/completed": AccountLoginCompletedNotification;
+};
 
 export interface RpcError {
   code: number;
@@ -107,6 +123,8 @@ export class CodexRpcClient {
     this.serverRequestHandlers.set(method, handler);
   }
 
+  onNotification<M extends keyof NotificationMap>(method: M, handler: (params: NotificationMap[M]) => void): void;
+  onNotification(method: string, handler: NotificationHandler): void;
   onNotification(method: string, handler: NotificationHandler): void {
     this.notificationHandlers.set(method, handler);
   }

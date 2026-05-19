@@ -15,4 +15,6 @@ declare module "sonamu" {
   }
 }
 
+export {};
+
 export {}
