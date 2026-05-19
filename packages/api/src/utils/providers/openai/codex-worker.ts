@@ -96,8 +96,12 @@ export class CodexAppServerWorker {
   async initialize(): Promise<void> {
     mkdirSync(this.codexHome, { recursive: true });
 
+    const isolatedCwd = `${this.codexHome}/cwd`;
+    mkdirSync(isolatedCwd, { recursive: true });
+
     this.proc = spawn("codex", ["app-server", "--listen", "stdio://"], {
       stdio: ["pipe", "pipe", "pipe"],
+      cwd: isolatedCwd,
       env: {
         PATH: process.env.PATH,
         TMPDIR: process.env.TMPDIR,
@@ -233,6 +237,7 @@ export class CodexAppServerWorker {
       model: string;
     }>("thread/start", {
       ephemeral: true,
+      cwd: `${this.codexHome}/cwd`,
       developerInstructions: req.developerInstructions ?? "",
       sandbox: "read-only",
       approvalPolicy: "never",
