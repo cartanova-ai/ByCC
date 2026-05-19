@@ -6,7 +6,12 @@ import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
 
+import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
+import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
+import { TokenSubscriber } from "./application/qgrid/token-subscriber";
+import { TokenModel } from "./application/token/token.model";
+import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
 dotenv.config({ path: path.join(import.meta.dirname, "../.env") });
 
@@ -176,7 +181,6 @@ export default defineConfig({
       onStart: async () => {
         // DB 마이그레이션 자동 실행 (테이블 없으면 생성)
         try {
-          const { TokenModel } = await import("./application/token/token.model");
           const knex = TokenModel.getDB("w");
           const migrationsDir = path.join(import.meta.dirname, "../src/migrations");
           const [batch, log] = await knex.migrate.latest({
@@ -189,10 +193,6 @@ export default defineConfig({
         } catch (e) {
           console.warn(`⚠ Migration skipped: ${(e as Error).message}`);
         }
-
-        const { QgridDispatcher } = await import("./application/qgrid/qgrid.dispatcher");
-        const { ensureTokensTrigger } = await import("./application/qgrid/token-trigger-setup");
-        const { TokenSubscriber } = await import("./application/qgrid/token-subscriber");
 
         let triggerReady = true;
         try {
@@ -211,7 +211,6 @@ export default defineConfig({
 
         // OpenAI dispatcher (codex app-server worker pool)
         try {
-          const { OpenAIDispatcher } = await import("./utils/providers/openai/openai-dispatcher");
           const openaiDispatcher = new OpenAIDispatcher();
           await openaiDispatcher.start();
           QgridDispatcher.openaiDispatcher = openaiDispatcher;
@@ -227,7 +226,6 @@ export default defineConfig({
         console.log(`🌲 Server listening on http://${host}:${port} (${tokenInfo}${triggerInfo})`);
       },
       onShutdown: async () => {
-        const { QgridDispatcher } = await import("./application/qgrid/qgrid.dispatcher");
         if (QgridDispatcher.openaiDispatcher) {
           await QgridDispatcher.openaiDispatcher.stop();
         }
