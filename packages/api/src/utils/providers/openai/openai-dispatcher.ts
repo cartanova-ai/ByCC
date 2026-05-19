@@ -29,12 +29,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   private workerPool = new Map<number, CodexAppServerWorker>();
   private picker = new RoundRobinPicker<WorkerCandidate>();
 
+  // 비활성 토큰도 worker를 띄움 (usage 조회용). query 라우팅에서만 active 필터.
   async start(): Promise<void> {
-    const tokens = await TokenModel.findActiveByProvider("A", "openai");
-    logger.info(`starting ${tokens.length} openai workers`);
+    const { rows } = await TokenModel.findMany("A");
+    const openaiTokens = rows.filter((t) => t.provider === "openai");
+    logger.info(`starting ${openaiTokens.length} openai workers`);
 
     await Promise.allSettled(
-      tokens.map((t) => this.spawnWorker(t.id, t.name, t.credentials as OpenAICredentials)),
+      openaiTokens.map(async (t) => {
+        await this.spawnWorker(t.id, t.name, t.credentials as OpenAICredentials);
+        if (!t.active) this.onTokenDeactivated(t.id);
+      }),
     );
   }
 
@@ -60,7 +65,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async onTokenUpdated(id: number, name: string, credentials: OpenAICredentials): Promise<void> {
-    // credentials 변경 시 worker 재시작
     const existing = this.workerPool.get(id);
     if (existing) {
       await existing.kill();
@@ -69,10 +73,26 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     await this.spawnWorker(id, name, credentials);
   }
 
+  onTokenDeactivated(id: number): void {
+    const worker = this.workerPool.get(id);
+    if (worker) {
+      worker.active = false;
+      logger.info(`worker deactivated: ${worker.tokenName}`);
+    }
+  }
+
+  onTokenActivated(id: number): void {
+    const worker = this.workerPool.get(id);
+    if (worker) {
+      worker.active = true;
+      logger.info(`worker activated: ${worker.tokenName}`);
+    }
+  }
+
   // ── Generate ────────────────────────────────────────────────────
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    const workers = [...this.workerPool.values()].filter((w) => w.isReady);
+    const workers = [...this.workerPool.values()].filter((w) => w.isReady && w.active);
     if (workers.length === 0) {
       throw new Error("NO_OPENAI_WORKERS");
     }
@@ -106,6 +126,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       outputSchema: req.outputSchema,
       effort: req.effort ?? DEFAULT_EFFORT,
       model: req.model,
+      history: req.history,
     };
 
     const result: TurnResult = await worker.executeTurn(turnReq);

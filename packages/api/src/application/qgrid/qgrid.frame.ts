@@ -287,7 +287,6 @@ class QgridFrameClass extends BaseFrameClass {
       : allTokens.findLast((e) => e.active && e.provider === "anthropic");
 
     if (!entry) return { error: "NOT_FOUND" };
-    if (!entry.active) return { provider: entry.provider, fiveHour: null, sevenDay: null };
 
     if (entry.provider === "openai") {
       try {

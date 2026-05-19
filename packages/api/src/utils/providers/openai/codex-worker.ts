@@ -36,6 +36,7 @@ export interface TurnRequest {
   outputSchema?: unknown;
   effort?: string;
   model?: string;
+  history?: unknown[];
 }
 
 export interface TurnResult {
@@ -84,6 +85,7 @@ export class CodexAppServerWorker {
   private restartAttempts = 0;
   private ready = false;
   private destroyed = false;
+  active = true;
 
   constructor(private config: WorkerConfig) {
     this.turnLimiter = new Semaphore(config.maxConcurrentTurns ?? 1);
@@ -299,7 +301,13 @@ export class CodexAppServerWorker {
     const threadId = threadResult.thread.id;
     const model = req.model ?? threadResult.model;
 
-    // turn/start
+    if (req.history && req.history.length > 0) {
+      await this.rpc.request("thread/inject_items", {
+        threadId,
+        items: req.history,
+      });
+    }
+
     await this.rpc.request("turn/start", {
       threadId,
       input: req.input,
