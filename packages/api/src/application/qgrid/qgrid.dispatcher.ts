@@ -124,6 +124,7 @@ export class QgridDispatcherClass {
           systemPrompt: input.system,
           outputSchema: input.jsonSchema ? strictify(JSON.parse(input.jsonSchema)) : undefined,
           effort: input.effort,
+          history: input.history ? (JSON.parse(input.history) as unknown[]) : undefined,
         });
         return {
           text: result.text,

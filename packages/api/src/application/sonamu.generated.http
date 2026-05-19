@@ -135,13 +135,15 @@ POST {{baseUrl}}/api/qgrid/query
 Content-Type: application/json
 
 {
-  "prompt": "PROMPT",
-  "system": "SYSTEM",
-  "timeout": 0,
-  "model": "MODEL",
-  "projectName": "PROJECTNAME",
-  "jsonSchema": "JSONSCHEMA",
-  "effort": "low"
+  "args": {
+    "system": "SYSTEM",
+    "prompt": "PROMPT",
+    "model": "MODEL",
+    "timeout": 0,
+    "jsonSchema": "JSONSCHEMA",
+    "effort": "low",
+    "history": "HISTORY"
+  }
 }
 
 ###

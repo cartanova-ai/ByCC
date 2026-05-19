@@ -17,6 +17,8 @@ export const QueryInput = z.object({
   timeout: z.number().optional(),
   jsonSchema: z.string().optional(),
   effort: Effort.optional(),
+  history: z.string().optional(),
+  projectName: z.string().optional(),
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 

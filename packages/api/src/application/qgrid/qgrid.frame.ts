@@ -22,8 +22,8 @@ import {
 } from "./oauth";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
+  type QueryInput,
   type CliResult,
-  type Effort,
   type HealthResponse,
   type OAuthStartResult,
   type TokenStats,
@@ -67,29 +67,16 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async query(
-    prompt: string,
-    system?: string,
-    timeout?: number,
-    model?: string,
-    projectName?: string,
-    jsonSchema?: string,
-    effort?: Effort,
-    history?: string,
-  ): Promise<CliResult> {
-    const parsedHistory = history ? (JSON.parse(history) as unknown[]) : undefined;
-    const result = await QgridDispatcher.query(
-      { system, prompt, model, jsonSchema, effort, history: parsedHistory },
-      timeout,
-    );
+  async query(args: QueryInput): Promise<CliResult> {
+    const result = await QgridDispatcher.query(args, args.timeout);
 
     RequestLogModel.save([
       {
         token_name: result.tokenName,
-        project_name: projectName && projectName.length > 0 ? projectName : null,
+        project_name: args.projectName?.length ? args.projectName : null,
         model_name: result.model ?? null,
-        user_prompt: prompt,
-        system_prompt: system ?? null,
+        user_prompt: args.prompt,
+        system_prompt: args.system ?? null,
         response: result.text,
         input_tokens: result.usage.input_tokens,
         output_tokens: result.usage.output_tokens,

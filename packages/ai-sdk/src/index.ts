@@ -52,12 +52,14 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
         isToolCallMode = true;
       }
 
+      const { prompt, system, history } = extractPromptAndHistory(options.prompt);
       const body = {
-        prompt: promptToText(options.prompt),
+        prompt,
         model: modelId,
-        system: extractSystemPrompt(options.prompt),
+        system,
         effort,
         ...(outputSchema ? { jsonSchema: JSON.stringify(outputSchema) } : {}),
+        ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
       };
 
       const res = await fetch(`${serverUrl}/api/qgrid/query`, {
@@ -213,48 +215,87 @@ function buildToolCallSchema(tools: LanguageModelV3FunctionTool[]): Record<strin
 
 // ── Prompt helpers ──────────────────────────────────────────────────
 
-function promptToText(prompt: LanguageModelV3Message[]): string {
-  const parts: string[] = [];
+function extractPromptAndHistory(messages: LanguageModelV3Message[]): {
+  prompt: string;
+  system: string | undefined;
+  history: unknown[];
+} {
+  let system: string | undefined;
+  const nonSystem: LanguageModelV3Message[] = [];
 
-  for (const msg of prompt) {
-    if (msg.role === "system") continue;
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      system = extractTextFromContent(msg.content);
+    } else {
+      nonSystem.push(msg);
+    }
+  }
 
-    for (const part of msg.content) {
-      if ("text" in part && typeof part.text === "string") {
-        if (msg.role === "user") {
-          parts.push(part.text);
-        } else if (msg.role === "assistant") {
-          parts.push(`[Assistant]: ${part.text}`);
+  if (nonSystem.length === 0) return { prompt: "", system, history: [] };
+  if (nonSystem.length === 1 && nonSystem[0].role === "user") {
+    return { prompt: extractTextFromContent(nonSystem[0].content), system, history: [] };
+  }
+
+  const last = nonSystem[nonSystem.length - 1];
+  const prompt = last.role === "user" ? extractTextFromContent(last.content) : "";
+  const historyEnd = last.role === "user" ? nonSystem.length - 1 : nonSystem.length;
+
+  const history: unknown[] = [];
+  for (let i = 0; i < historyEnd; i++) {
+    const msg = nonSystem[i];
+    if (msg.role === "user") {
+      history.push({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: extractTextFromContent(msg.content) }],
+      });
+    } else if (msg.role === "assistant") {
+      for (const part of msg.content) {
+        if ("text" in part && typeof part.text === "string") {
+          history.push({
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: part.text }],
+          });
+        } else if ("toolName" in part && part.type === "tool-call") {
+          history.push({
+            type: "function_call",
+            name: part.toolName,
+            arguments: typeof part.input === "string" ? part.input : JSON.stringify(part.input),
+            call_id: part.toolCallId,
+          });
         }
-      } else if ("toolName" in part && part.type === "tool-call") {
-        parts.push(`[Tool Call: ${part.toolName}(${JSON.stringify(part.input)})]`);
-      } else if ("toolName" in part && part.type === "tool-result") {
-        const output = part.output;
-        let text: string;
-        if ("value" in output) {
-          text = typeof output.value === "string" ? output.value : JSON.stringify(output.value);
-        } else {
-          text = JSON.stringify(output);
+      }
+    } else if (msg.role === "tool") {
+      for (const part of msg.content) {
+        if ("toolName" in part && part.type === "tool-result") {
+          const output = part.output;
+          const text =
+            "value" in output
+              ? typeof output.value === "string"
+                ? output.value
+                : JSON.stringify(output.value)
+              : JSON.stringify(output);
+          history.push({
+            type: "function_call_output",
+            call_id: ("toolCallId" in part ? part.toolCallId : "") ?? "",
+            output: text,
+          });
         }
-        parts.push(`[Tool Result: ${part.toolName}]: ${text}`);
       }
     }
   }
 
-  return parts.join("\n\n");
+  return { prompt, system, history };
 }
 
-function extractSystemPrompt(prompt: LanguageModelV3Message[]): string | undefined {
-  for (const msg of prompt) {
-    if (msg.role === "system") {
-      if (typeof msg.content === "string") return msg.content;
-      return (msg.content as Array<{ type: string; text?: string }>)
-        .filter((p) => p.type === "text" && p.text)
-        .map((p) => p.text!)
-        .join("\n");
-    }
+function extractTextFromContent(content: LanguageModelV3Message["content"]): string {
+  if (typeof content === "string") return content;
+  const parts: string[] = [];
+  for (const part of content) {
+    if ("text" in part && typeof part.text === "string") parts.push(part.text);
   }
-  return undefined;
+  return parts.join("\n");
 }
 
 export default qgrid;

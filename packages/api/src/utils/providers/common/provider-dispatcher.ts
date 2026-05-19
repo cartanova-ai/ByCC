@@ -10,6 +10,7 @@ export interface GenerateRequest {
   systemPrompt?: string;
   outputSchema?: unknown;
   effort?: string;
+  history?: unknown[];
   abortSignal?: AbortSignal;
 }
 

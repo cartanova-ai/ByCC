@@ -18,7 +18,7 @@ import { type AxiosProgressEvent } from "axios";
 import qs from "qs";
 
 import {
-  Effort,
+  QueryInput,
   CliResult,
   TokenStats,
   OAuthStartResult,
@@ -309,42 +309,17 @@ export namespace RequestLogService {
 }
 
 export namespace QgridService {
-  export async function query(
-    prompt: string,
-    system?: string,
-    timeout?: number,
-    model?: string,
-    projectName?: string,
-    jsonSchema?: string,
-    effort?: Effort,
-  ): Promise<CliResult> {
+  export async function query(args: QueryInput): Promise<CliResult> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/query`,
-      data: { prompt, system, timeout, model, projectName, jsonSchema, effort },
+      data: { args },
     });
   }
 
   export const useQueryMutation = () =>
     useMutation({
-      mutationFn: (params: {
-        prompt: string;
-        system: string;
-        timeout: number;
-        model: string;
-        projectName: string;
-        jsonSchema: string;
-        effort: Effort;
-      }) =>
-        query(
-          params.prompt,
-          params.system,
-          params.timeout,
-          params.model,
-          params.projectName,
-          params.jsonSchema,
-          params.effort,
-        ),
+      mutationFn: (params: { args: QueryInput }) => query(params.args),
     });
 
   export async function stats(): Promise<TokenStats[]> {
