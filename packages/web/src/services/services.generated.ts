@@ -493,23 +493,23 @@ export namespace QgridService {
       mutationFn: (params: { name: string }) => oauthStartOpenAI(params.name),
     });
 
-  export async function usage(tokenName?: string): Promise<UsageResponse> {
+  export async function usage(tokenId?: number): Promise<UsageResponse> {
     return fetch({
       method: "GET",
-      url: `/api/qgrid/usage?${qs.stringify({ tokenName })}`,
+      url: `/api/qgrid/usage?${qs.stringify({ tokenId })}`,
     });
   }
 
-  export const usageQueryOptions = (tokenName?: string) =>
+  export const usageQueryOptions = (tokenId?: number) =>
     queryOptions({
-      queryKey: ["Qgrid", "usage", tokenName],
-      queryFn: () => usage(tokenName),
+      queryKey: ["Qgrid", "usage", tokenId],
+      queryFn: () => usage(tokenId),
     });
 
-  export const useUsage = (tokenName?: string, options?: { enabled?: boolean }) =>
+  export const useUsage = (tokenId?: number, options?: { enabled?: boolean }) =>
     useRefreshable(
       useQuery({
-        ...usageQueryOptions(tokenName),
+        ...usageQueryOptions(tokenId),
         ...options,
       }),
     );

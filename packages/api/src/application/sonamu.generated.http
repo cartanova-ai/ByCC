@@ -227,7 +227,7 @@ Content-Type: application/json
 ###
 
 GET {{baseUrl}}/api/qgrid/usage
-	?tokenName=TOKENNAME
+	?tokenId=0
 Content-Type: application/json
 
 ###

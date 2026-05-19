@@ -278,10 +278,10 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
-  async usage(tokenName?: string): Promise<UsageResponse> {
+  async usage(tokenId?: number): Promise<UsageResponse> {
     const { rows: allTokens } = await TokenModel.findMany("A");
-    const entry = tokenName
-      ? allTokens.find((e) => e.name === tokenName)
+    const entry = tokenId
+      ? allTokens.find((e) => e.id === tokenId)
       : allTokens.findLast((e) => e.active && e.provider === "anthropic");
 
     if (!entry) return { error: "NOT_FOUND" };

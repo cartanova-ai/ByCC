@@ -100,7 +100,7 @@ function UsageRow({
 }
 
 function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
-  const { data, isLoading } = QgridService.useUsage(token.name);
+  const { data, isLoading } = QgridService.useUsage(token.id);
   if (isLoading) {
     return (
       <div className="animate-pulse space-y-2 py-2">
