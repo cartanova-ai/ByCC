@@ -238,7 +238,9 @@ export class CodexAppServerWorker {
     }>("thread/start", {
       ephemeral: true,
       cwd: `${this.codexHome}/cwd`,
-      baseInstructions: "You are a helpful assistant.",
+      baseInstructions: req.outputSchema
+        ? "You are a helpful assistant. Respond using the provided output schema."
+        : "You are a helpful assistant. Do not use any tools such as shell, file operations, or web search. Respond with text only.",
       developerInstructions: req.developerInstructions ?? "",
       sandbox: "read-only",
       approvalPolicy: "never",
