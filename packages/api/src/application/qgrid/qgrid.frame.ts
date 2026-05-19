@@ -75,9 +75,11 @@ class QgridFrameClass extends BaseFrameClass {
     projectName?: string,
     jsonSchema?: string,
     effort?: Effort,
+    history?: string,
   ): Promise<CliResult> {
+    const parsedHistory = history ? (JSON.parse(history) as unknown[]) : undefined;
     const result = await QgridDispatcher.query(
-      { system, prompt, model, jsonSchema, effort },
+      { system, prompt, model, jsonSchema, effort, history: parsedHistory },
       timeout,
     );
 
@@ -285,6 +287,7 @@ class QgridFrameClass extends BaseFrameClass {
       : allTokens.findLast((e) => e.active && e.provider === "anthropic");
 
     if (!entry) return { error: "NOT_FOUND" };
+    if (!entry.active) return { provider: entry.provider, fiveHour: null, sevenDay: null };
 
     if (entry.provider === "openai") {
       try {
