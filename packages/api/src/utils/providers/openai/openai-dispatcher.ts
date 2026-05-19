@@ -154,6 +154,66 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     return worker.getRateLimits();
   }
 
+  // ── Browser login flow ───────────────────────────────────────────
+
+  private pendingLogin: { worker: CodexAppServerWorker; name: string; timer: ReturnType<typeof setTimeout> } | null = null;
+
+  async startBrowserLogin(name: string): Promise<{ authUrl: string }> {
+    // 기존 pending 정리
+    if (this.pendingLogin) {
+      this.pendingLogin.worker.kill().catch(() => {});
+      clearTimeout(this.pendingLogin.timer);
+      this.pendingLogin = null;
+    }
+
+    const tempId = Date.now();
+    const worker = new CodexAppServerWorker({
+      tokenId: tempId,
+      tokenName: name,
+      accessToken: "",
+      accountId: "",
+    });
+
+    const authUrl = await worker.startBrowserLogin();
+
+    // 5분 후 자동 정리
+    const timer = setTimeout(() => {
+      if (this.pendingLogin?.worker === worker) {
+        logger.warn(`browser login timeout for ${name}, killing worker`);
+        worker.kill().catch(() => {});
+        this.pendingLogin = null;
+      }
+    }, 300_000);
+
+    this.pendingLogin = { worker, name, timer };
+    return { authUrl };
+  }
+
+  get pendingLoginName(): string | null {
+    return this.pendingLogin?.name ?? null;
+  }
+
+  async completeBrowserLogin(): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    idToken?: string;
+    accountId: string;
+  }> {
+    if (!this.pendingLogin) throw new Error("no pending login");
+    const { worker, timer } = this.pendingLogin;
+
+    try {
+      await worker.waitForBrowserLoginComplete();
+      const creds = await worker.readManagedCredentials();
+      if (!creds) throw new Error("failed to read credentials after login");
+      return creds;
+    } finally {
+      clearTimeout(timer);
+      this.pendingLogin = null;
+      await worker.kill().catch(() => {});
+    }
+  }
+
   get workerCount(): number {
     return this.workerPool.size;
   }

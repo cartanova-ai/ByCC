@@ -1,7 +1,7 @@
 [
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
-    "checksum": "bc459e3410640aab4acd90f05a833a40e87618ce"
+    "checksum": "68ae339039ca21dd5209dca370465eec0ee8cd22"
   },
   {
     "path": "api/src/application/qgrid/qgrid.types.ts",
@@ -61,7 +61,7 @@
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "0b064594dba5bb1ff3769afccff9291ae6c50823"
+    "checksum": "9115761d4dbfc0f44823b8505ffad3916b80f1cf"
   },
   {
     "path": "web/src/i18n/en.ts",

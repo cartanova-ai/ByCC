@@ -16,11 +16,6 @@ import {
   generatePKCE,
   refreshAccessToken,
 } from "./oauth";
-import {
-  buildOpenAIAuthUrl,
-  exchangeOpenAICode,
-  generateOpenAIPKCE,
-} from "../../utils/providers/openai/openai-oauth";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type CliResult,
@@ -222,54 +217,38 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
-    const { codeVerifier, codeChallenge, state } = generateOpenAIPKCE();
+    if (!QgridDispatcher.openaiDispatcher) throw new Error("OpenAI dispatcher not initialized");
+    const { authUrl } = await QgridDispatcher.openaiDispatcher.startBrowserLogin(name);
 
-    const serverPort = process.env.PORT ?? "44900";
-    const redirectUri = `http://localhost:${serverPort}/callback/openai`;
-    const authUrl = buildOpenAIAuthUrl(codeChallenge, state, redirectUri);
-
-    await setOAuthState(state, { codeVerifier, name, redirectUri });
+    // fire-and-forget: codex login 완료 대기 → 토큰 저장
+    QgridDispatcher.openaiDispatcher.completeBrowserLogin()
+      .then(async (creds) => {
+        if (creds.accountId) {
+          const oldEntries = await TokenModel.findByAccountIdentifier("A", "openai", creds.accountId);
+          if (oldEntries.length > 0) {
+            await TokenModel.del(oldEntries.map((o) => o.id));
+          }
+        }
+        await TokenModel.save([
+          {
+            provider: "openai",
+            credentials: {
+              accessToken: creds.accessToken,
+              refreshToken: creds.refreshToken,
+              idToken: creds.idToken,
+              accessTokenExpiresAt: Date.now() + 10 * 24 * 3600 * 1000,
+              accountId: creds.accountId,
+            },
+            name,
+          },
+        ]);
+        logger.info(`OpenAI token saved for ${name}`);
+      })
+      .catch((e) => {
+        logger.warn(`OpenAI browser login failed: ${(e as Error).message}`);
+      });
 
     return { authUrl };
-  }
-
-  async handleOpenAICallback(code: string, state: string, reply: FastifyReply): Promise<void> {
-    const pending = await getOAuthState(state);
-    if (!pending) {
-      return reply.redirect("/?oauth=error&reason=invalid_state");
-    }
-    await deleteOAuthState(state);
-
-    try {
-      const tokens = await exchangeOpenAICode(code, pending.codeVerifier, pending.redirectUri);
-
-      if (tokens.accountId) {
-        const oldEntries = await TokenModel.findByAccountIdentifier("A", "openai", tokens.accountId);
-        if (oldEntries.length > 0) {
-          await TokenModel.del(oldEntries.map((o) => o.id));
-        }
-      }
-
-      await TokenModel.save([
-        {
-          provider: "openai",
-          credentials: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            idToken: tokens.idToken,
-            accessTokenExpiresAt: tokens.expiresIn
-              ? Date.now() + tokens.expiresIn * 1000
-              : Date.now() + 10 * 24 * 3600 * 1000,
-            accountId: tokens.accountId ?? "",
-          },
-          name: pending.name,
-        },
-      ]);
-
-      return reply.redirect(`/?oauth=success&name=${encodeURIComponent(pending.name)}&provider=openai`);
-    } catch (e) {
-      return reply.redirect(`/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`);
-    }
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })

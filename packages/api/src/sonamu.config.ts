@@ -118,20 +118,8 @@ export default defineConfig({
           }
         });
 
-        // OAuth 콜백 — OpenAI /callback/openai로 리다이렉트
-        server.get("/callback/openai", async (request, reply) => {
-          const { code, state } = request.query as { code?: string; state?: string };
-          if (!code || !state) {
-            return reply.redirect("/?oauth=error&reason=missing_params");
-          }
-          try {
-            await QgridFrame.handleOpenAICallback(code, state, reply);
-          } catch (e) {
-            return reply.redirect(
-              `/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`,
-            );
-          }
-        });
+        // OpenAI OAuth 는 codex app-server 가 자체 callback 서버를 올림
+        // handleOpenAICallback 불필요 — oauthCompleteOpenAI API 로 완료 확인
       },
     },
     apiConfig: {

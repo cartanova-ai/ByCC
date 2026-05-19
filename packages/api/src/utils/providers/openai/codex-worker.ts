@@ -8,7 +8,7 @@
  * - CODEX_HOME 격리 + env whitelist
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
@@ -93,7 +93,7 @@ export class CodexAppServerWorker {
 
   // ── Lifecycle ───────────────────────────────────────────────────
 
-  async initialize(): Promise<void> {
+  private async spawnAndInit(): Promise<void> {
     mkdirSync(this.codexHome, { recursive: true });
 
     const isolatedCwd = `${this.codexHome}/cwd`;
@@ -119,37 +119,79 @@ export class CodexAppServerWorker {
 
     this.rpc = new CodexRpcClient(this.proc);
 
-    // 1. initialize
     await this.rpc.request("initialize", {
       clientInfo: { name: "qgrid", version: "1.0.0" },
       capabilities: { experimentalApi: true },
     });
+  }
 
-    // 2. chatgptAuthTokens login
-    await this.rpc.request("account/login/start", {
+  private async waitForLoginCompleted(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("login timeout")), 120_000);
+      this.rpc!.onNotification("account/login/completed", (params) => {
+        clearTimeout(timeout);
+        const p = params as { success: boolean; error?: string };
+        if (p.success) resolve();
+        else reject(new Error(`login failed: ${p.error ?? "unknown"}`));
+      });
+    });
+  }
+
+  async initialize(): Promise<void> {
+    await this.spawnAndInit();
+
+    await this.rpc!.request("account/login/start", {
       type: "chatgptAuthTokens",
       accessToken: this.config.accessToken,
       chatgptAccountId: this.config.accountId,
       ...(this.config.planType ? { chatgptPlanType: this.config.planType } : {}),
     });
 
-    // wait for login/completed notification
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("login timeout")), 10_000);
-      this.rpc!.onNotification("account/login/completed", (params) => {
-        clearTimeout(timeout);
-        const p = params as { success: boolean; error?: string };
-        if (p.success) {
-          resolve();
-        } else {
-          reject(new Error(`login failed: ${p.error ?? "unknown"}`));
-        }
-      });
-    });
-
+    await this.waitForLoginCompleted();
     this.ready = true;
     this.restartAttempts = 0;
     logger.info(`worker ${this.config.tokenName} ready`);
+  }
+
+  async startBrowserLogin(): Promise<string> {
+    await this.spawnAndInit();
+
+    const result = await this.rpc!.request<{ authUrl: string; loginId: string }>(
+      "account/login/start",
+      { type: "chatgpt" },
+    );
+
+    logger.info(`worker ${this.config.tokenName} browser login started: ${result.authUrl.slice(0, 60)}...`);
+    return result.authUrl;
+  }
+
+  async waitForBrowserLoginComplete(): Promise<void> {
+    await this.waitForLoginCompleted();
+
+    // codex managed 모드에서 auth.json 에 토큰 저장됨 → 읽어서 credentials 반환
+    this.ready = true;
+    this.restartAttempts = 0;
+    logger.info(`worker ${this.config.tokenName} browser login completed`);
+  }
+
+  async readManagedCredentials(): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    idToken?: string;
+    accountId: string;
+  } | null> {
+    try {
+      const authPath = `${this.codexHome}/auth.json`;
+      const raw = JSON.parse(readFileSync(authPath, "utf-8"));
+      return {
+        accessToken: raw.tokens?.access_token ?? "",
+        refreshToken: raw.tokens?.refresh_token ?? "",
+        idToken: raw.tokens?.id_token,
+        accountId: raw.tokens?.account_id ?? "",
+      };
+    } catch {
+      return null;
+    }
   }
 
   async kill(): Promise<void> {

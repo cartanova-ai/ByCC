@@ -20,14 +20,39 @@ export function AddTokenModal() {
   const handleOAuthLogin = async (provider: Provider) => {
     if (!name.trim()) return;
 
-    setOauthLoading(true);
-    try {
-      const mutation = provider === "openai" ? oauthStartOpenAIMutation : oauthStartMutation;
-      const { authUrl } = await mutation.mutateAsync({ name: name.trim() });
-      window.location.href = authUrl;
-    } catch (e) {
-      console.error("OAuth start failed:", e);
-      setOauthLoading(false);
+    if (provider === "openai") {
+      // popup 을 동기적으로 열어야 브라우저가 차단하지 않음
+      const popup = window.open("about:blank", "_blank");
+      setOauthLoading(true);
+      try {
+        const { authUrl } = await oauthStartOpenAIMutation.mutateAsync({ name: name.trim() });
+        if (popup) popup.location.href = authUrl;
+        else window.open(authUrl, "_blank");
+
+        // polling: 토큰 목록이 바뀔 때까지 대기
+        const poll = setInterval(async () => {
+          await queryClient.invalidateQueries({ queryKey: ["Token"] });
+          await queryClient.invalidateQueries({ queryKey: ["Qgrid"] });
+        }, 3000);
+
+        // 5분 후 자동 정리
+        setTimeout(() => {
+          clearInterval(poll);
+          setOauthLoading(false);
+        }, 300_000);
+      } catch (e) {
+        console.error("OAuth start failed:", e);
+        setOauthLoading(false);
+      }
+    } else {
+      setOauthLoading(true);
+      try {
+        const { authUrl } = await oauthStartMutation.mutateAsync({ name: name.trim() });
+        window.location.href = authUrl;
+      } catch (e) {
+        console.error("OAuth start failed:", e);
+        setOauthLoading(false);
+      }
     }
   };
 
