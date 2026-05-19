@@ -1,6 +1,7 @@
 import path from "path";
 
 import { getConsoleSink } from "@logtape/logtape";
+import { getLogger } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
 import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
@@ -8,8 +9,8 @@ import { drivers as cacheDrivers, store } from "sonamu/cache";
 
 import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
-import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
+import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import { TokenModel } from "./application/token/token.model";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
@@ -179,19 +180,17 @@ export default defineConfig({
     },
     lifecycle: {
       onStart: async () => {
-        // DB 마이그레이션 자동 실행 (테이블 없으면 생성)
+        const log = getLogger(["qgrid", "startup"]);
+
         try {
           const knex = TokenModel.getDB("w");
           const migrationsDir = path.join(import.meta.dirname, "../src/migrations");
-          const [batch, log] = await knex.migrate.latest({
-            directory: migrationsDir,
-          });
-          if (log.length > 0) {
-            console.log(`✓ Migration: ${log.length} applied (batch ${batch})`);
-            log.forEach((name: string) => console.log(`  ✓ ${name}`));
+          const [batch, migrations] = await knex.migrate.latest({ directory: migrationsDir });
+          if (migrations.length > 0) {
+            log.info(`migration: ${migrations.length} applied (batch ${batch})`);
           }
         } catch (e) {
-          console.warn(`⚠ Migration skipped: ${(e as Error).message}`);
+          log.warn(`migration skipped: ${(e as Error).message}`);
         }
 
         let triggerReady = true;
@@ -199,9 +198,7 @@ export default defineConfig({
           await ensureTokensTrigger(connConfig);
         } catch (e) {
           triggerReady = false;
-          console.warn(
-            `⚠ Token trigger setup failed: ${(e as Error).message}. Continuing with LISTEN/reconcile.`,
-          );
+          log.warn(`trigger setup failed: ${(e as Error).message}`);
         }
 
         const subscriber = new TokenSubscriber(connConfig, QgridDispatcher);
@@ -209,33 +206,38 @@ export default defineConfig({
 
         const started = await subscriber.start();
 
-        // OpenAI dispatcher (codex app-server worker pool)
         try {
           const openaiDispatcher = new OpenAIDispatcher();
           await openaiDispatcher.start();
           QgridDispatcher.openaiDispatcher = openaiDispatcher;
-          console.log(`✓ OpenAI dispatcher: ${openaiDispatcher.readyWorkerCount} workers ready`);
         } catch (e) {
-          console.warn(`⚠ OpenAI dispatcher failed: ${(e as Error).message}`);
+          log.warn(`openai dispatcher failed: ${(e as Error).message}`);
         }
 
-        const tokenInfo = started
-          ? `${QgridDispatcher.tokens.size} active tokens, LISTEN active`
-          : `degraded — token sync retry scheduled`;
-        const triggerInfo = triggerReady ? "" : ", trigger setup failed";
-        console.log(`🌲 Server listening on http://${host}:${port} (${tokenInfo}${triggerInfo})`);
+        const allTokens = [...QgridDispatcher.tokens.values()];
+        const anthropicCount = allTokens.filter((t) => t.provider === "anthropic").length;
+        const openaiReady = QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0;
+        const openaiTotal = QgridDispatcher.openaiDispatcher?.workerCount ?? 0;
+
+        log.info(`listening on http://${host}:${port}`);
+        log.info(`anthropic: ${anthropicCount} tokens ready`);
+        log.info(`openai: ${openaiReady}/${openaiTotal} tokens ready`);
+        log.info(
+          `subscriber: ${started ? "LISTEN active" : "degraded"}${triggerReady ? "" : ", trigger failed"}`,
+        );
       },
       onShutdown: async () => {
+        const log = getLogger(["qgrid", "startup"]);
         if (QgridDispatcher.openaiDispatcher) {
           await QgridDispatcher.openaiDispatcher.stop();
         }
         if (QgridDispatcher.subscriber) {
           await QgridDispatcher.subscriber.stop();
         }
-        console.log("graceful shutdown");
+        log.info("graceful shutdown");
       },
       onError: (error, _request, reply) => {
-        console.error(error);
+        getLogger(["qgrid"]).error(`${error}`);
         reply.status(500).send({
           name: error.name,
           message: error.message,
