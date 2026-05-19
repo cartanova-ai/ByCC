@@ -26,6 +26,12 @@ function RootComponent() {
     <html lang="en">
       <head>
         <link rel="icon" type="image/svg+xml" href="/sonamu.svg" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=DM+Mono:wght@400;500&display=swap"
+          rel="stylesheet"
+        />
         <HeadContent />
       </head>
       <body>
