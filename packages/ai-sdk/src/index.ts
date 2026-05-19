@@ -65,7 +65,7 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
       const res = await fetch(`${serverUrl}/api/qgrid/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ args: body }),
         signal: options.abortSignal,
       });
 

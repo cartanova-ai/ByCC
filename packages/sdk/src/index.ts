@@ -96,12 +96,14 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt,
-      system,
-      model: serverModel,
-      projectName: projectName ?? process.env.QGRID_PROJECT_NAME,
-      jsonSchema: schemaEntry?.json,
-      effort,
+      args: {
+        prompt,
+        system,
+        model: serverModel,
+        projectName: projectName ?? process.env.QGRID_PROJECT_NAME,
+        jsonSchema: schemaEntry?.json,
+        effort,
+      },
     }),
     signal,
   });
