@@ -149,11 +149,22 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
   }
 
+  private rateLimitsCache = new Map<string, { data: unknown; cachedAt: number }>();
+  private static readonly RATE_LIMITS_CACHE_TTL = 60_000;
+
   async getRateLimits(tokenName?: string): Promise<unknown> {
+    const cacheKey = tokenName ?? "_default";
+    const cached = this.rateLimitsCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL) {
+      return cached.data;
+    }
+
     const workers = [...this.workerPool.values()].filter((w) => w.isReady);
     const worker = tokenName ? workers.find((w) => w.tokenName === tokenName) : workers[0];
     if (!worker) throw new Error("no ready openai workers");
-    return worker.getRateLimits();
+    const data = await worker.getRateLimits();
+    this.rateLimitsCache.set(cacheKey, { data, cachedAt: Date.now() });
+    return data;
   }
 
   // ── Browser login flow ───────────────────────────────────────────
