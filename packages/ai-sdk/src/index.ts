@@ -26,6 +26,25 @@ export interface QgridProviderConfig {
   defaultEffort?: string;
 }
 
+type QueryResponse = {
+  text: string;
+  model: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+  };
+  durationMs: number;
+  costUsd: number;
+};
+
+type ToolCallResponse = {
+  action: "answer" | "tool_call";
+  answer?: string | null;
+  toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }> | null;
+};
+
 const DEFAULT_SERVER_URL = "http://localhost:44900";
 const DEFAULT_EFFORT = "low";
 
@@ -74,17 +93,7 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
         throw new Error(`qgrid ${res.status}: ${text}`);
       }
 
-      const data = (await res.json()) as {
-        text: string;
-        model: string;
-        usage: {
-          input_tokens: number;
-          output_tokens: number;
-          cache_creation_input_tokens: number;
-          cache_read_input_tokens: number;
-        };
-        durationMs: number;
-      };
+      const data = (await res.json()) as QueryResponse;
 
       const content: LanguageModelV3Content[] = [];
       let finishReason: LanguageModelV3FinishReason = {
@@ -94,11 +103,7 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
 
       if (isToolCallMode) {
         try {
-          const parsed = JSON.parse(data.text) as {
-            action: string;
-            answer?: string | null;
-            toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }> | null;
-          };
+          const parsed = JSON.parse(data.text) as ToolCallResponse;
 
           if (parsed.action === "tool_call" && parsed.toolCalls) {
             for (const tc of parsed.toolCalls) {
