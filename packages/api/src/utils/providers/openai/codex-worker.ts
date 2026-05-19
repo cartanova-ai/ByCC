@@ -238,11 +238,15 @@ export class CodexAppServerWorker {
     }>("thread/start", {
       ephemeral: true,
       cwd: `${this.codexHome}/cwd`,
+      baseInstructions: "You are a helpful assistant.",
       developerInstructions: req.developerInstructions ?? "",
       sandbox: "read-only",
       approvalPolicy: "never",
       experimentalRawEvents: false,
       persistExtendedHistory: false,
+      config: {
+        apps: { _default: { enabled: false, destructive_enabled: false, open_world_enabled: false } },
+      },
     });
 
     const threadId = threadResult.thread.id;
