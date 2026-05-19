@@ -272,10 +272,10 @@ class QgridFrameClass extends BaseFrameClass {
         return {
           provider: "openai",
           fiveHour: rl?.primary
-            ? { utilization: rl.primary.usedPercent / 100, resetsAt: new Date(rl.primary.resetsAt * 1000).toISOString() }
+            ? { utilization: rl.primary.usedPercent, resetsAt: new Date(rl.primary.resetsAt * 1000).toISOString() }
             : null,
           sevenDay: rl?.secondary
-            ? { utilization: rl.secondary.usedPercent / 100, resetsAt: new Date(rl.secondary.resetsAt * 1000).toISOString() }
+            ? { utilization: rl.secondary.usedPercent, resetsAt: new Date(rl.secondary.resetsAt * 1000).toISOString() }
             : null,
         };
       } catch (e) {
