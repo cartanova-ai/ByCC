@@ -66,7 +66,7 @@ export function AddTokenModal() {
     <>
       <button
         type="button"
-        className="px-3 py-1 text-xs font-medium rounded-md bg-sienna-400 text-white hover:bg-sienna-500 disabled:opacity-50 transition-colors duration-150 active:scale-[0.98] flex items-center gap-1"
+        className="px-3.5 py-1.5 text-[12px] font-medium rounded-lg bg-sienna-500 text-white hover:bg-sienna-600 disabled:opacity-50 transition-all duration-150 active:scale-[0.97] flex items-center gap-1.5 shadow-sm"
         onClick={() => setOpen(true)}
       >
         <PlusIcon className="size-3.5" />
@@ -75,10 +75,14 @@ export function AddTokenModal() {
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
-          <div className="absolute inset-0" onClick={close} onKeyDown={() => {}} />
+          <div
+            className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
+            onClick={close}
+            onKeyDown={() => {}}
+          />
 
-          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="px-5 py-4 border-b border-sand-100">
+          <div className="relative panel shadow-xl w-full max-w-md mx-4">
+            <div className="px-5 py-4 border-b border-sand-100/50">
               <h2 className="text-base font-medium text-sand-900">Add Token</h2>
             </div>
 
@@ -138,7 +142,7 @@ export function AddTokenModal() {
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t border-sand-100 flex items-center justify-end gap-2">
+            <div className="px-5 py-3 border-t border-sand-100/50 flex items-center justify-end gap-2">
               <button
                 type="button"
                 className="px-3 py-1 text-xs font-medium rounded-md border border-sand-200 text-sand-600 hover:bg-sand-100 transition-colors duration-150"

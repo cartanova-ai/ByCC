@@ -1,7 +1,7 @@
 [
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
-    "checksum": "68ae339039ca21dd5209dca370465eec0ee8cd22"
+    "checksum": "00040c186e2bea49d76d5319e91ca71f60b760b3"
   },
   {
     "path": "api/src/application/qgrid/qgrid.types.ts",
@@ -37,7 +37,7 @@
   },
   {
     "path": "api/src/application/token/token.entity.json",
-    "checksum": "9c8d81d3d54e7038f45cc2260e017206d081c33f"
+    "checksum": "6a6d5f6531ddd4bbfbe340d1c5a7a84ab8c0332d"
   },
   {
     "path": "api/src/application/token/token.model.ts",
@@ -61,7 +61,7 @@
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "9115761d4dbfc0f44823b8505ffad3916b80f1cf"
+    "checksum": "c15f61678deb3f8d6f78c1620f826f2bf6295dae"
   },
   {
     "path": "web/src/i18n/en.ts",

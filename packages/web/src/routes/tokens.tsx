@@ -12,12 +12,10 @@ function TokensPage() {
   const { data, isLoading } = TokenService.useTokens("A");
 
   return (
-    <div className="space-y-5 max-w-300 mx-auto -translate-x-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-medium text-sand-900 tracking-tight">Tokens</h1>
+    <div className="max-w-6xl mx-auto space-y-4">
+      <div className="flex items-center justify-end">
         <AddTokenModal />
       </div>
-
       <TokenTable data={data?.rows} isLoading={isLoading} />
     </div>
   );

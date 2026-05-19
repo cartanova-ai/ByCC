@@ -20,8 +20,7 @@ function LogsPage() {
   const navigate = Route.useNavigate();
 
   return (
-    <div className="space-y-5 max-w-[96rem] mx-auto -translate-x-4">
-      <h1 className="text-xl font-medium text-sand-900 tracking-tight">Request Logs</h1>
+    <div className="max-w-[96rem] mx-auto">
       <RequestLogTable search={search} onSearchChange={(next) => navigate({ search: next })} />
     </div>
   );

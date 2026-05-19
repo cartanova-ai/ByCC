@@ -1,4 +1,8 @@
-import type { AnthropicCredentials, OpenAICredentials, TokenCredentials } from "../../../application/token/token.types";
+import {
+  type AnthropicCredentials,
+  type OpenAICredentials,
+  type TokenCredentials,
+} from "../../../application/token/token.types";
 
 export function getAccessToken(creds: TokenCredentials): string {
   return creds.accessToken;
@@ -10,7 +14,7 @@ export function getRefreshToken(creds: TokenCredentials): string | undefined {
 
 export function getExpiresAt(creds: TokenCredentials): number {
   if ("expiresAt" in creds) return creds.expiresAt;
-  return (creds as OpenAICredentials).accessTokenExpiresAt;
+  return creds.accessTokenExpiresAt;
 }
 
 export function isAnthropicCredentials(creds: TokenCredentials): creds is AnthropicCredentials {

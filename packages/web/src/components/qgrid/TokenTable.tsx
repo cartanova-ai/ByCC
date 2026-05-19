@@ -107,29 +107,29 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
 
   return (
     <>
-      <div className="rounded-lg bg-sand-50 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="panel overflow-hidden">
+        <table className="w-full text-[13px]">
           <thead>
-            <tr className="border-b border-sand-200">
-              <th className="text-left px-5 py-3 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+            <tr className="panel-header">
+              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
                 Provider
               </th>
-              <th className="text-left px-5 py-3 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
                 Name
               </th>
-              <th className="text-left px-5 py-3 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
                 Token
               </th>
-              <th className="text-left px-5 py-3 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
                 Status
               </th>
-              <th className="text-left px-5 py-3 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
                 Expires
               </th>
-              <th className="w-20 px-3 py-3" />
+              <th className="w-20 px-3 py-2.5" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-sand-200/60">
+          <tbody className="divide-y divide-sand-100/80">
             {tokens.map((token) => {
               const expiry = formatExpiry(getExpiresAt(token));
               return (
@@ -200,12 +200,12 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
       {editTarget && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
             onClick={() => setEditTarget(null)}
             onKeyDown={() => {}}
           />
-          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
-            <div className="px-5 py-4 border-b border-sand-100">
+          <div className="relative panel shadow-xl w-full max-w-sm mx-4">
+            <div className="px-5 py-4 border-b border-sand-100/60">
               <h3 className="text-base font-medium text-sand-900">Edit Token</h3>
             </div>
             <div className="px-5 py-4 space-y-3">
@@ -224,7 +224,7 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                 />
               </div>
             </div>
-            <div className="px-5 py-3 border-t border-sand-100 flex items-center justify-end gap-2">
+            <div className="px-5 py-3 border-t border-sand-100/60 flex items-center justify-end gap-2">
               <button
                 type="button"
                 className="px-3 py-1 text-xs font-medium rounded-md border border-sand-200 text-sand-600 hover:bg-sand-100 transition-colors duration-150"
@@ -249,11 +249,11 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
             onClick={() => setDeleteTarget(null)}
             onKeyDown={() => {}}
           />
-          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+          <div className="relative panel shadow-xl w-full max-w-sm mx-4">
             <div className="px-5 py-4">
               <h3 className="text-base font-medium text-sand-900">Remove Token</h3>
               <p className="text-sm text-sand-700 mt-2">
@@ -265,7 +265,7 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                 ?
               </p>
             </div>
-            <div className="px-5 py-3 border-t border-sand-100 flex items-center justify-end gap-2">
+            <div className="px-5 py-3 border-t border-sand-100/60 flex items-center justify-end gap-2">
               <button
                 type="button"
                 className="px-3 py-1 text-xs font-medium rounded-md border border-sand-200 text-sand-600 hover:bg-sand-100 transition-colors duration-150"

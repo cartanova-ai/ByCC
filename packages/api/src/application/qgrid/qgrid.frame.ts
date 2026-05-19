@@ -3,11 +3,15 @@ import { type FastifyReply } from "fastify";
 import { api, BaseFrameClass } from "sonamu";
 import { getCacheManagerRef } from "sonamu/cache";
 
+import {
+  getAccessToken,
+  getExpiresAt,
+  getRefreshToken,
+} from "../../utils/providers/common/credentials";
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
+import { type TokenSubsetA } from "../sonamu.generated";
 import { TokenModel } from "../token/token.model";
 import { TokenCredentials } from "../token/token.types";
-import { type TokenSubsetA } from "../sonamu.generated";
-import { getAccessToken, getExpiresAt, getRefreshToken } from "../../utils/providers/common/credentials";
 import {
   type AnthropicUsageRaw,
   buildAuthUrl,
@@ -33,7 +37,11 @@ const OAUTH_STATE_TTL = "5m";
 async function setOAuthState(state: string, data: PendingOAuth): Promise<void> {
   const cache = getCacheManagerRef();
   if (!cache) throw new Error("CacheManager not initialized");
-  await cache.set({ key: `${OAUTH_STATE_PREFIX}${state}`, value: JSON.stringify(data), ttl: OAUTH_STATE_TTL });
+  await cache.set({
+    key: `${OAUTH_STATE_PREFIX}${state}`,
+    value: JSON.stringify(data),
+    ttl: OAUTH_STATE_TTL,
+  });
 }
 
 async function getOAuthState(state: string): Promise<PendingOAuth | undefined> {
@@ -109,7 +117,11 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async addToken(provider: string, credentials: TokenCredentials, name: string): Promise<{ added: boolean }> {
+  async addToken(
+    provider: string,
+    credentials: TokenCredentials,
+    name: string,
+  ): Promise<{ added: boolean }> {
     await TokenModel.save([
       {
         provider,
@@ -121,10 +133,7 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async updateToken(
-    id: number,
-    name?: string,
-  ): Promise<{ updated: boolean }> {
+  async updateToken(id: number, name?: string): Promise<{ updated: boolean }> {
     const entry = await TokenModel.findOne("A", { id });
     if (!entry) return { updated: false };
 
@@ -156,7 +165,15 @@ class QgridFrameClass extends BaseFrameClass {
     if (!entry) return { active: false };
 
     const newActive = !entry.active;
-    await TokenModel.save([{ id, provider: entry.provider, credentials: entry.credentials, active: newActive, name: entry.name }]);
+    await TokenModel.save([
+      {
+        id,
+        provider: entry.provider,
+        credentials: entry.credentials,
+        active: newActive,
+        name: entry.name,
+      },
+    ]);
     return { active: newActive };
   }
 
@@ -190,7 +207,11 @@ class QgridFrameClass extends BaseFrameClass {
       );
 
       if (tokens.accountUuid) {
-        const oldEntries = await TokenModel.findByAccountIdentifier("A", "anthropic", tokens.accountUuid);
+        const oldEntries = await TokenModel.findByAccountIdentifier(
+          "A",
+          "anthropic",
+          tokens.accountUuid,
+        );
         if (oldEntries.length > 0) {
           await TokenModel.del(oldEntries.map((o) => o.id));
         }
@@ -221,10 +242,15 @@ class QgridFrameClass extends BaseFrameClass {
     const { authUrl } = await QgridDispatcher.openaiDispatcher.startBrowserLogin(name);
 
     // fire-and-forget: codex login 완료 대기 → 토큰 저장
-    QgridDispatcher.openaiDispatcher.completeBrowserLogin()
+    QgridDispatcher.openaiDispatcher
+      .completeBrowserLogin()
       .then(async (creds) => {
         if (creds.accountId) {
-          const oldEntries = await TokenModel.findByAccountIdentifier("A", "openai", creds.accountId);
+          const oldEntries = await TokenModel.findByAccountIdentifier(
+            "A",
+            "openai",
+            creds.accountId,
+          );
           if (oldEntries.length > 0) {
             await TokenModel.del(oldEntries.map((o) => o.id));
           }
@@ -272,10 +298,16 @@ class QgridFrameClass extends BaseFrameClass {
         return {
           provider: "openai",
           fiveHour: rl?.primary
-            ? { utilization: rl.primary.usedPercent, resetsAt: new Date(rl.primary.resetsAt * 1000).toISOString() }
+            ? {
+                utilization: rl.primary.usedPercent,
+                resetsAt: new Date(rl.primary.resetsAt * 1000).toISOString(),
+              }
             : null,
           sevenDay: rl?.secondary
-            ? { utilization: rl.secondary.usedPercent, resetsAt: new Date(rl.secondary.resetsAt * 1000).toISOString() }
+            ? {
+                utilization: rl.secondary.usedPercent,
+                resetsAt: new Date(rl.secondary.resetsAt * 1000).toISOString(),
+              }
             : null,
         };
       } catch (e) {

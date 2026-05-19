@@ -9,7 +9,7 @@
 import { getLogger } from "@logtape/logtape";
 
 import { TokenModel } from "../../../application/token/token.model";
-import type { OpenAICredentials } from "../../../application/token/token.types";
+import { type OpenAICredentials } from "../../../application/token/token.types";
 
 const logger = getLogger(["qgrid", "openai-refresh"]);
 
@@ -24,9 +24,7 @@ interface RefreshResult {
   chatgptPlanType?: string;
 }
 
-export async function handleChatgptAuthTokensRefresh(
-  tokenId: number,
-): Promise<RefreshResult> {
+export async function handleChatgptAuthTokensRefresh(tokenId: number): Promise<RefreshResult> {
   const existing = inflightRefresh.get(tokenId);
   if (existing) {
     logger.info(`refresh dedup for token ${tokenId}`);
@@ -79,7 +77,10 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
   };
 
   const newRefreshToken = data.refresh_token ?? creds.refreshToken;
-  const rotated = data.refresh_token != null && data.refresh_token !== creds.refreshToken;
+  const rotated =
+    data.refresh_token !== null &&
+    data.refresh_token !== undefined &&
+    data.refresh_token !== creds.refreshToken;
   if (rotated) {
     logger.info(`refresh_token rotated for token ${token.name}`);
   }

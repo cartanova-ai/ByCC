@@ -139,14 +139,14 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <details open={defaultOpen} className="group">
-      <summary className="flex items-center gap-1 cursor-pointer select-none list-none">
+    <details open={defaultOpen} className="group panel overflow-hidden">
+      <summary className="panel-header flex items-center gap-1.5 cursor-pointer select-none list-none px-4 py-2.5">
         <ChevronDownIcon className="size-3.5 text-sand-400 transition-transform group-open:rotate-0 -rotate-90" />
-        <span className="text-[10px] uppercase tracking-wider text-sand-500 font-medium">
+        <span className="text-[11px] uppercase tracking-wider text-sand-500 font-medium">
           {title}
         </span>
       </summary>
-      <div className="mt-1.5">{children}</div>
+      <div className="p-4">{children}</div>
     </details>
   );
 }
@@ -156,23 +156,23 @@ function RequestDetail({ id }: { id: number }) {
 
   if (isLoading) {
     return (
-      <div className="max-w-300 mx-auto -translate-x-4 space-y-4">
+      <div className="max-w-4xl mx-auto space-y-4">
         <div className="h-4 w-32 bg-sand-200 rounded animate-pulse" />
-        <div className="h-40 bg-sand-100 rounded-lg animate-pulse" />
-        <div className="h-32 bg-sand-100 rounded-lg animate-pulse" />
+        <div className="h-40 bg-white border border-sand-200/80 rounded-xl animate-pulse" />
+        <div className="h-32 bg-white border border-sand-200/80 rounded-xl animate-pulse" />
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="max-w-300 mx-auto -translate-x-4">
+      <div className="max-w-4xl mx-auto">
         <Link
-          to="/"
-          className="flex items-center gap-1 text-sm text-sand-500 hover:text-sienna-500 mb-4"
+          to="/logs"
+          className="flex items-center gap-1 text-[13px] text-sand-500 hover:text-sienna-500 mb-4"
         >
-          <ArrowLeftIcon className="size-4" />
-          Back to Dashboard
+          <ArrowLeftIcon className="size-3.5" />
+          Back to Logs
         </Link>
         <p className="text-sand-400 text-sm">Request not found.</p>
       </div>
@@ -183,37 +183,38 @@ function RequestDetail({ id }: { id: number }) {
   const cacheHitRate = denom > 0 ? `${Math.round((data.cache_read_tokens / denom) * 100)}%` : "—";
 
   return (
-    <div className="max-w-300 mx-auto -translate-x-4 space-y-5">
-      <Link to="/" className="flex items-center gap-1 text-sm text-sand-500 hover:text-sienna-500">
-        <ArrowLeftIcon className="size-4" />
-        Back to Dashboard
+    <div className="max-w-4xl mx-auto space-y-4">
+      <Link
+        to="/logs"
+        className="inline-flex items-center gap-1 text-[13px] text-sand-500 hover:text-sienna-500 transition-colors"
+      >
+        <ArrowLeftIcon className="size-3.5" />
+        Back to Logs
       </Link>
 
-      <h1 className="text-xl font-medium text-sand-900 tracking-tight">Request Detail</h1>
-
       <Section title="System">
-        <div className="relative rounded-lg bg-sand-50 px-4 py-3">
+        <div className="relative">
           <CopyButton text={data.system_prompt ?? "null"} />
           <FormattedContent text={data.system_prompt ?? "null"} />
         </div>
       </Section>
 
       <Section title="User">
-        <div className="relative rounded-lg bg-sand-50 px-4 py-3">
+        <div className="relative">
           <CopyButton text={data.user_prompt ?? "null"} />
           <FormattedContent text={data.user_prompt ?? "null"} />
         </div>
       </Section>
 
       <Section title="Response">
-        <div className="relative rounded-lg bg-sand-50 px-4 py-3">
+        <div className="relative">
           <CopyButton text={data.response} />
           <FormattedContent text={data.response} markdown />
         </div>
       </Section>
 
       <Section title="Token Breakdown">
-        <div className="rounded-lg bg-sand-50 px-5 py-4">
+        <div className="px-1">
           <table className="w-full text-sm tabular-nums">
             <tbody className="text-sand-700">
               <tr>
@@ -252,7 +253,7 @@ function RequestDetail({ id }: { id: number }) {
       </Section>
 
       <Section title="Info">
-        <div className="rounded-lg bg-sand-50 px-5 py-4">
+        <div className="px-1">
           <table className="w-full text-sm">
             <tbody className="text-sand-700">
               <tr>

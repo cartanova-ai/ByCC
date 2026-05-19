@@ -15,15 +15,15 @@
     "build": "tsdown",
     "test": "vitest run"
   },
-  "peerDependencies": {
-    "ai": "^6.0.0",
-    "@ai-sdk/provider": "^3.0.0"
-  },
   "devDependencies": {
     "@ai-sdk/provider": "catalog:",
     "ai": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@ai-sdk/provider": "^3.0.0",
+    "ai": "^6.0.0"
   }
 }

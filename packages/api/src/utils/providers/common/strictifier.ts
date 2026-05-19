@@ -40,27 +40,21 @@ function strictifyNode(node: JsonSchema, path: string): JsonSchema {
   if (node.anyOf) {
     return {
       ...node,
-      anyOf: (node.anyOf as JsonSchema[]).map((s, i) =>
-        strictifyNode(s, `${path}.anyOf[${i}]`),
-      ),
+      anyOf: (node.anyOf as JsonSchema[]).map((s, i) => strictifyNode(s, `${path}.anyOf[${i}]`)),
     };
   }
 
   if (node.oneOf) {
     return {
       ...node,
-      oneOf: (node.oneOf as JsonSchema[]).map((s, i) =>
-        strictifyNode(s, `${path}.oneOf[${i}]`),
-      ),
+      oneOf: (node.oneOf as JsonSchema[]).map((s, i) => strictifyNode(s, `${path}.oneOf[${i}]`)),
     };
   }
 
   if (node.allOf) {
     return {
       ...node,
-      allOf: (node.allOf as JsonSchema[]).map((s, i) =>
-        strictifyNode(s, `${path}.allOf[${i}]`),
-      ),
+      allOf: (node.allOf as JsonSchema[]).map((s, i) => strictifyNode(s, `${path}.allOf[${i}]`)),
     };
   }
 
@@ -77,9 +71,7 @@ function strictifyObject(node: JsonSchema, path: string): JsonSchema {
     return { ...node, additionalProperties: false };
   }
 
-  const existingRequired = new Set(
-    (node.required as string[] | undefined) ?? [],
-  );
+  const existingRequired = new Set((node.required as string[] | undefined) ?? []);
   const allKeys = Object.keys(properties);
 
   const strictProps: Record<string, JsonSchema> = {};

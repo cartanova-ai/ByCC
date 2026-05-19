@@ -8,17 +8,17 @@
  *     prompt: "Hello",
  *   });
  */
-import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3Content,
-  LanguageModelV3FinishReason,
-  LanguageModelV3FunctionTool,
-  LanguageModelV3GenerateResult,
-  LanguageModelV3Message,
-  LanguageModelV3StreamPart,
-  LanguageModelV3StreamResult,
-  LanguageModelV3Usage,
+import {
+  type LanguageModelV3,
+  type LanguageModelV3CallOptions,
+  type LanguageModelV3Content,
+  type LanguageModelV3FinishReason,
+  type LanguageModelV3FunctionTool,
+  type LanguageModelV3GenerateResult,
+  type LanguageModelV3Message,
+  type LanguageModelV3StreamPart,
+  type LanguageModelV3StreamResult,
+  type LanguageModelV3Usage,
 } from "@ai-sdk/provider";
 
 export interface QgridProviderConfig {
@@ -29,10 +29,7 @@ export interface QgridProviderConfig {
 const DEFAULT_SERVER_URL = "http://localhost:44900";
 const DEFAULT_EFFORT = "low";
 
-export function qgrid(
-  modelId: string,
-  config?: QgridProviderConfig,
-): LanguageModelV3 {
+export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageModelV3 {
   const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
   const effort = config?.defaultEffort ?? DEFAULT_EFFORT;
 
@@ -47,7 +44,7 @@ export function qgrid(
         (t): t is LanguageModelV3FunctionTool => t.type === "function",
       );
 
-      let outputSchema: unknown | undefined;
+      let outputSchema: unknown;
       let isToolCallMode = false;
 
       if (tools && tools.length > 0) {
@@ -145,7 +142,7 @@ export function qgrid(
     },
 
     async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-      const result = await model.doGenerate(options) as LanguageModelV3GenerateResult;
+      const result = await model.doGenerate(options);
 
       const parts: LanguageModelV3StreamPart[] = [];
       for (const item of result.content) {
@@ -183,9 +180,7 @@ export function qgrid(
 
 // ── Tool call emulation schema ──────────────────────────────────────
 
-function buildToolCallSchema(
-  tools: LanguageModelV3FunctionTool[],
-): Record<string, unknown> {
+function buildToolCallSchema(tools: LanguageModelV3FunctionTool[]): Record<string, unknown> {
   const toolBranches = tools.map((tool) => ({
     type: "object" as const,
     properties: {
@@ -232,7 +227,7 @@ function promptToText(prompt: LanguageModelV3Message[]): string {
           parts.push(`[Assistant]: ${part.text}`);
         }
       } else if ("toolName" in part && part.type === "tool-call") {
-        parts.push(`[Tool Call: ${part.toolName}(${part.input})]`);
+        parts.push(`[Tool Call: ${part.toolName}(${JSON.stringify(part.input)})]`);
       } else if ("toolName" in part && part.type === "tool-result") {
         const output = part.output;
         let text: string;

@@ -85,7 +85,6 @@ export class CodexAppServerWorker {
   private ready = false;
   private destroyed = false;
 
-
   constructor(private config: WorkerConfig) {
     this.turnLimiter = new Semaphore(config.maxConcurrentTurns ?? 1);
     this.codexHome = `/tmp/qgrid-codex/${config.tokenId}`;
@@ -161,7 +160,9 @@ export class CodexAppServerWorker {
       { type: "chatgpt" },
     );
 
-    logger.info(`worker ${this.config.tokenName} browser login started: ${result.authUrl.slice(0, 60)}...`);
+    logger.info(
+      `worker ${this.config.tokenName} browser login started: ${result.authUrl.slice(0, 60)}...`,
+    );
     return result.authUrl;
   }
 
@@ -289,7 +290,9 @@ export class CodexAppServerWorker {
       experimentalRawEvents: false,
       persistExtendedHistory: false,
       config: {
-        apps: { _default: { enabled: false, destructive_enabled: false, open_world_enabled: false } },
+        apps: {
+          _default: { enabled: false, destructive_enabled: false, open_world_enabled: false },
+        },
       },
     });
 
@@ -313,7 +316,12 @@ export class CodexAppServerWorker {
       }, 600_000);
 
       let text = "";
-      let usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 };
+      let usage = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        reasoningOutputTokens: 0,
+      };
       let durationMs = 0;
 
       const cleanup = () => {
@@ -350,7 +358,10 @@ export class CodexAppServerWorker {
       });
 
       this.rpc!.onNotification("turn/completed", (params) => {
-        const p = params as { threadId: string; turn: { durationMs: number; status: string; error?: unknown } };
+        const p = params as {
+          threadId: string;
+          turn: { durationMs: number; status: string; error?: unknown };
+        };
         if (p.threadId !== threadId) return;
         durationMs = p.turn.durationMs;
 

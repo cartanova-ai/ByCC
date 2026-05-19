@@ -9,8 +9,12 @@
 import { getLogger } from "@logtape/logtape";
 
 import { TokenModel } from "../../../application/token/token.model";
-import type { OpenAICredentials } from "../../../application/token/token.types";
-import type { GenerateRequest, GenerateResult, ProviderDispatcher } from "../common/provider-dispatcher";
+import { type OpenAICredentials } from "../../../application/token/token.types";
+import {
+  type GenerateRequest,
+  type GenerateResult,
+  type ProviderDispatcher,
+} from "../common/provider-dispatcher";
 import { RoundRobinPicker } from "../common/token-picker";
 import { CodexAppServerWorker, type TurnRequest, type TurnResult } from "./codex-worker";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
@@ -147,16 +151,18 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async getRateLimits(tokenName?: string): Promise<unknown> {
     const workers = [...this.workerPool.values()].filter((w) => w.isReady);
-    const worker = tokenName
-      ? workers.find((w) => w.tokenName === tokenName)
-      : workers[0];
+    const worker = tokenName ? workers.find((w) => w.tokenName === tokenName) : workers[0];
     if (!worker) throw new Error("no ready openai workers");
     return worker.getRateLimits();
   }
 
   // ── Browser login flow ───────────────────────────────────────────
 
-  private pendingLogin: { worker: CodexAppServerWorker; name: string; timer: ReturnType<typeof setTimeout> } | null = null;
+  private pendingLogin: {
+    worker: CodexAppServerWorker;
+    name: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
 
   async startBrowserLogin(name: string): Promise<{ authUrl: string }> {
     // 기존 pending 정리

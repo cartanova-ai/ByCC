@@ -136,7 +136,7 @@ export class CodexRpcClient {
     const method = msg.method as string | undefined;
 
     // 1. Response to our request
-    if (id != null && this.pending.has(id)) {
+    if (id !== null && id !== undefined && this.pending.has(id)) {
       const p = this.pending.get(id)!;
       this.pending.delete(id);
       clearTimeout(p.timer);
@@ -151,7 +151,7 @@ export class CodexRpcClient {
     }
 
     // 2. Server-request (has method + id, but we didn't send it)
-    if (method && id != null) {
+    if (method && id !== null && id !== undefined) {
       this.handleServerRequest(id, method, msg.params);
       return;
     }
