@@ -22,7 +22,7 @@ import {
 } from "./oauth";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
-  QueryInput,
+  type QueryInput,
   type AppendStepInput,
   type CliResult,
   type CreateRunInput,

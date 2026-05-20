@@ -178,7 +178,9 @@ function HeaderBar({ data }: { data: RequestLog }) {
         {data.model_name ?? "Unknown model"}
       </span>
       {status && status !== "succeeded" && (
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase ${STATUS_STYLE[status] ?? "bg-sand-100 text-sand-500"}`}>
+        <span
+          className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase ${STATUS_STYLE[status] ?? "bg-sand-100 text-sand-500"}`}
+        >
           {status}
         </span>
       )}
@@ -190,9 +192,7 @@ function HeaderBar({ data }: { data: RequestLog }) {
       {data.project_name && (
         <span className="text-[12px] text-sand-400">· project={data.project_name}</span>
       )}
-      <span className="ml-auto text-[11px] text-sand-400">
-        {data.token_name}
-      </span>
+      <span className="ml-auto text-[11px] text-sand-400">{data.token_name}</span>
     </div>
   );
 }
@@ -205,10 +205,7 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
     <div className="panel overflow-hidden">
       <div className="px-5 py-3 grid grid-cols-3 gap-x-8 gap-y-2 border-b border-sand-100/60">
         <Metric label="Duration" value={`${(data.duration_ms / 1000).toFixed(1)}s`} />
-        <Metric
-          label="Cost"
-          value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"}
-        />
+        <Metric label="Cost" value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"} />
         <Metric label="Tool Calls" value={`${toolCallCount}회`} />
       </div>
 
@@ -303,7 +300,8 @@ type HistoryItem = {
 };
 
 function historyItemBg(item: HistoryItem): string {
-  if (item.type === "function_call" || item.type === "function_call_output") return "bg-caution-400/10";
+  if (item.type === "function_call" || item.type === "function_call_output")
+    return "bg-caution-400/10";
   if (item.role === "assistant") return "bg-sage-50";
   return "bg-sand-50";
 }

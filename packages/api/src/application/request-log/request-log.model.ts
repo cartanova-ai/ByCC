@@ -9,9 +9,9 @@ import {
 } from "sonamu";
 
 import { SD } from "../../i18n/sd.generated";
+import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogSubsetKey, type RequestLogSubsetMapping } from "../sonamu.generated";
 import { requestLogLoaderQueries, requestLogSubsetQueries } from "../sonamu.generated.sso";
-import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogListParams, type RequestLogSaveParams } from "./request-log.types";
 
 // cost_usd는 정수 micro-USD로 저장. 실제 USD = cost_usd / MICRO_USD.
@@ -150,7 +150,6 @@ class RequestLogModelClass extends BaseModelClass<
     });
   }
 
-
   // ── Run Lifecycle ──────────────────────────────────────────────
 
   async createRun(params: {
@@ -194,24 +193,37 @@ class RequestLogModelClass extends BaseModelClass<
     });
   }
 
-  async finishRun(requestLogId: number, params: {
-    status: string;
-    response?: string;
-    token_name?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_read_tokens?: number;
-    cache_creation_tokens?: number;
-    duration_ms?: number;
-    history?: unknown;
-    error_message?: string;
-    tool_call_count?: number;
-  }): Promise<void> {
+  async finishRun(
+    requestLogId: number,
+    params: {
+      status: string;
+      response?: string;
+      token_name?: string;
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_tokens?: number;
+      cache_creation_tokens?: number;
+      duration_ms?: number;
+      history?: unknown;
+      error_message?: string;
+      tool_call_count?: number;
+    },
+  ): Promise<void> {
     if (params.status === "succeeded" && !params.token_name) {
       throw new Error("tokenName is required for succeeded runs");
     }
     const update: Record<string, unknown> = { id: requestLogId, status: params.status };
-    const fields = ["response", "token_name", "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "duration_ms", "error_message", "tool_call_count"] as const;
+    const fields = [
+      "response",
+      "token_name",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_creation_tokens",
+      "duration_ms",
+      "error_message",
+      "tool_call_count",
+    ] as const;
     for (const key of fields) {
       if (params[key] !== undefined) update[key] = params[key];
     }
@@ -219,14 +231,21 @@ class RequestLogModelClass extends BaseModelClass<
 
     if (params.input_tokens !== undefined && params.output_tokens !== undefined) {
       const db = this.getDB("r");
-      const [row] = await db("request_logs").select("model_name").where("id", requestLogId).limit(1);
+      const [row] = await db("request_logs")
+        .select("model_name")
+        .where("id", requestLogId)
+        .limit(1);
       if (row?.model_name) {
-        const model = row.model_name.includes("/") ? row.model_name.split("/").pop()! : row.model_name;
-        update.cost_usd = Math.round(calculateCostUsd(model, {
-          inputTokens: params.input_tokens,
-          outputTokens: params.output_tokens,
-          cachedInputTokens: params.cache_read_tokens ?? 0,
-        }) * 1_000_000);
+        const model = row.model_name.includes("/")
+          ? row.model_name.split("/").pop()!
+          : row.model_name;
+        update.cost_usd = Math.round(
+          calculateCostUsd(model, {
+            inputTokens: params.input_tokens,
+            outputTokens: params.output_tokens,
+            cachedInputTokens: params.cache_read_tokens ?? 0,
+          }) * 1_000_000,
+        );
       }
     }
 
@@ -266,7 +285,10 @@ class RequestLogModelClass extends BaseModelClass<
 
     // transaction
     await wdb.transaction(async (trx) => {
-      await trx.table("request_log_steps").whereIn("request_log_steps.request_log_id", ids).delete();
+      await trx
+        .table("request_log_steps")
+        .whereIn("request_log_steps.request_log_id", ids)
+        .delete();
       return trx.table("request_logs").whereIn("request_logs.id", ids).delete();
     });
 

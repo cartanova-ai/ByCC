@@ -199,7 +199,11 @@ function buildToolCallSchema(tools: LanguageModelV3FunctionTool[]): Record<strin
             items: {
               type: "object",
               properties: {
-                toolName: { type: "string", enum: tools.map((t) => t.name), description: toolDescriptions },
+                toolName: {
+                  type: "string",
+                  enum: tools.map((t) => t.name),
+                  description: toolDescriptions,
+                },
                 args: { type: "string", description: "Tool arguments as JSON string" },
               },
               required: ["toolName", "args"],

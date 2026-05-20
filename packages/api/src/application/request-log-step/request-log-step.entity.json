@@ -5,34 +5,94 @@
   "props": [
     { "name": "id", "type": "integer", "desc": "ID" },
     { "name": "created_at", "desc": "등록일시", "dbDefault": "CURRENT_TIMESTAMP", "type": "date" },
-    { "name": "request_log_id", "type": "integer", "desc": "부모 request log ID", "toFilter": true },
+    {
+      "name": "request_log_id",
+      "type": "integer",
+      "desc": "부모 request log ID",
+      "toFilter": true
+    },
     { "name": "step_index", "type": "integer", "desc": "ai-sdk step number (0-based)" },
     { "name": "type", "type": "enum", "id": "RequestLogStepType", "desc": "step 타입" },
     { "name": "input_tokens", "type": "integer", "nullable": true, "desc": "입력 토큰 (generate)" },
-    { "name": "output_tokens", "type": "integer", "nullable": true, "desc": "출력 토큰 (generate)" },
+    {
+      "name": "output_tokens",
+      "type": "integer",
+      "nullable": true,
+      "desc": "출력 토큰 (generate)"
+    },
     { "name": "cache_read_tokens", "type": "integer", "nullable": true, "desc": "캐시 읽기 토큰" },
-    { "name": "cache_creation_tokens", "type": "integer", "nullable": true, "desc": "캐시 생성 토큰" },
+    {
+      "name": "cache_creation_tokens",
+      "type": "integer",
+      "nullable": true,
+      "desc": "캐시 생성 토큰"
+    },
     { "name": "duration_ms", "type": "integer", "nullable": true, "desc": "소요시간(ms)" },
-    { "name": "finish_reason", "type": "string", "length": 20, "nullable": true, "desc": "완료 사유" },
-    { "name": "tool_call_index", "type": "integer", "nullable": true, "desc": "같은 step 내 tool call 순서" },
-    { "name": "tool_call_id", "type": "string", "length": 100, "nullable": true, "desc": "tool call ID" },
+    {
+      "name": "finish_reason",
+      "type": "string",
+      "length": 20,
+      "nullable": true,
+      "desc": "완료 사유"
+    },
+    {
+      "name": "tool_call_index",
+      "type": "integer",
+      "nullable": true,
+      "desc": "같은 step 내 tool call 순서"
+    },
+    {
+      "name": "tool_call_id",
+      "type": "string",
+      "length": 100,
+      "nullable": true,
+      "desc": "tool call ID"
+    },
     { "name": "tool_name", "type": "string", "length": 100, "nullable": true, "desc": "tool 이름" },
     { "name": "tool_args", "type": "string", "nullable": true, "desc": "tool 인자 (JSON string)" },
-    { "name": "tool_result", "type": "string", "nullable": true, "desc": "tool 결과 (JSON string)" },
-    { "name": "tool_duration_ms", "type": "integer", "nullable": true, "desc": "tool 실행 소요시간(ms)" },
+    {
+      "name": "tool_result",
+      "type": "string",
+      "nullable": true,
+      "desc": "tool 결과 (JSON string)"
+    },
+    {
+      "name": "tool_duration_ms",
+      "type": "integer",
+      "nullable": true,
+      "desc": "tool 실행 소요시간(ms)"
+    },
     { "name": "error", "type": "string", "nullable": true, "desc": "step 에러 메시지" }
   ],
   "indexes": [
-    { "type": "index", "name": "request_log_steps_request_log_id_index", "columns": [{ "name": "request_log_id" }], "using": "btree" }
+    {
+      "type": "index",
+      "name": "request_log_steps_request_log_id_index",
+      "columns": [{ "name": "request_log_id" }],
+      "using": "btree"
+    }
   ],
   "subsets": {
     "A": {
       "fields": [
-        "id", "created_at", "request_log_id", "step_index", "type",
-        "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
-        "duration_ms", "finish_reason",
-        "tool_call_index", "tool_call_id", "tool_name", "tool_args", "tool_result",
-        "tool_duration_ms", "error"
+        "id",
+        "created_at",
+        "request_log_id",
+        "step_index",
+        "type",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "duration_ms",
+        "finish_reason",
+        "tool_call_index",
+        "tool_call_id",
+        "tool_name",
+        "tool_args",
+        "tool_result",
+        "tool_duration_ms",
+        "error"
       ]
     }
   },
