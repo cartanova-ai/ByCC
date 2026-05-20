@@ -3,11 +3,11 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
-import type { ThreadStartParams } from "../../../codex-protocol/v2/ThreadStartParams";
-import type { ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStartResponse";
-import type { TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
-import type { ThreadInjectItemsParams } from "../../../codex-protocol/v2/ThreadInjectItemsParams";
-import type { TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
+import { type ThreadInjectItemsParams } from "../../../codex-protocol/v2/ThreadInjectItemsParams";
+import { type ThreadStartParams } from "../../../codex-protocol/v2/ThreadStartParams";
+import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStartResponse";
+import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
+import { type TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
 import { CodexRpcClient } from "./codex-rpc";
 
 const logger = getLogger(["qgrid", "codex-worker"]);
@@ -40,7 +40,6 @@ export interface TurnResult {
   durationMs: number;
   model: string;
 }
-
 
 // thread/start 공통 옵션
 const THREAD_DEFAULTS = {
@@ -129,7 +128,9 @@ export class CodexAppServerWorker {
 
   async startBrowserLogin(): Promise<string> {
     await this.spawnAndInit();
-    const result = await this.rpc!.request<{ authUrl: string }>("account/login/start", { type: "chatgpt" });
+    const result = await this.rpc!.request<{ authUrl: string }>("account/login/start", {
+      type: "chatgpt",
+    });
     logger.info(`worker ${this.config.tokenName} browser login started`);
     return result.authUrl;
   }
@@ -168,18 +169,34 @@ export class CodexAppServerWorker {
     if (this.proc) {
       this.proc.kill("SIGTERM");
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => { this.proc?.kill("SIGKILL"); resolve(); }, 3_000);
-        this.proc!.on("exit", () => { clearTimeout(timer); resolve(); });
+        const timer = setTimeout(() => {
+          this.proc?.kill("SIGKILL");
+          resolve();
+        }, 3_000);
+        this.proc!.on("exit", () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
     }
 
-    try { rmSync(this.codexHome, { recursive: true, force: true }); } catch {}
+    try {
+      rmSync(this.codexHome, { recursive: true, force: true });
+    } catch {}
   }
 
-  get isReady(): boolean { return this.ready && !this.destroyed; }
-  get isDestroyed(): boolean { return this.destroyed; }
-  get tokenId(): number { return this.config.tokenId; }
-  get tokenName(): string { return this.config.tokenName; }
+  get isReady(): boolean {
+    return this.ready && !this.destroyed;
+  }
+  get isDestroyed(): boolean {
+    return this.destroyed;
+  }
+  get tokenId(): number {
+    return this.config.tokenId;
+  }
+  get tokenName(): string {
+    return this.config.tokenName;
+  }
 
   // ── Rate limits ─────────────────────────────────────────────────
 
@@ -203,8 +220,12 @@ export class CodexAppServerWorker {
     this.busy = true;
     return true;
   }
-  releaseTurn(): void { this.busy = false; }
-  get hasCapacity(): boolean { return !this.busy; }
+  releaseTurn(): void {
+    this.busy = false;
+  }
+  get hasCapacity(): boolean {
+    return !this.busy;
+  }
 
   async executeTurn(req: TurnRequest): Promise<TurnResult> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
@@ -222,7 +243,6 @@ export class CodexAppServerWorker {
 
     const threadId = thread.id;
     const model = req.model ?? threadModel;
-
     if (req.history?.length) {
       await this.rpc.request("thread/inject_items", {
         threadId,
@@ -244,15 +264,30 @@ export class CodexAppServerWorker {
   // notification 소비를 별도 메서드로 분리 — 재사용 가능
   private consumeTurnNotifications(threadId: string, model: string): Promise<TurnResult> {
     return new Promise<TurnResult>((resolve, reject) => {
-      const timeout = setTimeout(() => { cleanup(); reject(new Error("turn timeout (600s)")); }, 600_000);
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("turn timeout (600s)"));
+      }, 600_000);
 
       let text = "";
-      let usage: TokenUsageBreakdown = { totalTokens: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0 };
+      let usage: TokenUsageBreakdown = {
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        reasoningOutputTokens: 0,
+      };
       let durationMs = 0;
 
       const cleanup = () => {
         clearTimeout(timeout);
-        for (const n of ["item/completed", "item/agentMessage/delta", "turn/completed", "thread/tokenUsage/updated", "error"] as const) {
+        for (const n of [
+          "item/completed",
+          "item/agentMessage/delta",
+          "turn/completed",
+          "thread/tokenUsage/updated",
+          "error",
+        ] as const) {
           this.rpc?.onNotification(n, () => {});
         }
       };
@@ -277,7 +312,10 @@ export class CodexAppServerWorker {
 
       this.rpc!.onNotification("error", (p) => {
         if (p.threadId !== threadId) return;
-        if (!p.willRetry) { cleanup(); reject(new Error(`codex error: ${p.error.message}`)); }
+        if (!p.willRetry) {
+          cleanup();
+          reject(new Error(`codex error: ${p.error.message}`));
+        }
       });
     });
   }
@@ -294,7 +332,9 @@ export class CodexAppServerWorker {
 
     this.restartAttempts++;
     const delay = RESTART_BACKOFF_BASE_MS * 2 ** (this.restartAttempts - 1);
-    logger.info(`worker ${this.config.tokenName} restarting in ${delay}ms (attempt ${this.restartAttempts})`);
+    logger.info(
+      `worker ${this.config.tokenName} restarting in ${delay}ms (attempt ${this.restartAttempts})`,
+    );
 
     setTimeout(() => {
       if (this.destroyed) return;

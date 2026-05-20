@@ -4,9 +4,9 @@
  * MVP 에서는 stream() 만. getRateLimits(), listModels() 는 future.
  */
 
-import type { UserInput } from "../../../codex-protocol/v2/UserInput";
-import type { TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
-import type { JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
+import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
+import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
+import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 
 export interface GenerateRequest {
   model: string;
