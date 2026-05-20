@@ -9,6 +9,20 @@ import { z } from "zod";
 
 import { zArrayable, SonamuQueryMode, ApplySonamuFilter } from "./sonamu.shared";
 
+// CustomScalar: HistoryItems
+const HistoryItems = z.array(
+  z.object({
+    type: z.string(),
+    role: z.string().optional(),
+    content: z.unknown().optional(),
+    name: z.string().optional(),
+    arguments: z.string().optional(),
+    call_id: z.string().optional(),
+    output: z.string().optional(),
+  }),
+);
+type HistoryItems = z.infer<typeof HistoryItems>;
+
 // CustomScalar: TokenCredentials
 const TokenCredentials = z.union([
   z.object({
@@ -42,6 +56,27 @@ export const RequestLogSearchFieldLabel = {
   token_name: "토큰이름",
   user_prompt: "사용자 프롬프트",
 };
+export const RequestLogStatus = z
+  .enum(["running", "succeeded", "error", "aborted"])
+  .describe("RequestLogStatus");
+export type RequestLogStatus = z.infer<typeof RequestLogStatus>;
+export const RequestLogStatusLabel = {
+  running: "실행 중",
+  succeeded: "성공",
+  error: "에러",
+  aborted: "중단",
+};
+
+// Enums: RequestLogStep
+export const RequestLogStepType = z.enum(["generate", "tool_call"]).describe("RequestLogStepType");
+export type RequestLogStepType = z.infer<typeof RequestLogStepType>;
+export const RequestLogStepTypeLabel = { generate: "LLM 생성", tool_call: "Tool 호출" };
+export const RequestLogStepOrderBy = z.enum(["id-asc"]).describe("RequestLogStepOrderBy");
+export type RequestLogStepOrderBy = z.infer<typeof RequestLogStepOrderBy>;
+export const RequestLogStepOrderByLabel = { "id-asc": "ID순" };
+export const RequestLogStepSearchField = z.enum(["id"]).describe("RequestLogStepSearchField");
+export type RequestLogStepSearchField = z.infer<typeof RequestLogStepSearchField>;
+export const RequestLogStepSearchFieldLabel = { id: "ID" };
 
 // Enums: Token
 export const TokenOrderBy = z.enum(["id-desc", "ord-asc"]).describe("TokenOrderBy");
@@ -55,7 +90,7 @@ export const TokenSearchFieldLabel = { id: "ID", name: "이름" };
 export const RequestLogBaseSchema = z.object({
   id: z.int(),
   created_at: z.date(),
-  token_name: z.string().max(100),
+  token_name: z.string().max(100).nullable(),
   project_name: z.string().max(50).nullable(),
   model_name: z.string().max(50).nullable(),
   user_prompt: z.string().nullable(),
@@ -67,15 +102,73 @@ export const RequestLogBaseSchema = z.object({
   cache_creation_tokens: z.int(),
   duration_ms: z.int(),
   cost_usd: z.int().nullable(),
+  effort: z.string().max(10).nullable(),
+  history: HistoryItems.nullable(),
+  status: RequestLogStatus,
+  error_message: z.string().nullable(),
+  tool_call_count: z.int(),
 });
 export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
   readonly __hasDefault__: readonly [
     "created_at",
+    "token_name",
     "project_name",
     "model_name",
     "user_prompt",
     "system_prompt",
+    "response",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+    "duration_ms",
     "cost_usd",
+    "effort",
+    "history",
+    "status",
+    "error_message",
+    "tool_call_count",
+    "id",
+  ];
+};
+
+// BaseSchema: RequestLogStep
+export const RequestLogStepBaseSchema = z.object({
+  id: z.int(),
+  created_at: z.date(),
+  request_log_id: z.int(),
+  step_index: z.int(),
+  type: RequestLogStepType,
+  input_tokens: z.int().nullable(),
+  output_tokens: z.int().nullable(),
+  cache_read_tokens: z.int().nullable(),
+  cache_creation_tokens: z.int().nullable(),
+  duration_ms: z.int().nullable(),
+  finish_reason: z.string().max(20).nullable(),
+  tool_call_index: z.int().nullable(),
+  tool_call_id: z.string().max(100).nullable(),
+  tool_name: z.string().max(100).nullable(),
+  tool_args: z.string().nullable(),
+  tool_result: z.string().nullable(),
+  tool_duration_ms: z.int().nullable(),
+  error: z.string().nullable(),
+});
+export type RequestLogStepBaseSchema = z.infer<typeof RequestLogStepBaseSchema> & {
+  readonly __hasDefault__: readonly [
+    "created_at",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+    "duration_ms",
+    "finish_reason",
+    "tool_call_index",
+    "tool_call_id",
+    "tool_name",
+    "tool_args",
+    "tool_result",
+    "tool_duration_ms",
+    "error",
     "id",
   ];
 };
@@ -105,12 +198,28 @@ export const RequestLogBaseListParams = z
     queryMode: SonamuQueryMode,
     id: zArrayable(z.number().int().positive()),
     sonamuFilter: z.custom<ApplySonamuFilter<RequestLogBaseSchema, never, never>>(),
-    token_name: z.string().max(100),
+    token_name: z.string().max(100).nullable(),
     project_name: z.string().max(50).nullable(),
     model_name: z.string().max(50).nullable(),
   })
   .partial();
 export type RequestLogBaseListParams = z.infer<typeof RequestLogBaseListParams>;
+
+// BaseListParams: RequestLogStep
+export const RequestLogStepBaseListParams = z
+  .object({
+    num: z.number().int().nonnegative(),
+    page: z.number().int().min(1),
+    search: RequestLogStepSearchField,
+    keyword: z.string(),
+    orderBy: RequestLogStepOrderBy,
+    queryMode: SonamuQueryMode,
+    id: zArrayable(z.number().int().positive()),
+    sonamuFilter: z.custom<ApplySonamuFilter<RequestLogStepBaseSchema, never, never>>(),
+    request_log_id: z.int(),
+  })
+  .partial();
+export type RequestLogStepBaseListParams = z.infer<typeof RequestLogStepBaseListParams>;
 
 // BaseListParams: Token
 export const TokenBaseListParams = z
@@ -131,7 +240,7 @@ export type TokenBaseListParams = z.infer<typeof TokenBaseListParams>;
 export const RequestLogSubsetA = z.object({
   id: z.int(),
   created_at: z.date(),
-  token_name: z.string().max(100),
+  token_name: z.string().max(100).nullable(),
   project_name: z.string().max(50).nullable(),
   model_name: z.string().max(50).nullable(),
   user_prompt: z.string().nullable(),
@@ -143,12 +252,17 @@ export const RequestLogSubsetA = z.object({
   cache_creation_tokens: z.int(),
   duration_ms: z.int(),
   cost_usd: z.int().nullable(),
+  effort: z.string().max(10).nullable(),
+  history: HistoryItems.nullable(),
+  status: RequestLogStatus,
+  error_message: z.string().nullable(),
+  tool_call_count: z.int(),
 });
 export type RequestLogSubsetA = z.infer<typeof RequestLogSubsetA>;
 export const RequestLogSubsetP = z.object({
   id: z.int(),
   created_at: z.date(),
-  token_name: z.string().max(100),
+  token_name: z.string().max(100).nullable(),
   project_name: z.string().max(50).nullable(),
   model_name: z.string().max(50).nullable(),
   input_tokens: z.int(),
@@ -157,6 +271,9 @@ export const RequestLogSubsetP = z.object({
   cache_creation_tokens: z.int(),
   duration_ms: z.int(),
   cost_usd: z.int().nullable(),
+  effort: z.string().max(10).nullable(),
+  status: RequestLogStatus,
+  tool_call_count: z.int(),
 });
 export type RequestLogSubsetP = z.infer<typeof RequestLogSubsetP>;
 export type RequestLogSubsetMapping = {
@@ -165,6 +282,34 @@ export type RequestLogSubsetMapping = {
 };
 export const RequestLogSubsetKey = z.enum(["A", "P"]);
 export type RequestLogSubsetKey = z.infer<typeof RequestLogSubsetKey>;
+
+// Subsets: RequestLogStep
+export const RequestLogStepSubsetA = z.object({
+  id: z.int(),
+  created_at: z.date(),
+  request_log_id: z.int(),
+  step_index: z.int(),
+  type: RequestLogStepType,
+  input_tokens: z.int().nullable(),
+  output_tokens: z.int().nullable(),
+  cache_read_tokens: z.int().nullable(),
+  cache_creation_tokens: z.int().nullable(),
+  duration_ms: z.int().nullable(),
+  finish_reason: z.string().max(20).nullable(),
+  tool_call_index: z.int().nullable(),
+  tool_call_id: z.string().max(100).nullable(),
+  tool_name: z.string().max(100).nullable(),
+  tool_args: z.string().nullable(),
+  tool_result: z.string().nullable(),
+  tool_duration_ms: z.int().nullable(),
+  error: z.string().nullable(),
+});
+export type RequestLogStepSubsetA = z.infer<typeof RequestLogStepSubsetA>;
+export type RequestLogStepSubsetMapping = {
+  A: RequestLogStepSubsetA;
+};
+export const RequestLogStepSubsetKey = z.enum(["A"]);
+export type RequestLogStepSubsetKey = z.infer<typeof RequestLogStepSubsetKey>;
 
 // Subsets: Token
 export const TokenSubsetA = z.object({

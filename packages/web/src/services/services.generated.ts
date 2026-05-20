@@ -20,15 +20,24 @@ import qs from "qs";
 import {
   QueryInput,
   CliResult,
+  CreateRunInput,
+  AppendStepInput,
+  FinishRunInput,
   TokenStats,
   OAuthStartResult,
   UsageResponse,
   HealthResponse,
 } from "./qgrid/qgrid.types";
+import {
+  RequestLogStepListParams,
+  RequestLogStepSaveParams,
+} from "./request-log-step/request-log-step.types";
 import { RequestLogListParams, RequestLogSaveParams } from "./request-log/request-log.types";
 import {
   TokenSubsetKey,
   TokenSubsetMapping,
+  RequestLogStepSubsetKey,
+  RequestLogStepSubsetMapping,
   RequestLogSubsetKey,
   RequestLogSubsetMapping,
 } from "./sonamu.generated";
@@ -181,6 +190,139 @@ export namespace TokenService {
     });
 }
 
+export namespace RequestLogStepService {
+  export async function getRequestLogStep<T extends RequestLogStepSubsetKey>(
+    subset: T,
+    id: number,
+  ): Promise<RequestLogStepSubsetMapping[T]> {
+    return fetch({
+      method: "GET",
+      url: `/api/requestLogStep/findById?${qs.stringify({ subset, id })}`,
+    });
+  }
+
+  export const getRequestLogStepQueryOptions = <T extends RequestLogStepSubsetKey>(
+    subset: T,
+    id: number,
+  ) =>
+    queryOptions({
+      queryKey: ["RequestLogStep", "getRequestLogStep", subset, id],
+      queryFn: () => getRequestLogStep(subset, id),
+    });
+
+  export const useRequestLogStep = <T extends RequestLogStepSubsetKey>(
+    subset: T,
+    id: number,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useQuery({
+        ...getRequestLogStepQueryOptions(subset, id),
+        ...options,
+      }),
+    );
+
+  export async function getRequestLogSteps<
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(subset: T, rawParams?: LP): Promise<ListResult<LP, RequestLogStepSubsetMapping[T]>> {
+    return fetch({
+      method: "GET",
+      url: `/api/requestLogStep/findMany?${qs.stringify({ subset, rawParams })}`,
+    });
+  }
+
+  export const getRequestLogStepsQueryOptions = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+  ) =>
+    queryOptions({
+      queryKey: ["RequestLogStep", "getRequestLogSteps", subset, rawParams],
+      queryFn: () => getRequestLogSteps(subset, rawParams),
+    });
+
+  export const useRequestLogSteps = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useQuery({
+        ...getRequestLogStepsQueryOptions(subset, rawParams),
+        ...options,
+      }),
+    );
+
+  export const getRequestLogStepsInfiniteQueryOptions = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+  ) =>
+    infiniteQueryOptions({
+      queryKey: ["RequestLogStep", "getRequestLogSteps", "infinite", subset, rawParams],
+      queryFn: ({ pageParam }) => getRequestLogSteps(subset, { ...rawParams, page: pageParam }),
+      initialPageParam: 1 as number,
+      getNextPageParam: (lastPage, allPages) => {
+        const total = (lastPage as { total?: number })?.total ?? 0;
+        const loaded = allPages.reduce(
+          (sum, p) => sum + ((p as { rows?: unknown[] })?.rows?.length ?? 0),
+          0,
+        );
+        return loaded < total ? allPages.length + 1 : undefined;
+      },
+      select: dedupeAndFlatten,
+    });
+
+  export const useRequestLogStepsInfinite = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useInfiniteQuery({
+        ...getRequestLogStepsInfiniteQueryOptions(subset, rawParams),
+        ...options,
+      }),
+    );
+
+  export async function save(spa: RequestLogStepSaveParams[]): Promise<number[]> {
+    return fetch({
+      method: "POST",
+      url: `/api/requestLogStep/save`,
+      data: { spa },
+    });
+  }
+
+  export const useSaveMutation = () =>
+    useMutation({
+      mutationFn: (params: { spa: RequestLogStepSaveParams[] }) => save(params.spa),
+    });
+
+  export async function del(ids: number[]): Promise<number> {
+    return fetch({
+      method: "POST",
+      url: `/api/requestLogStep/del`,
+      data: { ids },
+    });
+  }
+
+  export const useDelMutation = () =>
+    useMutation({
+      mutationFn: (params: { ids: number[] }) => del(params.ids),
+    });
+}
+
 export namespace RequestLogService {
   export async function getRequestLog<T extends RequestLogSubsetKey>(
     subset: T,
@@ -320,6 +462,45 @@ export namespace QgridService {
   export const useQueryMutation = () =>
     useMutation({
       mutationFn: (params: { args: QueryInput }) => query(params.args),
+    });
+
+  export async function createRun(input: CreateRunInput): Promise<{ requestLogId: number }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/createRun`,
+      data: { input },
+    });
+  }
+
+  export const useCreateRunMutation = () =>
+    useMutation({
+      mutationFn: (params: { input: CreateRunInput }) => createRun(params.input),
+    });
+
+  export async function appendStep(input: AppendStepInput): Promise<{ stepId: number }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/appendStep`,
+      data: { input },
+    });
+  }
+
+  export const useAppendStepMutation = () =>
+    useMutation({
+      mutationFn: (params: { input: AppendStepInput }) => appendStep(params.input),
+    });
+
+  export async function finishRun(input: FinishRunInput): Promise<{ ok: boolean }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/finishRun`,
+      data: { input },
+    });
+  }
+
+  export const useFinishRunMutation = () =>
+    useMutation({
+      mutationFn: (params: { input: FinishRunInput }) => finishRun(params.input),
     });
 
   export async function stats(): Promise<TokenStats[]> {
@@ -520,6 +701,17 @@ export const RequestLogAsyncIdConfig: AsyncIdConfig<
   placeholderKey: "entity.RequestLog",
   useList: RequestLogService.useRequestLogs,
   useListInfinite: RequestLogService.useRequestLogsInfinite,
+};
+
+// AsyncIdConfig: RequestLogStep
+export const RequestLogStepAsyncIdConfig: AsyncIdConfig<
+  RequestLogStepSubsetKey,
+  RequestLogStepSubsetMapping,
+  RequestLogStepListParams
+> = {
+  placeholderKey: "entity.RequestLogStep",
+  useList: RequestLogStepService.useRequestLogSteps,
+  useListInfinite: RequestLogStepService.useRequestLogStepsInfinite,
 };
 
 // AsyncIdConfig: Token

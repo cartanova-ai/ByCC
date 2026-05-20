@@ -7,8 +7,10 @@ import { type PuriWrapper, type DatabaseSchemaExtend, type PuriLoaderQueries } f
 
 import {
   type RequestLogSubsetKey,
+  type RequestLogStepSubsetKey,
   type TokenSubsetKey,
   type RequestLogBaseSchema,
+  type RequestLogStepBaseSchema,
   type TokenBaseSchema,
 } from "./sonamu.generated";
 
@@ -30,6 +32,11 @@ export const requestLogSubsetQueries = {
       cache_creation_tokens: "request_logs.cache_creation_tokens",
       duration_ms: "request_logs.duration_ms",
       cost_usd: "request_logs.cost_usd",
+      effort: "request_logs.effort",
+      history: "request_logs.history",
+      status: "request_logs.status",
+      error_message: "request_logs.error_message",
+      tool_call_count: "request_logs.tool_call_count",
     });
   },
   P: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
@@ -45,6 +52,9 @@ export const requestLogSubsetQueries = {
       cache_creation_tokens: "request_logs.cache_creation_tokens",
       duration_ms: "request_logs.duration_ms",
       cost_usd: "request_logs.cost_usd",
+      effort: "request_logs.effort",
+      status: "request_logs.status",
+      tool_call_count: "request_logs.tool_call_count",
     });
   },
 };
@@ -54,6 +64,37 @@ export const requestLogLoaderQueries = {
   A: [],
   P: [],
 } as const satisfies PuriLoaderQueries<RequestLogSubsetKey>;
+
+// SubsetQuery: RequestLogStep
+export const requestLogStepSubsetQueries = {
+  A: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
+    return qbWrapper.from("request_log_steps").select({
+      id: "request_log_steps.id",
+      created_at: "request_log_steps.created_at",
+      request_log_id: "request_log_steps.request_log_id",
+      step_index: "request_log_steps.step_index",
+      type: "request_log_steps.type",
+      input_tokens: "request_log_steps.input_tokens",
+      output_tokens: "request_log_steps.output_tokens",
+      cache_read_tokens: "request_log_steps.cache_read_tokens",
+      cache_creation_tokens: "request_log_steps.cache_creation_tokens",
+      duration_ms: "request_log_steps.duration_ms",
+      finish_reason: "request_log_steps.finish_reason",
+      tool_call_index: "request_log_steps.tool_call_index",
+      tool_call_id: "request_log_steps.tool_call_id",
+      tool_name: "request_log_steps.tool_name",
+      tool_args: "request_log_steps.tool_args",
+      tool_result: "request_log_steps.tool_result",
+      tool_duration_ms: "request_log_steps.tool_duration_ms",
+      error: "request_log_steps.error",
+    });
+  },
+};
+
+// LoaderQuery: RequestLogStep
+export const requestLogStepLoaderQueries = {
+  A: [],
+} as const satisfies PuriLoaderQueries<RequestLogStepSubsetKey>;
 
 // SubsetQuery: Token
 export const tokenSubsetQueries = {
@@ -79,6 +120,7 @@ export const tokenLoaderQueries = {
 declare module "sonamu" {
   export interface DatabaseSchemaExtend {
     request_logs: RequestLogBaseSchema;
+    request_log_steps: RequestLogStepBaseSchema;
     tokens: TokenBaseSchema;
   }
 

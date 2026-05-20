@@ -68,6 +68,69 @@ Content-Type: application/json
 
 ###
 
+GET {{baseUrl}}/api/requestLogStep/findById
+	?subset=A
+	&id=0
+Content-Type: application/json
+
+###
+
+GET {{baseUrl}}/api/requestLogStep/findMany
+	?subset=A
+	&rawParams[num]=24
+	&rawParams[page]=1
+	&rawParams[search]=id
+	&rawParams[keyword]=KEYWORD
+	&rawParams[orderBy]=id-asc
+	&rawParams[queryMode]=both
+	&rawParams[id]=0
+	&rawParams[sonamuFilter]=unknown-custom
+	&rawParams[request_log_id]=0
+Content-Type: application/json
+
+###
+
+POST {{baseUrl}}/api/requestLogStep/save
+Content-Type: application/json
+
+{
+  "spa": [
+    {
+      "id": 0,
+      "created_at": "2000-01-01",
+      "request_log_id": 0,
+      "step_index": 0,
+      "type": "generate",
+      "input_tokens": null,
+      "output_tokens": null,
+      "cache_read_tokens": null,
+      "cache_creation_tokens": null,
+      "duration_ms": null,
+      "finish_reason": null,
+      "tool_call_index": null,
+      "tool_call_id": null,
+      "tool_name": null,
+      "tool_args": null,
+      "tool_result": null,
+      "tool_duration_ms": null,
+      "error": null
+    }
+  ]
+}
+
+###
+
+POST {{baseUrl}}/api/requestLogStep/del
+Content-Type: application/json
+
+{
+  "ids": [
+    0
+  ]
+}
+
+###
+
 GET {{baseUrl}}/api/requestLog/findById
 	?subset=A
 	&id=0
@@ -85,7 +148,7 @@ GET {{baseUrl}}/api/requestLog/findMany
 	&rawParams[queryMode]=both
 	&rawParams[id]=0
 	&rawParams[sonamuFilter]=unknown-custom
-	&rawParams[token_name]=TOKEN_NAME
+	&rawParams[token_name]=
 	&rawParams[project_name]=
 	&rawParams[model_name]=
 	&rawParams[project_name_is_null]=false
@@ -102,7 +165,7 @@ Content-Type: application/json
     {
       "id": 0,
       "created_at": "2000-01-01",
-      "token_name": "TOKEN_NAME",
+      "token_name": null,
       "project_name": null,
       "model_name": null,
       "user_prompt": null,
@@ -113,7 +176,12 @@ Content-Type: application/json
       "cache_read_tokens": 0,
       "cache_creation_tokens": 0,
       "duration_ms": 0,
-      "cost_usd": null
+      "cost_usd": null,
+      "effort": null,
+      "history": null,
+      "status": "running",
+      "error_message": null,
+      "tool_call_count": 0
     }
   ]
 }
@@ -143,7 +211,70 @@ Content-Type: application/json
     "jsonSchema": "JSONSCHEMA",
     "effort": "low",
     "history": "HISTORY",
+    "projectName": "PROJECTNAME",
+    "logMode": "auto"
+  }
+}
+
+###
+
+POST {{baseUrl}}/api/qgrid/createRun
+Content-Type: application/json
+
+{
+  "input": {
+    "userPrompt": "USERPROMPT",
+    "systemPrompt": "SYSTEMPROMPT",
+    "modelName": "MODELNAME",
+    "effort": "EFFORT",
     "projectName": "PROJECTNAME"
+  }
+}
+
+###
+
+POST {{baseUrl}}/api/qgrid/appendStep
+Content-Type: application/json
+
+{
+  "input": {
+    "requestLogId": 0,
+    "stepIndex": 0,
+    "type": "generate",
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "durationMs": 0,
+    "finishReason": "FINISHREASON",
+    "toolCallIndex": 0,
+    "toolCallId": "TOOLCALLID",
+    "toolName": "TOOLNAME",
+    "toolArgs": "TOOLARGS",
+    "toolResult": "TOOLRESULT",
+    "toolDurationMs": 0,
+    "error": "ERROR"
+  }
+}
+
+###
+
+POST {{baseUrl}}/api/qgrid/finishRun
+Content-Type: application/json
+
+{
+  "input": {
+    "requestLogId": 0,
+    "status": "succeeded",
+    "response": "RESPONSE",
+    "tokenName": "TOKENNAME",
+    "totalInputTokens": 0,
+    "totalOutputTokens": 0,
+    "totalCacheReadTokens": 0,
+    "totalCacheCreationTokens": 0,
+    "totalDurationMs": 0,
+    "history": "HISTORY",
+    "errorMessage": "ERRORMESSAGE"
   }
 }
 
