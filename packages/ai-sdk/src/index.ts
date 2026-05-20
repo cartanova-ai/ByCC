@@ -42,7 +42,7 @@ type QueryResponse = {
 type ToolCallResponse = {
   action: "answer" | "tool_call";
   answer?: string | null;
-  toolCalls?: Array<{ toolName: string; args: Record<string, unknown> }> | null;
+  toolCalls?: Array<{ toolName: string; args: string }> | null;
 };
 
 const DEFAULT_SERVER_URL = "http://localhost:44900";
@@ -65,36 +65,34 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
 
       let outputSchema: unknown;
       let isToolCallMode = false;
-
       if (tools && tools.length > 0) {
         outputSchema = buildToolCallSchema(tools);
         isToolCallMode = true;
       }
 
       const { prompt, system, history } = extractPromptAndHistory(options.prompt);
-      const body = {
-        prompt,
-        model: modelId,
-        system,
-        effort,
-        ...(outputSchema ? { jsonSchema: JSON.stringify(outputSchema) } : {}),
-        ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
-      };
-
       const res = await fetch(`${serverUrl}/api/qgrid/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: body }),
+        body: JSON.stringify({
+          args: {
+            prompt,
+            model: modelId,
+            system,
+            effort,
+            ...(outputSchema ? { jsonSchema: JSON.stringify(outputSchema) } : {}),
+            ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
+            ...(isToolCallMode ? { logMode: "none" } : {}),
+          },
+        }),
         signal: options.abortSignal,
       });
-
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`qgrid ${res.status}: ${text}`);
       }
 
       const data = (await res.json()) as QueryResponse;
-
       const content: LanguageModelV3Content[] = [];
       let finishReason: LanguageModelV3FinishReason = {
         unified: "stop",
@@ -104,14 +102,13 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
       if (isToolCallMode) {
         try {
           const parsed = JSON.parse(data.text) as ToolCallResponse;
-
           if (parsed.action === "tool_call" && parsed.toolCalls) {
             for (const tc of parsed.toolCalls) {
               content.push({
                 type: "tool-call",
                 toolCallId: `call_${Math.random().toString(36).slice(2, 10)}`,
                 toolName: tc.toolName,
-                input: JSON.stringify(tc.args),
+                input: tc.args,
               });
             }
             finishReason = { unified: "tool-calls", raw: "tool_call" };
@@ -188,15 +185,7 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
 // ── Tool call emulation schema ──────────────────────────────────────
 
 function buildToolCallSchema(tools: LanguageModelV3FunctionTool[]): Record<string, unknown> {
-  const toolBranches = tools.map((tool) => ({
-    type: "object" as const,
-    properties: {
-      toolName: { type: "string" as const, const: tool.name },
-      args: tool.inputSchema ?? { type: "object" as const },
-    },
-    required: ["toolName", "args"],
-    additionalProperties: false,
-  }));
+  const toolDescriptions = tools.map((t) => `- ${t.name}: ${t.description ?? ""}`).join("\n");
 
   return {
     type: "object",
@@ -207,7 +196,15 @@ function buildToolCallSchema(tools: LanguageModelV3FunctionTool[]): Record<strin
         anyOf: [
           {
             type: "array",
-            items: toolBranches.length === 1 ? toolBranches[0] : { oneOf: toolBranches },
+            items: {
+              type: "object",
+              properties: {
+                toolName: { type: "string", enum: tools.map((t) => t.name), description: toolDescriptions },
+                args: { type: "string", description: "Tool arguments as JSON string" },
+              },
+              required: ["toolName", "args"],
+              additionalProperties: false,
+            },
           },
           { type: "null" },
         ],
