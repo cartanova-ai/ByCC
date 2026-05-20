@@ -123,10 +123,13 @@ export class QgridDispatcherClass {
           model: model,
           input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
           systemPrompt: input.system,
-          outputSchema: input.jsonSchema ? strictify(JSON.parse(input.jsonSchema)) as JsonValue : undefined,
+          outputSchema: input.jsonSchema
+            ? (strictify(JSON.parse(input.jsonSchema)) as JsonValue)
+            : undefined,
           effort: input.effort,
           history: input.history ? JSON.parse(input.history) : undefined,
         });
+
         return {
           text: result.text,
           tokenName: result.tokenName,

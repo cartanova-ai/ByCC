@@ -22,8 +22,11 @@ import {
 } from "./oauth";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
-  type QueryInput,
+  QueryInput,
+  type AppendStepInput,
   type CliResult,
+  type CreateRunInput,
+  type FinishRunInput,
   type HealthResponse,
   type OAuthStartResult,
   type TokenStats,
@@ -70,24 +73,81 @@ class QgridFrameClass extends BaseFrameClass {
   async query(args: QueryInput): Promise<CliResult> {
     const result = await QgridDispatcher.query(args, args.timeout);
 
-    RequestLogModel.save([
-      {
-        token_name: result.tokenName,
-        project_name: args.projectName?.length ? args.projectName : null,
-        model_name: result.model ?? null,
-        user_prompt: args.prompt,
-        system_prompt: args.system ?? null,
-        response: result.text,
-        input_tokens: result.usage.input_tokens,
-        output_tokens: result.usage.output_tokens,
-        cache_read_tokens: result.usage.cache_read_input_tokens,
-        cache_creation_tokens: result.usage.cache_creation_input_tokens,
-        duration_ms: result.durationMs,
-        cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
-      },
-    ]).catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
+    if (args.logMode !== "none") {
+      RequestLogModel.save([
+        {
+          token_name: result.tokenName,
+          project_name: args.projectName?.length ? args.projectName : null,
+          model_name: result.model ?? null,
+          user_prompt: args.prompt,
+          system_prompt: args.system ?? null,
+          response: result.text,
+          input_tokens: result.usage.input_tokens,
+          output_tokens: result.usage.output_tokens,
+          cache_read_tokens: result.usage.cache_read_input_tokens,
+          cache_creation_tokens: result.usage.cache_creation_input_tokens,
+          duration_ms: result.durationMs,
+          cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
+          effort: args.effort ?? null,
+          history: args.history ? JSON.parse(args.history) : null,
+          status: "succeeded",
+          tool_call_count: 0,
+        },
+      ]).catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
+    }
 
     return result;
+  }
+
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async createRun(input: CreateRunInput): Promise<{ requestLogId: number }> {
+    const requestLogId = await RequestLogModel.createRun({
+      user_prompt: input.userPrompt,
+      model_name: input.modelName,
+      effort: input.effort,
+      project_name: input.projectName,
+      system_prompt: input.systemPrompt,
+    });
+    return { requestLogId };
+  }
+
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async appendStep(input: AppendStepInput): Promise<{ stepId: number }> {
+    const stepId = await RequestLogModel.appendStep(input.requestLogId, {
+      step_index: input.stepIndex,
+      type: input.type,
+      input_tokens: input.inputTokens,
+      output_tokens: input.outputTokens,
+      cache_read_tokens: input.cacheReadTokens,
+      cache_creation_tokens: input.cacheCreationTokens,
+      duration_ms: input.durationMs,
+      finish_reason: input.finishReason,
+      tool_call_index: input.toolCallIndex,
+      tool_call_id: input.toolCallId,
+      tool_name: input.toolName,
+      tool_args: input.toolArgs,
+      tool_result: input.toolResult,
+      tool_duration_ms: input.toolDurationMs,
+      error: input.error,
+    });
+    return { stepId };
+  }
+
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async finishRun(input: FinishRunInput): Promise<{ ok: boolean }> {
+    await RequestLogModel.finishRun(input.requestLogId, {
+      status: input.status,
+      response: input.response,
+      token_name: input.tokenName,
+      input_tokens: input.totalInputTokens,
+      output_tokens: input.totalOutputTokens,
+      cache_read_tokens: input.totalCacheReadTokens,
+      cache_creation_tokens: input.totalCacheCreationTokens,
+      duration_ms: input.totalDurationMs,
+      history: input.history ? JSON.parse(input.history) : undefined,
+      error_message: input.errorMessage,
+    });
+    return { ok: true };
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })

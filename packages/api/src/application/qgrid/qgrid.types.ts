@@ -14,6 +14,7 @@ export const QueryInput = z.object({
   effort: Effort.optional(),
   history: z.string().optional(),
   projectName: z.string().optional(),
+  logMode: z.enum(["auto", "none"]).optional(),
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 
@@ -31,6 +32,52 @@ export const CliResult = z.object({
   costUsd: z.number(),
 });
 export type CliResult = z.infer<typeof CliResult>;
+
+// ─── Run Lifecycle ───
+
+export const CreateRunInput = z.object({
+  userPrompt: z.string(),
+  systemPrompt: z.string().optional(),
+  modelName: z.string().optional(),
+  effort: z.string().optional(),
+  projectName: z.string().optional(),
+});
+export type CreateRunInput = z.infer<typeof CreateRunInput>;
+
+export const AppendStepInput = z.object({
+  requestLogId: z.number(),
+  stepIndex: z.number(),
+  type: z.enum(["generate", "tool_call"]),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cacheReadTokens: z.number().optional(),
+  cacheCreationTokens: z.number().optional(),
+  durationMs: z.number().optional(),
+  finishReason: z.string().optional(),
+  toolCallIndex: z.number().optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+  toolArgs: z.string().optional(),
+  toolResult: z.string().optional(),
+  toolDurationMs: z.number().optional(),
+  error: z.string().optional(),
+});
+export type AppendStepInput = z.infer<typeof AppendStepInput>;
+
+export const FinishRunInput = z.object({
+  requestLogId: z.number(),
+  status: z.enum(["succeeded", "error", "aborted"]),
+  response: z.string().optional(),
+  tokenName: z.string().optional(),
+  totalInputTokens: z.number().optional(),
+  totalOutputTokens: z.number().optional(),
+  totalCacheReadTokens: z.number().optional(),
+  totalCacheCreationTokens: z.number().optional(),
+  totalDurationMs: z.number().optional(),
+  history: z.string().optional(),
+  errorMessage: z.string().optional(),
+});
+export type FinishRunInput = z.infer<typeof FinishRunInput>;
 
 // ─── Token Management ───
 
