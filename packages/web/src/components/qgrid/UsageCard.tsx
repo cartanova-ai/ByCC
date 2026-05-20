@@ -28,7 +28,7 @@ type ProviderTheme = {
 const PROVIDER_THEMES: Record<string, ProviderTheme> = {
   openai: {
     stripe: "bg-openai-400",
-    bar: "bg-openai-400",
+    bar: "bg-openai-bar",
     badge: "bg-openai-50 text-openai-600",
     cost: "text-openai-600",
   },
@@ -111,7 +111,10 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
   }
 
   if (data?.error) {
-    const isExpired = data.error.includes("re-login") || data.error.includes("token_revoked") || data.error.includes("401");
+    const isExpired =
+      data.error.includes("re-login") ||
+      data.error.includes("token_revoked") ||
+      data.error.includes("401");
     return (
       <div className="py-1">
         <p className="text-[11px] text-amber-600">

@@ -55,6 +55,7 @@
   --color-openai-400: #7a726a;
   --color-openai-500: #5a524a;
   --color-openai-600: #3f3a34;
+  --color-openai-bar: #8a9a7a;
 
   /* Provider — Anthropic (existing sienna, aliased for clarity) */
   --color-anthropic-50: #f5ede6;

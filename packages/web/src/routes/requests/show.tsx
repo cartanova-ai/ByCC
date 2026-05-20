@@ -10,7 +10,11 @@ import CheckIcon from "~icons/lucide/check";
 import ChevronDownIcon from "~icons/lucide/chevron-down";
 import CopyIcon from "~icons/lucide/copy";
 
-import { RequestLogService } from "@/services/services.generated";
+import { formatMicroUsd } from "@/lib/cost";
+import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
+import { type RequestLogSubsetMapping } from "@/services/sonamu.generated";
+
+type RequestLog = RequestLogSubsetMapping["A"];
 
 const showSearchSchema = z.object({
   id: z.number(),
@@ -30,22 +34,20 @@ function formatNum(n: number): string {
   return n.toLocaleString();
 }
 
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString("ko-KR", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 function tryParseJson(text: string): unknown | null {
   try {
     return JSON.parse(text);
   } catch {
     return null;
+  }
+}
+
+function safeParseJson(text: string | null | undefined): unknown {
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
 }
 
@@ -151,22 +153,233 @@ function Section({
   );
 }
 
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">{label}</dt>
+      <dd className="text-[13px] font-medium text-sand-800 tabular-nums mt-0.5">{value}</dd>
+    </div>
+  );
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  running: "bg-blue-100 text-blue-600",
+  succeeded: "bg-sage-100 text-sage-600",
+  error: "bg-red-100 text-red-600",
+  aborted: "bg-caution-400/15 text-caution-500",
+};
+
+function HeaderBar({ data }: { data: RequestLog }) {
+  const status = (data as Record<string, unknown>).status as string | undefined;
+
+  return (
+    <div className="panel overflow-hidden px-5 py-3 flex items-center gap-2">
+      <span className="text-[15px] font-semibold text-sand-900">
+        {data.model_name ?? "Unknown model"}
+      </span>
+      {status && status !== "succeeded" && (
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase ${STATUS_STYLE[status] ?? "bg-sand-100 text-sand-500"}`}>
+          {status}
+        </span>
+      )}
+      {data.effort && (
+        <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-sand-100 text-sand-500 font-mono">
+          effort={data.effort}
+        </span>
+      )}
+      {data.project_name && (
+        <span className="text-[12px] text-sand-400">· project={data.project_name}</span>
+      )}
+      <span className="ml-auto text-[11px] text-sand-400">
+        {data.token_name}
+      </span>
+    </div>
+  );
+}
+
+function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount: number }) {
+  const denom = data.input_tokens + data.cache_read_tokens + data.cache_creation_tokens;
+  const cacheHitRate = denom > 0 ? `${Math.round((data.cache_read_tokens / denom) * 100)}%` : "—";
+
+  return (
+    <div className="panel overflow-hidden">
+      <div className="px-5 py-3 grid grid-cols-3 gap-x-8 gap-y-2 border-b border-sand-100/60">
+        <Metric label="Duration" value={`${(data.duration_ms / 1000).toFixed(1)}s`} />
+        <Metric
+          label="Cost"
+          value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"}
+        />
+        <Metric label="Tool Calls" value={`${toolCallCount}회`} />
+      </div>
+
+      <div className="px-5 py-3">
+        <div className="grid grid-cols-4 gap-x-6 gap-y-1.5">
+          <Metric label="Input" value={formatNum(data.input_tokens)} />
+          <Metric label="Output" value={formatNum(data.output_tokens)} />
+          <Metric label="Cache Read" value={formatNum(data.cache_read_tokens)} />
+          <Metric label="Cache Write" value={formatNum(data.cache_creation_tokens)} />
+        </div>
+        <div className="mt-2 pt-2 border-t border-sand-100/60 flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+            Cache Hit Rate
+          </span>
+          <span className="text-[15px] font-semibold text-sienna-500 tabular-nums">
+            {cacheHitRate}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ToolCallEntry = {
+  index: number;
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  result: unknown;
+  durationMs: number;
+};
+
+function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
+  return (
+    <details className="group/tool">
+      <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none list-none hover:bg-sand-50 transition-colors rounded-md">
+        <ChevronDownIcon className="size-3 text-sand-400 transition-transform group-open/tool:rotate-0 -rotate-90 shrink-0" />
+        <span className="text-[11px] text-sand-400 tabular-nums shrink-0">[{entry.index + 1}]</span>
+        <span className="text-[13px] font-medium text-sand-800 font-mono truncate">
+          {entry.toolName}
+        </span>
+        <span className="ml-auto text-[11px] text-sand-400 tabular-nums shrink-0">
+          {entry.durationMs >= 1000
+            ? `${(entry.durationMs / 1000).toFixed(1)}s`
+            : `${entry.durationMs}ms`}
+        </span>
+      </summary>
+      <div className="ml-5 mr-3 mb-2 space-y-2">
+        <div>
+          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+            Request
+          </span>
+          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto max-h-60">
+            <FormattedContent text={JSON.stringify(entry.args)} />
+          </div>
+        </div>
+        <div>
+          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+            Response
+          </span>
+          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto max-h-60">
+            <FormattedContent
+              text={typeof entry.result === "string" ? entry.result : JSON.stringify(entry.result)}
+            />
+          </div>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function ToolCallsSection({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
+  return (
+    <Section title={`Tool 호출 (${toolCalls.length}회)`} defaultOpen>
+      <div className="space-y-0.5 -mx-1">
+        {toolCalls.map((entry) => (
+          <ToolCallItem key={entry.toolCallId} entry={entry} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+type HistoryItem = {
+  type: string;
+  role?: string;
+  content?: unknown;
+  name?: string;
+  arguments?: string;
+  call_id?: string;
+  output?: string;
+};
+
+function historyItemBg(item: HistoryItem): string {
+  if (item.type === "function_call" || item.type === "function_call_output") return "bg-caution-400/10";
+  if (item.role === "assistant") return "bg-sage-50";
+  return "bg-sand-50";
+}
+
+function historyItemLabel(item: HistoryItem): string {
+  if (item.type === "function_call") return `fn: ${item.name ?? "unknown"}`;
+  if (item.type === "function_call_output") return `fn result`;
+  return item.role ?? item.type;
+}
+
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => {
+        if (typeof c === "object" && c !== null && "text" in c) return (c as { text: string }).text;
+        return JSON.stringify(c);
+      })
+      .join("\n");
+  }
+  return JSON.stringify(content);
+}
+
+function HistorySection({ history }: { history: HistoryItem[] }) {
+  return (
+    <Section title="History" defaultOpen={false}>
+      <div className="space-y-1.5">
+        {history.map((item, i) => (
+          <div key={`hist-${i}`} className={`rounded-md px-3 py-2 ${historyItemBg(item)}`}>
+            <div className="text-[10px] uppercase tracking-wider text-sand-500 font-medium mb-1">
+              {historyItemLabel(item)}
+            </div>
+            {item.content != null && (
+              <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
+                {extractText(item.content)}
+              </pre>
+            )}
+            {item.arguments && (
+              <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
+                {item.arguments}
+              </pre>
+            )}
+            {item.output && (
+              <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
+                {item.output}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function RequestDetail({ id }: { id: number }) {
   const { data, isLoading } = RequestLogService.useRequestLog("A", id);
+  const { data: stepsData } = RequestLogStepService.useRequestLogSteps("A", {
+    request_log_id: id,
+    num: 100,
+    page: 1,
+    orderBy: "id-asc" as const,
+  });
 
   if (isLoading) {
     return (
-      <div className="max-w-4xl mx-auto space-y-4">
+      <div className="max-w-6xl mx-auto space-y-4">
         <div className="h-4 w-32 bg-sand-200 rounded animate-pulse" />
-        <div className="h-40 bg-white border border-sand-200/80 rounded-xl animate-pulse" />
-        <div className="h-32 bg-white border border-sand-200/80 rounded-xl animate-pulse" />
+        <div className="h-40 panel animate-pulse" />
+        <div className="h-32 panel animate-pulse" />
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <Link
           to="/logs"
           className="flex items-center gap-1 text-[13px] text-sand-500 hover:text-sienna-500 mb-4"
@@ -179,11 +392,24 @@ function RequestDetail({ id }: { id: number }) {
     );
   }
 
-  const denom = data.input_tokens + data.cache_read_tokens + data.cache_creation_tokens;
-  const cacheHitRate = denom > 0 ? `${Math.round((data.cache_read_tokens / denom) * 100)}%` : "—";
+  const steps = stepsData?.rows ?? [];
+
+  const toolCalls: ToolCallEntry[] = steps
+    .filter((s) => s.type === "tool_call")
+    .map((s) => ({
+      index: s.tool_call_index ?? 0,
+      toolCallId: s.tool_call_id ?? "",
+      toolName: s.tool_name ?? "",
+      args: safeParseJson(s.tool_args) as Record<string, unknown>,
+      result: safeParseJson(s.tool_result),
+      durationMs: s.tool_duration_ms ?? 0,
+    }));
+  const hasToolCalls = toolCalls.length > 0;
+  const history = data.history ?? null;
+  const hasHistory = history !== null && history.length > 0;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4">
+    <div className="max-w-6xl mx-auto space-y-4">
       <Link
         to="/logs"
         className="inline-flex items-center gap-1 text-[13px] text-sand-500 hover:text-sienna-500 transition-colors"
@@ -192,19 +418,44 @@ function RequestDetail({ id }: { id: number }) {
         Back to Logs
       </Link>
 
-      <Section title="System">
-        <div className="relative">
-          <CopyButton text={data.system_prompt ?? "null"} />
-          <FormattedContent text={data.system_prompt ?? "null"} />
-        </div>
-      </Section>
+      <HeaderBar data={data} />
 
-      <Section title="User">
-        <div className="relative">
-          <CopyButton text={data.user_prompt ?? "null"} />
-          <FormattedContent text={data.user_prompt ?? "null"} />
+      {hasHistory && <HistorySection history={history} />}
+
+      {hasToolCalls ? (
+        <div className="grid grid-cols-2 gap-4 items-start">
+          <div className="space-y-4">
+            <Section title="System">
+              <div className="relative">
+                <CopyButton text={data.system_prompt ?? "null"} />
+                <FormattedContent text={data.system_prompt ?? "null"} />
+              </div>
+            </Section>
+            <Section title="User">
+              <div className="relative">
+                <CopyButton text={data.user_prompt ?? "null"} />
+                <FormattedContent text={data.user_prompt ?? "null"} />
+              </div>
+            </Section>
+          </div>
+          <ToolCallsSection toolCalls={toolCalls} />
         </div>
-      </Section>
+      ) : (
+        <div className="space-y-4">
+          <Section title="System">
+            <div className="relative">
+              <CopyButton text={data.system_prompt ?? "null"} />
+              <FormattedContent text={data.system_prompt ?? "null"} />
+            </div>
+          </Section>
+          <Section title="User">
+            <div className="relative">
+              <CopyButton text={data.user_prompt ?? "null"} />
+              <FormattedContent text={data.user_prompt ?? "null"} />
+            </div>
+          </Section>
+        </div>
+      )}
 
       <Section title="Response">
         <div className="relative">
@@ -213,81 +464,7 @@ function RequestDetail({ id }: { id: number }) {
         </div>
       </Section>
 
-      <Section title="Token Breakdown">
-        <div className="px-1">
-          <table className="w-full text-sm tabular-nums">
-            <tbody className="text-sand-700">
-              <tr>
-                <td className="py-1.5">Input</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {formatNum(data.input_tokens)}
-                </td>
-              </tr>
-              <tr>
-                <td className="py-1.5">Output</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {formatNum(data.output_tokens)}
-                </td>
-              </tr>
-              <tr>
-                <td className="py-1.5">Cache Read</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {formatNum(data.cache_read_tokens)}
-                </td>
-              </tr>
-              <tr>
-                <td className="py-1.5">Cache Write</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {formatNum(data.cache_creation_tokens)}
-                </td>
-              </tr>
-              <tr className="border-t border-sand-200/60">
-                <td className="py-1.5 font-medium text-sand-800">Cache Hit Rate</td>
-                <td className="py-1.5 text-right font-medium text-sienna-500 text-base">
-                  {cacheHitRate}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Section>
-
-      <Section title="Info">
-        <div className="px-1">
-          <table className="w-full text-sm">
-            <tbody className="text-sand-700">
-              <tr>
-                <td className="py-1.5 text-sand-500">Project</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {data.project_name ?? "—"}
-                </td>
-              </tr>
-              <tr>
-                <td className="py-1.5 text-sand-500">Token</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">{data.token_name}</td>
-              </tr>
-              <tr>
-                <td className="py-1.5 text-sand-500">Model</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {data.model_name ?? "—"}
-                </td>
-              </tr>
-              <tr>
-                <td className="py-1.5 text-sand-500">Time</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {formatDateTime(data.created_at as unknown as string)}
-                </td>
-              </tr>
-              <tr>
-                <td className="py-1.5 text-sand-500">Duration</td>
-                <td className="py-1.5 text-right font-medium text-sand-800">
-                  {(data.duration_ms / 1000).toFixed(1)}s
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Section>
+      <MetricsPanel data={data} toolCallCount={toolCalls.length} />
 
       <div className="pb-8" />
     </div>

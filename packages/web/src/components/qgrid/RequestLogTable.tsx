@@ -50,6 +50,7 @@ const COLUMNS: { label: string; align: "left" | "right"; width?: string }[] = [
   { label: "C.Read", align: "left", width: "w-20" },
   { label: "C.Write", align: "left", width: "w-20" },
   { label: "Hit", align: "left", width: "w-14" },
+  { label: "Tools", align: "left", width: "w-14" },
   { label: "Cost", align: "left", width: "w-20" },
 ];
 
@@ -212,6 +213,9 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                     </td>
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
                       {calcCacheHitRate(row)}
+                    </td>
+                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-500">
+                      {row.tool_call_count > 0 ? row.tool_call_count : "—"}
                     </td>
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
                       {row.cost_usd !== null ? formatMicroUsd(row.cost_usd) : "—"}
