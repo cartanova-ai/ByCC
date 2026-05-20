@@ -23,7 +23,7 @@ export const QueryInput = z.object({
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 
-export const CliResult = z.object({
+export const QueryOutput = z.object({
   text: z.string(),
   tokenName: z.string().optional(),
   model: z.string().optional(),
@@ -36,7 +36,7 @@ export const CliResult = z.object({
   durationMs: z.number(),
   costUsd: z.number(),
 });
-export type CliResult = z.infer<typeof CliResult>;
+export type QueryOutput = z.infer<typeof QueryOutput>;
 
 // ─── Run Lifecycle ───
 

@@ -26,7 +26,7 @@ export interface QgridProviderConfig {
   defaultEffort?: string;
 }
 
-type QueryResponse = {
+type QueryOutput = {
   text: string;
   model: string;
   usage: {
@@ -92,7 +92,7 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
         throw new Error(`qgrid ${res.status}: ${text}`);
       }
 
-      const data = (await res.json()) as QueryResponse;
+      const data = (await res.json()) as QueryOutput;
       const content: LanguageModelV3Content[] = [];
       let finishReason: LanguageModelV3FinishReason = {
         unified: "stop",

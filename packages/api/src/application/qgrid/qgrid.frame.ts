@@ -24,7 +24,7 @@ import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type QueryInput,
   type AppendStepInput,
-  type CliResult,
+  type QueryOutput,
   type CreateRunInput,
   type FinishRunInput,
   type HealthResponse,
@@ -70,7 +70,7 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async query(args: QueryInput): Promise<CliResult> {
+  async query(args: QueryInput): Promise<QueryOutput> {
     const result = await QgridDispatcher.query(args, args.timeout);
 
     if (args.logMode !== "none") {

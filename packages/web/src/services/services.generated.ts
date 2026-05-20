@@ -19,7 +19,7 @@ import qs from "qs";
 
 import {
   QueryInput,
-  CliResult,
+  QueryOutput,
   CreateRunInput,
   AppendStepInput,
   FinishRunInput,
@@ -451,7 +451,7 @@ export namespace RequestLogService {
 }
 
 export namespace QgridService {
-  export async function query(args: QueryInput): Promise<CliResult> {
+  export async function query(args: QueryInput): Promise<QueryOutput> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/query`,

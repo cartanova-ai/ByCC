@@ -26,7 +26,7 @@ import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { strictify } from "../../utils/providers/common/strictifier";
 import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
-import { type CliResult, type QueryInput, type TokenStats } from "./qgrid.types";
+import { type QueryOutput, type QueryInput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
 import { type TokenSubscriber } from "./token-subscriber";
 
@@ -112,7 +112,7 @@ export class QgridDispatcherClass {
     return picked;
   }
 
-  async query(input: QueryInput, timeoutMs?: number): Promise<CliResult> {
+  async query(input: QueryInput, timeoutMs?: number): Promise<QueryOutput> {
     // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
     if (input.model?.includes("/")) {
       const [provider, model] = input.model.split("/", 2);
@@ -184,7 +184,7 @@ async function executeClaude(
   input: QueryInput,
   token: string,
   timeoutMs: number,
-): Promise<CliResult> {
+): Promise<QueryOutput> {
   const model = input.model ?? DEFAULT_MODEL;
   const timeout = input.timeout ?? timeoutMs;
   const useStructuredOutput = input.jsonSchema && input.jsonSchema.length > 0;
@@ -242,7 +242,7 @@ async function executeClaude(
     CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
   };
 
-  return new Promise<CliResult>((resolve, reject) => {
+  return new Promise<QueryOutput>((resolve, reject) => {
     const child = spawn("claude", args, {
       stdio: ["ignore", "pipe", "ignore"],
       env,
