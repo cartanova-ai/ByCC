@@ -103,6 +103,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       const picked = this.picker.pick(candidates);
       if (!picked) break;
       if (picked.worker.tryAcquireTurn()) {
+        logger.info(`→ ${picked.worker.tokenName} (model: ${req.model})`);
         try {
           return await this.executeTurn(picked.worker, req);
         } finally {
