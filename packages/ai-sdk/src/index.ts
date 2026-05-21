@@ -19,7 +19,12 @@ import {
   type LanguageModelV3StreamResult,
   type LanguageModelV3Usage,
 } from "@ai-sdk/provider";
-import { type QgridSupportedModel, type QueryOutput, type QgridProviderConfig } from "./index.types";
+
+import {
+  type QgridSupportedModel,
+  type QueryOutput,
+  type QgridProviderConfig,
+} from "./index.types";
 import {
   createRun,
   appendStep,
@@ -160,9 +165,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         if (rs.stepIndex > 0 && rs.lastTurnEndTime) {
           const prevToolCalls = extractToolResultsFromHistory(options.prompt);
           const totalToolDuration = Date.now() - rs.lastTurnEndTime;
-          const perToolDuration = prevToolCalls.length > 0
-            ? Math.round(totalToolDuration / prevToolCalls.length)
-            : 0;
+          const perToolDuration =
+            prevToolCalls.length > 0 ? Math.round(totalToolDuration / prevToolCalls.length) : 0;
           for (let i = 0; i < prevToolCalls.length; i++) {
             const tc = prevToolCalls[i];
             rs.pendingSteps.push(
@@ -203,7 +207,9 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 
         if (finishReason.unified === "stop") {
           const responseText = content
-            .filter((c): c is Extract<LanguageModelV3Content, { type: "text" }> => c.type === "text")
+            .filter(
+              (c): c is Extract<LanguageModelV3Content, { type: "text" }> => c.type === "text",
+            )
             .map((c) => c.text)
             .join("\n");
 
@@ -346,158 +352,167 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const stream = new ReadableStream<LanguageModelV3StreamPart>({
         async start(controller) {
           try {
-          let streamCompleted = false;
-          for await (const event of parseSSE(sseBody)) {
-            if (event.type === "delta") {
-              if (!hasTools) {
-                if (!textStarted) {
-                  controller.enqueue({ type: "text-start", id: textId });
-                  textStarted = true;
+            let streamCompleted = false;
+            for await (const event of parseSSE(sseBody)) {
+              if (event.type === "delta") {
+                if (!hasTools) {
+                  if (!textStarted) {
+                    controller.enqueue({ type: "text-start", id: textId });
+                    textStarted = true;
+                  }
+                  controller.enqueue({
+                    type: "text-delta",
+                    id: textId,
+                    delta: (event.data as { text: string }).text,
+                  });
+                  deltaTextEmitted = true;
                 }
-                controller.enqueue({
-                  type: "text-delta",
-                  id: textId,
-                  delta: (event.data as { text: string }).text,
-                });
-                deltaTextEmitted = true;
-              }
-            } else if (event.type === "done") {
-              if (textStarted) {
-                controller.enqueue({ type: "text-end", id: textId });
-                textStarted = false;
-              }
-              const done = event.data as QueryOutput;
+              } else if (event.type === "done") {
+                if (textStarted) {
+                  controller.enqueue({ type: "text-end", id: textId });
+                  textStarted = false;
+                }
+                const done = event.data as QueryOutput;
 
-              if (runState) {
-                const rs = runState;
-                rs.aggUsage.input += done.usage.input_tokens;
-                rs.aggUsage.output += done.usage.output_tokens;
-                rs.aggUsage.cacheRead += done.usage.cache_read_input_tokens;
-                rs.aggUsage.cacheCreation += done.usage.cache_creation_input_tokens;
-                rs.tokenName = done.tokenName;
-                rs.model = done.model;
+                if (runState) {
+                  const rs = runState;
+                  rs.aggUsage.input += done.usage.input_tokens;
+                  rs.aggUsage.output += done.usage.output_tokens;
+                  rs.aggUsage.cacheRead += done.usage.cache_read_input_tokens;
+                  rs.aggUsage.cacheCreation += done.usage.cache_creation_input_tokens;
+                  rs.tokenName = done.tokenName;
+                  rs.model = done.model;
 
-                if (rs.stepIndex > 0 && rs.lastTurnEndTime) {
-                  const prevToolCalls = extractToolResultsFromHistory(options.prompt);
-                  const totalToolDuration = Date.now() - rs.lastTurnEndTime;
-                  const perToolDuration = prevToolCalls.length > 0
-                    ? Math.round(totalToolDuration / prevToolCalls.length)
-                    : 0;
-                  for (let i = 0; i < prevToolCalls.length; i++) {
-                    const ptc = prevToolCalls[i];
-                    rs.pendingSteps.push(
-                      appendStep(serverUrl, {
-                        requestLogId: rs.requestLogId,
-                        stepIndex: rs.stepIndex - 1,
-                        type: "tool_call",
-                        toolCallIndex: i,
-                        toolCallId: ptc.callId,
-                        toolName: ptc.toolName,
-                        toolArgs: ptc.args,
-                        toolResult: ptc.result,
-                        toolDurationMs: perToolDuration,
-                      }).catch(() => {}),
-                    );
+                  if (rs.stepIndex > 0 && rs.lastTurnEndTime) {
+                    const prevToolCalls = extractToolResultsFromHistory(options.prompt);
+                    const totalToolDuration = Date.now() - rs.lastTurnEndTime;
+                    const perToolDuration =
+                      prevToolCalls.length > 0
+                        ? Math.round(totalToolDuration / prevToolCalls.length)
+                        : 0;
+                    for (let i = 0; i < prevToolCalls.length; i++) {
+                      const ptc = prevToolCalls[i];
+                      rs.pendingSteps.push(
+                        appendStep(serverUrl, {
+                          requestLogId: rs.requestLogId,
+                          stepIndex: rs.stepIndex - 1,
+                          type: "tool_call",
+                          toolCallIndex: i,
+                          toolCallId: ptc.callId,
+                          toolName: ptc.toolName,
+                          toolArgs: ptc.args,
+                          toolResult: ptc.result,
+                          toolDurationMs: perToolDuration,
+                        }).catch(() => {}),
+                      );
+                    }
+                  }
+
+                  rs.pendingSteps.push(
+                    appendStep(serverUrl, {
+                      requestLogId: rs.requestLogId,
+                      stepIndex: rs.stepIndex,
+                      type: "generate",
+                      inputTokens: done.usage.input_tokens,
+                      outputTokens: done.usage.output_tokens,
+                      cacheReadTokens: done.usage.cache_read_input_tokens,
+                      cacheCreationTokens: done.usage.cache_creation_input_tokens,
+                      durationMs: done.durationMs,
+                      finishReason: done.finishReason ?? "stop",
+                    }).catch(() => {}),
+                  );
+
+                  rs.stepIndex++;
+
+                  if (done.finishReason === "tool-calls") {
+                    rs.lastTurnEndTime = Date.now();
+                  }
+
+                  const isStop = done.finishReason === "stop" || !done.finishReason;
+                  if (isStop) {
+                    await Promise.allSettled(rs.pendingSteps);
+                    await finishRun(serverUrl, {
+                      requestLogId: rs.requestLogId,
+                      status: "succeeded",
+                      response: done.text,
+                      tokenName: rs.tokenName,
+                      totalInputTokens: rs.aggUsage.input,
+                      totalOutputTokens: rs.aggUsage.output,
+                      totalCacheReadTokens: rs.aggUsage.cacheRead,
+                      totalCacheCreationTokens: rs.aggUsage.cacheCreation,
+                      totalDurationMs: Date.now() - rs.startTime,
+                    }).catch(() => {});
+                    runState = null;
                   }
                 }
 
-                rs.pendingSteps.push(
-                  appendStep(serverUrl, {
-                    requestLogId: rs.requestLogId,
-                    stepIndex: rs.stepIndex,
-                    type: "generate",
-                    inputTokens: done.usage.input_tokens,
-                    outputTokens: done.usage.output_tokens,
-                    cacheReadTokens: done.usage.cache_read_input_tokens,
-                    cacheCreationTokens: done.usage.cache_creation_input_tokens,
-                    durationMs: done.durationMs,
-                    finishReason: done.finishReason ?? "stop",
-                  }).catch(() => {}),
-                );
-
-                rs.stepIndex++;
-
-                if (done.finishReason === "tool-calls") {
-                  rs.lastTurnEndTime = Date.now();
-                }
-
-                const isStop = done.finishReason === "stop" || !done.finishReason;
-                if (isStop) {
-                  await Promise.allSettled(rs.pendingSteps);
-                  await finishRun(serverUrl, {
-                    requestLogId: rs.requestLogId,
-                    status: "succeeded",
-                    response: done.text,
-                    tokenName: rs.tokenName,
-                    totalInputTokens: rs.aggUsage.input,
-                    totalOutputTokens: rs.aggUsage.output,
-                    totalCacheReadTokens: rs.aggUsage.cacheRead,
-                    totalCacheCreationTokens: rs.aggUsage.cacheCreation,
-                    totalDurationMs: Date.now() - rs.startTime,
-                  }).catch(() => {});
-                  runState = null;
-                }
-              }
-
-              // done.content에서 text/tool-call 파트 emit
-              if (done.content) {
-                for (const item of done.content) {
-                  if (item.type === "text" && !deltaTextEmitted) {
-                    const tid = `text_${Math.random().toString(36).slice(2, 10)}`;
-                    controller.enqueue({ type: "text-start", id: tid });
-                    controller.enqueue({ type: "text-delta", id: tid, delta: item.text });
-                    controller.enqueue({ type: "text-end", id: tid });
-                  } else if (item.type === "tool-call") {
-                    controller.enqueue({ type: "tool-input-start", id: item.toolCallId, toolName: item.toolName });
-                    controller.enqueue({ type: "tool-input-delta", id: item.toolCallId, delta: item.input });
-                    controller.enqueue({ type: "tool-input-end", id: item.toolCallId });
-                    controller.enqueue({
-                      type: "tool-call",
-                      toolCallId: item.toolCallId,
-                      toolName: item.toolName,
-                      input: item.input,
-                    });
+                // done.content에서 text/tool-call 파트 emit
+                if (done.content) {
+                  for (const item of done.content) {
+                    if (item.type === "text" && !deltaTextEmitted) {
+                      const tid = `text_${Math.random().toString(36).slice(2, 10)}`;
+                      controller.enqueue({ type: "text-start", id: tid });
+                      controller.enqueue({ type: "text-delta", id: tid, delta: item.text });
+                      controller.enqueue({ type: "text-end", id: tid });
+                    } else if (item.type === "tool-call") {
+                      controller.enqueue({
+                        type: "tool-input-start",
+                        id: item.toolCallId,
+                        toolName: item.toolName,
+                      });
+                      controller.enqueue({
+                        type: "tool-input-delta",
+                        id: item.toolCallId,
+                        delta: item.input,
+                      });
+                      controller.enqueue({ type: "tool-input-end", id: item.toolCallId });
+                      controller.enqueue({
+                        type: "tool-call",
+                        toolCallId: item.toolCallId,
+                        toolName: item.toolName,
+                        input: item.input,
+                      });
+                    }
                   }
                 }
+
+                const finishReason: LanguageModelV3FinishReason =
+                  done.finishReason === "tool-calls"
+                    ? { unified: "tool-calls", raw: "tool_call" }
+                    : { unified: "stop", raw: "stop" };
+
+                const usage: LanguageModelV3Usage = {
+                  inputTokens: {
+                    total: done.usage.input_tokens,
+                    noCache: done.usage.input_tokens - done.usage.cache_read_input_tokens,
+                    cacheRead: done.usage.cache_read_input_tokens,
+                    cacheWrite: done.usage.cache_creation_input_tokens,
+                  },
+                  outputTokens: {
+                    total: done.usage.output_tokens,
+                    text: done.usage.output_tokens,
+                    reasoning: undefined,
+                  },
+                };
+
+                controller.enqueue({ type: "finish", finishReason, usage });
+                streamCompleted = true;
+                controller.close();
+                return;
+              } else if (event.type === "error") {
+                const errorMsg = (event.data as { message: string }).message;
+                streamCompleted = true;
+                await failRun(errorMsg);
+                controller.error(new Error(errorMsg));
+                return;
               }
-
-              const finishReason: LanguageModelV3FinishReason =
-                done.finishReason === "tool-calls"
-                  ? { unified: "tool-calls", raw: "tool_call" }
-                  : { unified: "stop", raw: "stop" };
-
-              const usage: LanguageModelV3Usage = {
-                inputTokens: {
-                  total: done.usage.input_tokens,
-                  noCache: done.usage.input_tokens - done.usage.cache_read_input_tokens,
-                  cacheRead: done.usage.cache_read_input_tokens,
-                  cacheWrite: done.usage.cache_creation_input_tokens,
-                },
-                outputTokens: {
-                  total: done.usage.output_tokens,
-                  text: done.usage.output_tokens,
-                  reasoning: undefined,
-                },
-              };
-
-              controller.enqueue({ type: "finish", finishReason, usage });
-              streamCompleted = true;
-              controller.close();
-              return;
-            } else if (event.type === "error") {
-              const errorMsg = (event.data as { message: string }).message;
-              streamCompleted = true;
-              await failRun(errorMsg);
-              controller.error(new Error(errorMsg));
-              return;
             }
-          }
-          if (!streamCompleted) {
-            await failRun("stream ended before done event");
-            controller.error(new Error("qgrid stream ended unexpectedly"));
-          } else {
-            controller.close();
-          }
+            if (!streamCompleted) {
+              await failRun("stream ended before done event");
+              controller.error(new Error("qgrid stream ended unexpectedly"));
+            } else {
+              controller.close();
+            }
           } catch (e) {
             await failRun((e as Error).message);
             controller.error(e);

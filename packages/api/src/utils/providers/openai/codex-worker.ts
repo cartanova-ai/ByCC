@@ -239,7 +239,9 @@ export class CodexAppServerWorker {
     return !this.busy;
   }
 
-  private async startThread(req: TurnRequest): Promise<{ threadId: string; turnId: string; model: string }> {
+  private async startThread(
+    req: TurnRequest,
+  ): Promise<{ threadId: string; turnId: string; model: string }> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
 
     const threadConfig: ThreadStartParams["config"] = {

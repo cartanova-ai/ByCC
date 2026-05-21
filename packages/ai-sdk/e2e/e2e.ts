@@ -8,6 +8,7 @@
  */
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
+
 import { qgrid } from "../src/index";
 
 const SERVER = process.env.QGRID_URL ?? "http://localhost:44900";
@@ -43,7 +44,10 @@ const WEATHER_DB: Record<string, { temperature: number; condition: string }> = {
   Jeju: { temperature: 24, condition: "rainy" },
 };
 
-const RESTAURANT_DB: Record<string, Array<{ id: string; name: string; cuisine: string; rating: number }>> = {
+const RESTAURANT_DB: Record<
+  string,
+  Array<{ id: string; name: string; cuisine: string; rating: number }>
+> = {
   Daegu: [
     { id: "r6", name: "대구 막창", cuisine: "BBQ", rating: 4.4 },
     { id: "r7", name: "안지랑 곱창", cuisine: "Korean", rating: 4.7 },
@@ -129,8 +133,14 @@ async function main() {
     const restaurantCalls = allToolCalls.filter((tc) => tc.toolName === "searchRestaurants");
     const toolNames = [...new Set(allToolCalls.map((tc) => tc.toolName))];
 
-    assert(allToolCalls.length >= 2, `expected at least 2 total tool calls, got ${allToolCalls.length}`);
-    assert(weatherCalls.length >= 2, `expected at least 2 getWeather calls, got ${weatherCalls.length}`);
+    assert(
+      allToolCalls.length >= 2,
+      `expected at least 2 total tool calls, got ${allToolCalls.length}`,
+    );
+    assert(
+      weatherCalls.length >= 2,
+      `expected at least 2 getWeather calls, got ${weatherCalls.length}`,
+    );
     assert(result.steps.length >= 2, `expected at least 2 steps, got ${result.steps.length}`);
     assert(result.finishReason === "stop", `unexpected finishReason: ${result.finishReason}`);
     console.log(
@@ -167,18 +177,27 @@ async function main() {
     assert(log, "no request_log found");
     assert(log.status === "succeeded", `expected status=succeeded, got ${log.status}`);
     assert((log.input_tokens as number) > 0, "input_tokens should be > 0");
-    assert((log.tool_call_count as number) >= 1, `expected tool_call_count >= 1, got ${log.tool_call_count}`);
+    assert(
+      (log.tool_call_count as number) >= 1,
+      `expected tool_call_count >= 1, got ${log.tool_call_count}`,
+    );
     assert((log.response as string)?.length > 0, "response should not be empty");
 
     // steps 검증
     const stepsRes = await fetch(
       `${SERVER}/api/requestLogStep/findMany?subset=A&rawParams%5Bnum%5D=50&rawParams%5Bpage%5D=1&rawParams%5Brequest_log_id%5D=${log.id}&rawParams%5BorderBy%5D=id-asc`,
     );
-    const stepsData = (await stepsRes.json()) as { rows: Array<Record<string, unknown>>; total: number };
+    const stepsData = (await stepsRes.json()) as {
+      rows: Array<Record<string, unknown>>;
+      total: number;
+    };
     const generateSteps = stepsData.rows.filter((s) => s.type === "generate");
     const toolSteps = stepsData.rows.filter((s) => s.type === "tool_call");
 
-    assert(generateSteps.length >= 2, `expected at least 2 generate steps, got ${generateSteps.length}`);
+    assert(
+      generateSteps.length >= 2,
+      `expected at least 2 generate steps, got ${generateSteps.length}`,
+    );
     assert(toolSteps.length >= 1, `expected at least 1 tool_call step, got ${toolSteps.length}`);
 
     console.log(

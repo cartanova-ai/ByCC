@@ -1,11 +1,12 @@
-import type {
-  LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
-} from "@ai-sdk/provider";
-import type { AppendStepInput, CreateRunInput, FinishRunInput } from "./index.types";
+import { type LanguageModelV3FunctionTool, type LanguageModelV3Message } from "@ai-sdk/provider";
+
+import { type AppendStepInput, type CreateRunInput, type FinishRunInput } from "./index.types";
 
 // API helpers
-export async function createRun(serverUrl: string, body: CreateRunInput): Promise<{ requestLogId: number }> {
+export async function createRun(
+  serverUrl: string,
+  body: CreateRunInput,
+): Promise<{ requestLogId: number }> {
   const res = await fetch(`${serverUrl}/api/qgrid/createRun`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -14,7 +15,10 @@ export async function createRun(serverUrl: string, body: CreateRunInput): Promis
   return res.json() as Promise<{ requestLogId: number }>;
 }
 
-export async function appendStep(serverUrl: string, body: AppendStepInput): Promise<{ stepId: number }> {
+export async function appendStep(
+  serverUrl: string,
+  body: AppendStepInput,
+): Promise<{ stepId: number }> {
   const res = await fetch(`${serverUrl}/api/qgrid/appendStep`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -74,7 +78,7 @@ export function extractToolResultsFromHistory(
     } else if (msg.role === "tool") {
       for (const part of msg.content) {
         if ("type" in part && part.type === "tool-result") {
-          const id = "toolCallId" in part ? (part.toolCallId as string) : "";
+          const id = "toolCallId" in part ? part.toolCallId : "";
           const output = part.output;
           const text =
             "value" in output
@@ -100,9 +104,7 @@ export function extractToolResultsFromHistory(
 // SSE parser
 export type SSEEvent = { type: string; data: Record<string, unknown> };
 
-export async function* parseSSE(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<SSEEvent> {
+export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerator<SSEEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

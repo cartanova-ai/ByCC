@@ -130,9 +130,7 @@ class QgridFrameClass extends BaseFrameClass {
 
     sse.onClose(() => {
       if (threadId && turnId) {
-        QgridDispatcher.openaiDispatcher
-          ?.interruptWorkerTurn(threadId, turnId)
-          .catch(() => {});
+        QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
       }
     });
 
@@ -144,17 +142,13 @@ class QgridFrameClass extends BaseFrameClass {
         onThreadId: (id) => {
           threadId = id;
           if (sse.closed && turnId) {
-            QgridDispatcher.openaiDispatcher
-              ?.interruptWorkerTurn(threadId, turnId)
-              .catch(() => {});
+            QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
           }
         },
         onTurnId: (id) => {
           turnId = id;
           if (sse.closed && threadId) {
-            QgridDispatcher.openaiDispatcher
-              ?.interruptWorkerTurn(threadId, turnId)
-              .catch(() => {});
+            QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
           }
         },
         onComplete: (result) => {
