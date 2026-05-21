@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
+import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type ThreadInjectItemsParams } from "../../../codex-protocol/v2/ThreadInjectItemsParams";
 import { type ThreadStartParams } from "../../../codex-protocol/v2/ThreadStartParams";
 import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStartResponse";
@@ -32,6 +33,9 @@ export interface TurnRequest {
   model?: string;
   developerInstructions?: string;
   history?: ThreadInjectItemsParams["items"];
+  verbosity?: string;
+  reasoningSummary?: string;
+  serviceTier?: string;
 }
 
 export interface TurnResult {
@@ -230,6 +234,10 @@ export class CodexAppServerWorker {
   async executeTurn(req: TurnRequest): Promise<TurnResult> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
 
+    const threadConfig: ThreadStartParams['config'] = {
+      ...THREAD_DEFAULTS.config,
+      ...(req.verbosity ? { model_verbosity: req.verbosity } : {}),
+    };
     const { thread, model: threadModel } = await this.rpc.request<ThreadStartResponse>(
       "thread/start",
       {
@@ -237,7 +245,9 @@ export class CodexAppServerWorker {
         cwd: `${this.codexHome}/cwd`,
         baseInstructions: req.outputSchema ? BASE_INSTRUCTIONS.withSchema : BASE_INSTRUCTIONS.text,
         developerInstructions: req.developerInstructions ?? "",
-        ...THREAD_DEFAULTS,
+        sandbox: THREAD_DEFAULTS.sandbox,
+        approvalPolicy: THREAD_DEFAULTS.approvalPolicy,
+        config: threadConfig,
       } satisfies Partial<ThreadStartParams>,
     );
 
@@ -256,6 +266,8 @@ export class CodexAppServerWorker {
       ...(req.outputSchema ? { outputSchema: req.outputSchema } : {}),
       ...(req.effort ? { effort: req.effort } : {}),
       ...(req.model ? { model: req.model } : {}),
+      ...(req.reasoningSummary ? { summary: req.reasoningSummary } : {}),
+      ...(req.serviceTier ? { serviceTier: req.serviceTier } : {}),
     });
 
     return this.consumeTurnNotifications(threadId, model);

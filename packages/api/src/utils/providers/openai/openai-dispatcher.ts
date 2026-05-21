@@ -127,6 +127,9 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       effort: req.effort ?? DEFAULT_EFFORT,
       model: req.model,
       history: req.history,
+      verbosity: req.verbosity,
+      reasoningSummary: req.reasoningSummary,
+      serviceTier: req.serviceTier,
     };
 
     const result: TurnResult = await worker.executeTurn(turnReq);

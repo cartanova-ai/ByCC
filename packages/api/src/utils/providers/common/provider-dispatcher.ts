@@ -14,6 +14,9 @@ export interface GenerateRequest {
   systemPrompt?: string;
   outputSchema?: JsonValue;
   effort?: string;
+  verbosity?: string;
+  reasoningSummary?: string;
+  serviceTier?: string;
   history?: Array<JsonValue>;
   abortSignal?: AbortSignal;
 }
