@@ -15,42 +15,36 @@ import {
   type LanguageModelV3FinishReason,
   type LanguageModelV3FunctionTool,
   type LanguageModelV3GenerateResult,
-  type LanguageModelV3Message,
   type LanguageModelV3StreamPart,
   type LanguageModelV3StreamResult,
   type LanguageModelV3Usage,
 } from "@ai-sdk/provider";
-
-export interface QgridProviderConfig {
-  serverUrl?: string;
-  defaultEffort?: string;
-}
-
-type QueryOutput = {
-  text: string;
-  model: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens: number;
-    cache_read_input_tokens: number;
-  };
-  durationMs: number;
-  costUsd: number;
-};
-
-type ToolCallResponse = {
-  action: "answer" | "tool_call";
-  answer?: string | null;
-  toolCalls?: Array<{ toolName: string; args: string }> | null;
-};
+import { type QgridSupportedModel, type QueryOutput, type QgridProviderConfig } from "./index.types";
+import {
+  createRun,
+  appendStep,
+  finishRun,
+  extractPromptAndHistory,
+  extractToolResultsFromHistory,
+  toQgridTool,
+} from "./utils";
 
 const DEFAULT_SERVER_URL = "http://localhost:44900";
 const DEFAULT_EFFORT = "low";
 
-export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageModelV3 {
+export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig): LanguageModelV3 {
   const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
   const effort = config?.defaultEffort ?? DEFAULT_EFFORT;
+
+  let runState: {
+    requestLogId: number;
+    stepIndex: number;
+    pendingSteps: Promise<unknown>[];
+    startTime: number;
+    aggUsage: { input: number; output: number; cacheRead: number; cacheCreation: number };
+    tokenName?: string;
+    model?: string;
+  } | null = null;
 
   const model: LanguageModelV3 = {
     specificationVersion: "v3",
@@ -62,15 +56,33 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
       const tools = options.tools?.filter(
         (t): t is LanguageModelV3FunctionTool => t.type === "function",
       );
+      const hasTools = tools && tools.length > 0;
+      const { prompt, system, history } = extractPromptAndHistory(options.prompt);
 
-      let outputSchema: unknown;
-      let isToolCallMode = false;
-      if (tools && tools.length > 0) {
-        outputSchema = buildToolCallSchema(tools);
-        isToolCallMode = true;
+      const openaiOpts = options.providerOptions?.openai as Record<string, unknown> | undefined;
+      const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
+      const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
+      const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
+      const serviceTier = openaiOpts?.serviceTier as string | undefined;
+
+      if (!runState && hasTools) {
+        try {
+          const run = await createRun(serverUrl, {
+            userPrompt: prompt,
+            systemPrompt: system,
+            modelName: modelId,
+            effort: effectiveEffort,
+          });
+          runState = {
+            requestLogId: run.requestLogId,
+            stepIndex: 0,
+            pendingSteps: [],
+            startTime: Date.now(),
+            aggUsage: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+          };
+        } catch {}
       }
 
-      const { prompt, system, history } = extractPromptAndHistory(options.prompt);
       const res = await fetch(`${serverUrl}/api/qgrid/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -79,17 +91,31 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
             prompt,
             model: modelId,
             system,
-            effort,
-            ...(outputSchema ? { jsonSchema: JSON.stringify(outputSchema) } : {}),
+            effort: effectiveEffort,
+            ...(verbosity ? { verbosity } : {}),
+            ...(reasoningSummary ? { reasoningSummary } : {}),
+            ...(serviceTier ? { serviceTier } : {}),
+            ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
+            ...(hasTools ? { isStep: true } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
-            ...(isToolCallMode ? { logMode: "none" } : {}),
           },
         }),
         signal: options.abortSignal,
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(`qgrid ${res.status}: ${text}`);
+        const error = new Error(`qgrid ${res.status}: ${text}`);
+        if (runState) {
+          await Promise.allSettled(runState.pendingSteps);
+          await finishRun(serverUrl, {
+            requestLogId: runState.requestLogId,
+            status: "error",
+            errorMessage: error.message,
+            totalDurationMs: Date.now() - runState.startTime,
+          }).catch(() => {});
+          runState = null;
+        }
+        throw error;
       }
 
       const data = (await res.json()) as QueryOutput;
@@ -98,28 +124,90 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
         unified: "stop",
         raw: "stop",
       };
-
-      if (isToolCallMode) {
-        try {
-          const parsed = JSON.parse(data.text) as ToolCallResponse;
-          if (parsed.action === "tool_call" && parsed.toolCalls) {
-            for (const tc of parsed.toolCalls) {
-              content.push({
-                type: "tool-call",
-                toolCallId: `call_${Math.random().toString(36).slice(2, 10)}`,
-                toolName: tc.toolName,
-                input: tc.args,
-              });
-            }
-            finishReason = { unified: "tool-calls", raw: "tool_call" };
+      if (data.content) {
+        for (const item of data.content) {
+          if (item.type === "text") {
+            content.push({ type: "text", text: item.text });
           } else {
-            content.push({ type: "text", text: parsed.answer ?? data.text });
+            content.push({
+              type: "tool-call",
+              toolCallId: item.toolCallId,
+              toolName: item.toolName,
+              input: item.input,
+            });
           }
-        } catch {
-          content.push({ type: "text", text: data.text });
+        }
+        if (data.finishReason === "tool-calls") {
+          finishReason = { unified: "tool-calls", raw: "tool_call" };
         }
       } else {
         content.push({ type: "text", text: data.text });
+      }
+
+      if (runState) {
+        const rs = runState;
+        rs.aggUsage.input += data.usage.input_tokens;
+        rs.aggUsage.output += data.usage.output_tokens;
+        rs.aggUsage.cacheRead += data.usage.cache_read_input_tokens;
+        rs.aggUsage.cacheCreation += data.usage.cache_creation_input_tokens;
+        rs.tokenName = data.tokenName;
+        rs.model = data.model;
+
+        if (rs.stepIndex > 0) {
+          const prevToolCalls = extractToolResultsFromHistory(options.prompt);
+          for (let i = 0; i < prevToolCalls.length; i++) {
+            const tc = prevToolCalls[i];
+            rs.pendingSteps.push(
+              appendStep(serverUrl, {
+                requestLogId: rs.requestLogId,
+                stepIndex: rs.stepIndex - 1,
+                type: "tool_call",
+                toolCallIndex: i,
+                toolCallId: tc.callId,
+                toolName: tc.toolName,
+                toolArgs: tc.args,
+                toolResult: tc.result,
+              }).catch(() => {}),
+            );
+          }
+        }
+
+        rs.pendingSteps.push(
+          appendStep(serverUrl, {
+            requestLogId: rs.requestLogId,
+            stepIndex: rs.stepIndex,
+            type: "generate",
+            inputTokens: data.usage.input_tokens,
+            outputTokens: data.usage.output_tokens,
+            cacheReadTokens: data.usage.cache_read_input_tokens,
+            cacheCreationTokens: data.usage.cache_creation_input_tokens,
+            durationMs: data.durationMs,
+            finishReason: data.finishReason ?? "stop",
+          }).catch(() => {}),
+        );
+
+        rs.stepIndex++;
+
+        if (finishReason.unified === "stop") {
+          const responseText = content
+            .filter((c): c is Extract<LanguageModelV3Content, { type: "text" }> => c.type === "text")
+            .map((c) => c.text)
+            .join("\n");
+
+          await Promise.allSettled(rs.pendingSteps);
+          await finishRun(serverUrl, {
+            requestLogId: rs.requestLogId,
+            status: "succeeded",
+            response: responseText,
+            tokenName: rs.tokenName,
+            totalInputTokens: rs.aggUsage.input,
+            totalOutputTokens: rs.aggUsage.output,
+            totalCacheReadTokens: rs.aggUsage.cacheRead,
+            totalCacheCreationTokens: rs.aggUsage.cacheCreation,
+            totalDurationMs: Date.now() - rs.startTime,
+          }).catch(() => {});
+          runState = null;
+        }
       }
 
       const usage: LanguageModelV3Usage = {
@@ -141,6 +229,14 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
         finishReason,
         usage,
         warnings: [],
+        providerMetadata: {
+          qgrid: {
+            model: data.model,
+            tokenName: data.tokenName ?? null,
+            durationMs: data.durationMs,
+            costUsd: data.costUsd,
+          },
+        },
         response: { modelId: data.model },
       };
     },
@@ -180,128 +276,6 @@ export function qgrid(modelId: string, config?: QgridProviderConfig): LanguageMo
   };
 
   return model;
-}
-
-// ── Tool call emulation schema ──────────────────────────────────────
-
-function buildToolCallSchema(tools: LanguageModelV3FunctionTool[]): Record<string, unknown> {
-  const toolDescriptions = tools.map((t) => `- ${t.name}: ${t.description ?? ""}`).join("\n");
-
-  return {
-    type: "object",
-    properties: {
-      action: { type: "string", enum: ["answer", "tool_call"] },
-      answer: { anyOf: [{ type: "string" }, { type: "null" }] },
-      toolCalls: {
-        anyOf: [
-          {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                toolName: {
-                  type: "string",
-                  enum: tools.map((t) => t.name),
-                  description: toolDescriptions,
-                },
-                args: { type: "string", description: "Tool arguments as JSON string" },
-              },
-              required: ["toolName", "args"],
-              additionalProperties: false,
-            },
-          },
-          { type: "null" },
-        ],
-      },
-    },
-    required: ["action", "answer", "toolCalls"],
-    additionalProperties: false,
-  };
-}
-
-// ── Prompt helpers ──────────────────────────────────────────────────
-
-function extractPromptAndHistory(messages: LanguageModelV3Message[]): {
-  prompt: string;
-  system: string | undefined;
-  history: unknown[];
-} {
-  let system: string | undefined;
-  const nonSystem: LanguageModelV3Message[] = [];
-
-  for (const msg of messages) {
-    if (msg.role === "system") {
-      system = extractTextFromContent(msg.content);
-    } else {
-      nonSystem.push(msg);
-    }
-  }
-
-  if (nonSystem.length === 0) return { prompt: "", system, history: [] };
-  if (nonSystem.length === 1 && nonSystem[0].role === "user") {
-    return { prompt: extractTextFromContent(nonSystem[0].content), system, history: [] };
-  }
-
-  const last = nonSystem[nonSystem.length - 1];
-  const prompt = last.role === "user" ? extractTextFromContent(last.content) : "";
-  const historyEnd = last.role === "user" ? nonSystem.length - 1 : nonSystem.length;
-
-  const history: unknown[] = [];
-  for (let i = 0; i < historyEnd; i++) {
-    const msg = nonSystem[i];
-    if (msg.role === "user") {
-      history.push({
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: extractTextFromContent(msg.content) }],
-      });
-    } else if (msg.role === "assistant") {
-      for (const part of msg.content) {
-        if ("text" in part && typeof part.text === "string") {
-          history.push({
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: part.text }],
-          });
-        } else if ("toolName" in part && part.type === "tool-call") {
-          history.push({
-            type: "function_call",
-            name: part.toolName,
-            arguments: typeof part.input === "string" ? part.input : JSON.stringify(part.input),
-            call_id: part.toolCallId,
-          });
-        }
-      }
-    } else if (msg.role === "tool") {
-      for (const part of msg.content) {
-        if ("toolName" in part && part.type === "tool-result") {
-          const output = part.output;
-          const text =
-            "value" in output
-              ? typeof output.value === "string"
-                ? output.value
-                : JSON.stringify(output.value)
-              : JSON.stringify(output);
-          history.push({
-            type: "function_call_output",
-            call_id: ("toolCallId" in part ? part.toolCallId : "") ?? "",
-            output: text,
-          });
-        }
-      }
-    }
-  }
-
-  return { prompt, system, history };
-}
-
-function extractTextFromContent(content: LanguageModelV3Message["content"]): string {
-  if (typeof content === "string") return content;
-  const parts: string[] = [];
-  for (const part of content) {
-    if ("text" in part && typeof part.text === "string") parts.push(part.text);
-  }
-  return parts.join("\n");
 }
 
 export default qgrid;
