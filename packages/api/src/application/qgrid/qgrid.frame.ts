@@ -24,11 +24,11 @@ import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type QueryInput,
   type AppendStepInput,
-  type QueryOutput,
   type CreateRunInput,
   type FinishRunInput,
   type HealthResponse,
   type OAuthStartResult,
+  type QueryOutput,
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
@@ -72,8 +72,13 @@ class QgridFrameClass extends BaseFrameClass {
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
     const result = await QgridDispatcher.query(args, args.timeout);
+    const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
+    const responseText = result.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("\n");
 
-    if (args.logMode !== "none") {
+    if (!args.isStep) {
       RequestLogModel.save([
         {
           token_name: result.tokenName,
@@ -81,7 +86,7 @@ class QgridFrameClass extends BaseFrameClass {
           model_name: result.model ?? null,
           user_prompt: args.prompt,
           system_prompt: args.system ?? null,
-          response: result.text,
+          response: responseText,
           input_tokens: result.usage.input_tokens,
           output_tokens: result.usage.output_tokens,
           cache_read_tokens: result.usage.cache_read_input_tokens,
@@ -91,7 +96,7 @@ class QgridFrameClass extends BaseFrameClass {
           effort: args.effort ?? null,
           history: args.history ? JSON.parse(args.history) : null,
           status: "succeeded",
-          tool_call_count: 0,
+          tool_call_count: toolCallCount,
         },
       ]).catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
     }

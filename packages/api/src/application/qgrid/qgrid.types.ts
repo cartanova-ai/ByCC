@@ -5,21 +5,60 @@ import { z } from "zod";
 export const Effort = z.enum(["low", "medium", "high"]);
 export type Effort = z.infer<typeof Effort>;
 
+export const QgridTool = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  inputSchema: z.unknown(),
+});
+export type QgridTool = z.infer<typeof QgridTool>;
+
+export const QgridContent = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text"),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool-call"),
+    toolCallId: z.string(),
+    toolName: z.string(),
+    input: z.string(),
+  }),
+]);
+export type QgridContent = z.infer<typeof QgridContent>;
+
+export const FinishReason = z.enum(["stop", "tool-calls"]);
+export type FinishReason = z.infer<typeof FinishReason>;
+
+export const Verbosity = z.enum(["low", "medium", "high"]);
+export type Verbosity = z.infer<typeof Verbosity>;
+
+export const ReasoningSummary = z.enum(["auto", "concise", "detailed", "none"]);
+export type ReasoningSummary = z.infer<typeof ReasoningSummary>;
+
+export const ServiceTier = z.enum(["fast", "flex"]);
+export type ServiceTier = z.infer<typeof ServiceTier>;
+
 export const QueryInput = z.object({
   system: z.string().optional(),
   prompt: z.string(),
   model: z.string().optional(),
   timeout: z.number().optional(),
   jsonSchema: z.string().optional(),
-  effort: Effort.optional(),
+  tools: z.array(QgridTool).optional(),
+  effort: z.string().optional(),
+  verbosity: Verbosity.optional(),
+  reasoningSummary: ReasoningSummary.optional(),
+  serviceTier: ServiceTier.optional(),
   history: z.string().optional(),
   projectName: z.string().optional(),
-  logMode: z.enum(["auto", "none"]).optional(),
+  isStep: z.boolean().optional(),
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 
 export const QueryOutput = z.object({
   text: z.string(),
+  content: z.array(QgridContent),
+  finishReason: FinishReason,
   tokenName: z.string().optional(),
   model: z.string().optional(),
   usage: z.object({

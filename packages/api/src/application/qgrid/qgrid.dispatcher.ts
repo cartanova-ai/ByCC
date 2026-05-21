@@ -26,9 +26,10 @@ import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { strictify } from "../../utils/providers/common/strictifier";
 import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
-import { type QueryOutput, type QueryInput, type TokenStats } from "./qgrid.types";
+import { type QueryInput, type QueryOutput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
 import { type TokenSubscriber } from "./token-subscriber";
+import { applyToolCallEmulation, buildToolCallSchema } from "./tool-emulation";
 
 const logger = getLogger(["qgrid"]);
 
@@ -113,6 +114,16 @@ export class QgridDispatcherClass {
   }
 
   async query(input: QueryInput, timeoutMs?: number): Promise<QueryOutput> {
+    if (input.tools?.length && input.jsonSchema) {
+      throw new ProcessError("tools and jsonSchema cannot be used together");
+    }
+
+    const outputSchema = input.tools?.length
+      ? buildToolCallSchema(input.tools)
+      : input.jsonSchema
+        ? (JSON.parse(input.jsonSchema) as JsonValue)
+        : undefined;
+
     // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
     if (input.model?.includes("/")) {
       const [provider, model] = input.model.split("/", 2);
@@ -123,32 +134,43 @@ export class QgridDispatcherClass {
           model: model,
           input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
           systemPrompt: input.system,
-          outputSchema: input.jsonSchema
-            ? (strictify(JSON.parse(input.jsonSchema)) as JsonValue)
+          outputSchema: outputSchema
+            ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
             : undefined,
           effort: input.effort,
+          verbosity: input.verbosity,
+          reasoningSummary: input.reasoningSummary,
+          serviceTier: input.serviceTier,
           history: input.history ? JSON.parse(input.history) : undefined,
         });
 
-        return {
-          text: result.text,
-          tokenName: result.tokenName,
-          model: result.model,
-          usage: {
-            input_tokens: result.usage.inputTokens,
-            output_tokens: result.usage.outputTokens,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: result.usage.cachedInputTokens,
+        return applyToolCallEmulation(
+          {
+            text: result.text,
+            tokenName: result.tokenName,
+            model: result.model,
+            usage: {
+              input_tokens: result.usage.inputTokens,
+              output_tokens: result.usage.outputTokens,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: result.usage.cachedInputTokens,
+            },
+            durationMs: result.durationMs,
+            costUsd: calculateCostUsd(result.model, {
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              cachedInputTokens: result.usage.cachedInputTokens,
+            }),
           },
-          durationMs: result.durationMs,
-          costUsd: calculateCostUsd(result.model, {
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            cachedInputTokens: result.usage.cachedInputTokens,
-          }),
-        };
+          input.tools,
+        );
       }
     }
+
+    const executionInput =
+      outputSchema && input.tools?.length
+        ? { ...input, jsonSchema: JSON.stringify(outputSchema) }
+        : input;
 
     // Anthropic (기존 claude -p 경로)
     const electedToken = this.selectToken();
@@ -175,8 +197,11 @@ export class QgridDispatcherClass {
 
     logger.info(`→ ${electedToken.name} (model: ${input.model ?? DEFAULT_MODEL})`);
 
-    const result = await executeClaude(input, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    return { ...result, tokenName: electedToken.name, model: input.model ?? DEFAULT_MODEL };
+    const result = await executeClaude(executionInput, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    return applyToolCallEmulation(
+      { ...result, tokenName: electedToken.name, model: input.model ?? DEFAULT_MODEL },
+      input.tools,
+    );
   }
 }
 
@@ -184,7 +209,7 @@ async function executeClaude(
   input: QueryInput,
   token: string,
   timeoutMs: number,
-): Promise<QueryOutput> {
+): Promise<Omit<QueryOutput, "content" | "finishReason">> {
   const model = input.model ?? DEFAULT_MODEL;
   const timeout = input.timeout ?? timeoutMs;
   const useStructuredOutput = input.jsonSchema && input.jsonSchema.length > 0;
@@ -242,7 +267,7 @@ async function executeClaude(
     CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
   };
 
-  return new Promise<QueryOutput>((resolve, reject) => {
+  return new Promise<Omit<QueryOutput, "content" | "finishReason">>((resolve, reject) => {
     const child = spawn("claude", args, {
       stdio: ["ignore", "pipe", "ignore"],
       env,
