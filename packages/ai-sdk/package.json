@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && mv dist/index-*.d.ts dist/index.d.ts",
     "test": "vitest run"
   },
   "devDependencies": {

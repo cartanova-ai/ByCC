@@ -97,6 +97,39 @@ export function extractToolResultsFromHistory(
   return out;
 }
 
+// SSE parser
+export type SSEEvent = { type: string; data: Record<string, unknown> };
+
+export async function* parseSSE(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<SSEEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventType = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        const raw = line.slice(6);
+        try {
+          yield { type: eventType || "message", data: JSON.parse(raw) };
+        } catch {}
+        eventType = "";
+      }
+    }
+  }
+}
+
 // Prompt helpers
 export function extractPromptAndHistory(messages: LanguageModelV3Message[]): {
   prompt: string;
