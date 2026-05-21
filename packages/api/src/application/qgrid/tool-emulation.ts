@@ -1,5 +1,9 @@
+import { getLogger } from "@logtape/logtape";
+
 import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
 import { type QgridContent, type QgridTool, type QueryOutput } from "./qgrid.types";
+
+const logger = getLogger(["qgrid", "tool-emulation"]);
 
 type ToolCallResponse = {
   action: "answer" | "tool_call";
@@ -60,7 +64,8 @@ export function applyToolCallEmulation(
   try {
     parsed = JSON.parse(result.text) as ToolCallResponse;
   } catch (e) {
-    throw new Error(`tool-call emulation parse failed: ${(e as Error).message}`, { cause: e });
+    logger.warn(`tool-call emulation parse failed, falling back to text: ${(e as Error).message}`);
+    return { ...result, content: [{ type: "text", text: result.text }], finishReason: "stop" };
   }
 
   if (parsed.action === "tool_call") {

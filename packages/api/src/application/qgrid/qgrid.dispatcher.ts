@@ -203,6 +203,78 @@ export class QgridDispatcherClass {
       input.tools,
     );
   }
+
+  async queryStream(
+    input: QueryInput,
+    cb: {
+      onDelta: (text: string) => void;
+      onComplete: (result: QueryOutput) => void;
+      onError: (error: Error) => void;
+      onThreadId?: (threadId: string) => void;
+      onTurnId?: (turnId: string) => void;
+    },
+  ): Promise<void> {
+    if (!input.model?.startsWith("openai/")) {
+      const result = await this.query(input);
+      cb.onComplete(result);
+      return;
+    }
+
+    const [, model] = input.model.split("/", 2);
+    if (!model) throw new ProcessError("unknown model");
+    if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+
+    const outputSchema = input.tools?.length
+      ? buildToolCallSchema(input.tools)
+      : input.jsonSchema
+        ? (JSON.parse(input.jsonSchema) as JsonValue)
+        : undefined;
+
+    await this.openaiDispatcher.generateStream(
+      {
+        model,
+        input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
+        systemPrompt: input.system,
+        outputSchema: outputSchema
+          ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
+          : undefined,
+        effort: input.effort,
+        verbosity: input.verbosity,
+        reasoningSummary: input.reasoningSummary,
+        serviceTier: input.serviceTier,
+        history: input.history ? JSON.parse(input.history) : undefined,
+      },
+      {
+        onDelta: cb.onDelta,
+        onThreadId: cb.onThreadId,
+        onTurnId: cb.onTurnId,
+        onComplete: (turnResult) => {
+          const applied = applyToolCallEmulation(
+            {
+              text: turnResult.text,
+              tokenName: (turnResult as unknown as { tokenName?: string }).tokenName,
+              model: turnResult.model,
+              usage: {
+                input_tokens: turnResult.usage.inputTokens,
+                output_tokens: turnResult.usage.outputTokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: turnResult.usage.cachedInputTokens,
+              },
+              durationMs: turnResult.durationMs,
+              costUsd: calculateCostUsd(turnResult.model, {
+                inputTokens: turnResult.usage.inputTokens,
+                outputTokens: turnResult.usage.outputTokens,
+                cachedInputTokens: turnResult.usage.cachedInputTokens,
+              }),
+            },
+            input.tools,
+          );
+          cb.onComplete(applied);
+        },
+        onError: cb.onError,
+      },
+    );
+  }
 }
 
 async function executeClaude(
@@ -210,7 +282,8 @@ async function executeClaude(
   token: string,
   timeoutMs: number,
 ): Promise<Omit<QueryOutput, "content" | "finishReason">> {
-  const model = input.model ?? DEFAULT_MODEL;
+  const rawModel = input.model ?? DEFAULT_MODEL;
+  const model = rawModel.includes("/") ? rawModel.split("/").pop()! : rawModel;
   const timeout = input.timeout ?? timeoutMs;
   const useStructuredOutput = input.jsonSchema && input.jsonSchema.length > 0;
 

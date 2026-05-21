@@ -16,7 +16,12 @@ import {
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
 import { RoundRobinPicker } from "../common/token-picker";
-import { CodexAppServerWorker, type TurnRequest, type TurnResult } from "./codex-worker";
+import {
+  CodexAppServerWorker,
+  type StreamCallbacks,
+  type TurnRequest,
+  type TurnResult,
+} from "./codex-worker";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
 
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
@@ -113,6 +118,56 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
 
     throw new Error("SERVER_BUSY");
+  }
+
+  async generateStream(req: GenerateRequest, cb: StreamCallbacks): Promise<void> {
+    const workers = [...this.workerPool.values()].filter((w) => w.isReady && w.active);
+    if (workers.length === 0) throw new Error("NO_OPENAI_WORKERS");
+
+    const candidates = workers.map((w) => ({ id: w.tokenId, worker: w }));
+    for (let i = 0; i < candidates.length; i++) {
+      const picked = this.picker.pick(candidates);
+      if (!picked) break;
+      if (picked.worker.tryAcquireTurn()) {
+        logger.info(`→ ${picked.worker.tokenName} (model: ${req.model}, stream)`);
+        try {
+          const turnReq: TurnRequest = {
+            input: req.input,
+            developerInstructions: req.systemPrompt,
+            outputSchema: req.outputSchema,
+            effort: req.effort ?? DEFAULT_EFFORT,
+            model: req.model,
+            history: req.history,
+            verbosity: req.verbosity,
+            reasoningSummary: req.reasoningSummary,
+            serviceTier: req.serviceTier,
+          };
+          const wrappedCb: StreamCallbacks = {
+            ...cb,
+            onComplete: (result) => {
+              cb.onComplete({
+                ...result,
+                tokenName: picked.worker.tokenName,
+              } as TurnResult & { tokenName: string });
+            },
+          };
+          await picked.worker.executeTurnStream(turnReq, wrappedCb);
+          return;
+        } finally {
+          picked.worker.releaseTurn();
+        }
+      }
+    }
+
+    throw new Error("SERVER_BUSY");
+  }
+
+  async interruptWorkerTurn(threadId: string, turnId: string): Promise<void> {
+    for (const worker of this.workerPool.values()) {
+      if (worker.isReady) {
+        await worker.interruptTurn(threadId, turnId);
+      }
+    }
   }
 
   // ── Internal ────────────────────────────────────────────────────

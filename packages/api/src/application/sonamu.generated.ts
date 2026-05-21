@@ -286,7 +286,6 @@ export type RequestLogSubsetKey = z.infer<typeof RequestLogSubsetKey>;
 export const RequestLogStepSubsetA = z.object({
   id: z.int(),
   created_at: z.date(),
-  request_log_id: z.int(),
   step_index: z.int(),
   type: RequestLogStepType,
   input_tokens: z.int().nullable(),

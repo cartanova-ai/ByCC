@@ -3,12 +3,12 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
-import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type ThreadInjectItemsParams } from "../../../codex-protocol/v2/ThreadInjectItemsParams";
 import { type ThreadStartParams } from "../../../codex-protocol/v2/ThreadStartParams";
 import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStartResponse";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
+import { type TurnStartResponse } from "../../../codex-protocol/v2/TurnStartResponse";
 import { CodexRpcClient } from "./codex-rpc";
 
 const logger = getLogger(["qgrid", "codex-worker"]);
@@ -43,6 +43,14 @@ export interface TurnResult {
   usage: TokenUsageBreakdown;
   durationMs: number;
   model: string;
+}
+
+export interface StreamCallbacks {
+  onDelta: (text: string) => void;
+  onComplete: (result: TurnResult) => void;
+  onError: (error: Error) => void;
+  onThreadId?: (threadId: string) => void;
+  onTurnId?: (turnId: string) => void;
 }
 
 // thread/start 공통 옵션
@@ -231,10 +239,10 @@ export class CodexAppServerWorker {
     return !this.busy;
   }
 
-  async executeTurn(req: TurnRequest): Promise<TurnResult> {
+  private async startThread(req: TurnRequest): Promise<{ threadId: string; turnId: string; model: string }> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
 
-    const threadConfig: ThreadStartParams['config'] = {
+    const threadConfig: ThreadStartParams["config"] = {
       ...THREAD_DEFAULTS.config,
       ...(req.verbosity ? { model_verbosity: req.verbosity } : {}),
     };
@@ -260,7 +268,7 @@ export class CodexAppServerWorker {
       } satisfies ThreadInjectItemsParams);
     }
 
-    await this.rpc.request("turn/start", {
+    const { turn } = await this.rpc.request<TurnStartResponse>("turn/start", {
       threadId,
       input: req.input,
       ...(req.outputSchema ? { outputSchema: req.outputSchema } : {}),
@@ -270,10 +278,28 @@ export class CodexAppServerWorker {
       ...(req.serviceTier ? { serviceTier: req.serviceTier } : {}),
     });
 
+    return { threadId, turnId: turn.id, model };
+  }
+
+  async executeTurn(req: TurnRequest): Promise<TurnResult> {
+    const { threadId, model } = await this.startThread(req);
     return this.consumeTurnNotifications(threadId, model);
   }
 
-  // notification 소비를 별도 메서드로 분리 — 재사용 가능
+  async executeTurnStream(req: TurnRequest, cb: StreamCallbacks): Promise<void> {
+    const { threadId, turnId, model } = await this.startThread(req);
+    cb.onThreadId?.(threadId);
+    cb.onTurnId?.(turnId);
+    return this.consumeStreamNotifications(threadId, model, cb);
+  }
+
+  async interruptTurn(threadId: string, turnId: string): Promise<void> {
+    if (!this.rpc || !this.ready) return;
+    try {
+      await this.rpc.request("turn/interrupt", { threadId, turnId });
+    } catch {}
+  }
+
   private consumeTurnNotifications(threadId: string, model: string): Promise<TurnResult> {
     return new Promise<TurnResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -327,6 +353,81 @@ export class CodexAppServerWorker {
         if (!p.willRetry) {
           cleanup();
           reject(new Error(`codex error: ${p.error.message}`));
+        }
+      });
+    });
+  }
+
+  private consumeStreamNotifications(
+    threadId: string,
+    model: string,
+    cb: StreamCallbacks,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        cb.onError(new Error("turn timeout (600s)"));
+        reject(new Error("turn timeout (600s)"));
+      }, 600_000);
+
+      let text = "";
+      let usage: TokenUsageBreakdown = {
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        reasoningOutputTokens: 0,
+      };
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        for (const n of [
+          "item/completed",
+          "item/agentMessage/delta",
+          "turn/completed",
+          "thread/tokenUsage/updated",
+          "error",
+        ] as const) {
+          this.rpc?.onNotification(n, () => {});
+        }
+      };
+
+      this.rpc!.onNotification("item/agentMessage/delta", (p) => {
+        if (p.threadId !== threadId) return;
+        text += p.delta;
+        cb.onDelta(p.delta);
+      });
+
+      this.rpc!.onNotification("item/completed", (p) => {
+        if (p.threadId !== threadId) return;
+        if (p.item.type === "agentMessage") text = p.item.text;
+      });
+
+      this.rpc!.onNotification("thread/tokenUsage/updated", (p) => {
+        if (p.threadId !== threadId) return;
+        usage = p.tokenUsage.total;
+      });
+
+      this.rpc!.onNotification("turn/completed", (p) => {
+        if (p.threadId !== threadId) return;
+        cleanup();
+        if (p.turn.status === "completed") {
+          cb.onComplete({ text, usage, durationMs: p.turn.durationMs ?? 0, model });
+          resolve();
+        } else {
+          const err = new Error(`turn ${p.turn.status}: ${JSON.stringify(p.turn.error)}`);
+          cb.onError(err);
+          reject(err);
+        }
+      });
+
+      this.rpc!.onNotification("error", (p) => {
+        if (p.threadId !== threadId) return;
+        if (!p.willRetry) {
+          cleanup();
+          const err = new Error(`codex error: ${p.error.message}`);
+          cb.onError(err);
+          reject(err);
         }
       });
     });

@@ -103,6 +103,7 @@ export default defineConfig({
     plugins: {
       formbody: true,
       qs: true,
+      sse: true,
       multipart: { limits: { fileSize: 1024 * 1024 * 30 } },
       static: {
         root: path.join(import.meta.dirname, "/../", "public"),

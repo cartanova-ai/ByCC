@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
+
 import { getLogger } from "@logtape/logtape";
 import { type FastifyReply } from "fastify";
-import { api, BaseFrameClass } from "sonamu";
+import { api, BaseFrameClass, Sonamu, stream } from "sonamu";
 import { getCacheManagerRef } from "sonamu/cache";
 
 import {
@@ -29,9 +31,12 @@ import {
   type HealthResponse,
   type OAuthStartResult,
   type QueryOutput,
+  StreamEvents,
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
+
+const pendingStreams = new Map<string, QueryInput>();
 
 type PendingOAuth = { codeVerifier: string; name: string; redirectUri: string };
 const OAUTH_STATE_PREFIX = "oauth:state:";
@@ -102,6 +107,68 @@ class QgridFrameClass extends BaseFrameClass {
     }
 
     return result;
+  }
+
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async prepareStream(args: QueryInput): Promise<{ streamId: string }> {
+    const streamId = crypto.randomUUID();
+    pendingStreams.set(streamId, args);
+    setTimeout(() => pendingStreams.delete(streamId), 30_000);
+    return { streamId };
+  }
+
+  @stream({ type: "sse", events: StreamEvents })
+  async queryStream(streamId: string): Promise<void> {
+    const args = pendingStreams.get(streamId);
+    pendingStreams.delete(streamId);
+    if (!args) throw new Error("invalid or expired streamId");
+
+    const ctx = Sonamu.getContext();
+    const sse = ctx.createSSE(StreamEvents);
+    let threadId: string | undefined;
+    let turnId: string | undefined;
+
+    sse.onClose(() => {
+      if (threadId && turnId) {
+        QgridDispatcher.openaiDispatcher
+          ?.interruptWorkerTurn(threadId, turnId)
+          .catch(() => {});
+      }
+    });
+
+    try {
+      await QgridDispatcher.queryStream(args, {
+        onDelta: (text) => {
+          if (!sse.closed) sse.publish("delta", { text });
+        },
+        onThreadId: (id) => {
+          threadId = id;
+          if (sse.closed && turnId) {
+            QgridDispatcher.openaiDispatcher
+              ?.interruptWorkerTurn(threadId, turnId)
+              .catch(() => {});
+          }
+        },
+        onTurnId: (id) => {
+          turnId = id;
+          if (sse.closed && threadId) {
+            QgridDispatcher.openaiDispatcher
+              ?.interruptWorkerTurn(threadId, turnId)
+              .catch(() => {});
+          }
+        },
+        onComplete: (result) => {
+          if (!sse.closed) sse.publish("done", result);
+        },
+        onError: (err) => {
+          if (!sse.closed) sse.publish("error", { message: err.message });
+        },
+      });
+    } catch (e) {
+      if (!sse.closed) sse.publish("error", { message: (e as Error).message });
+    } finally {
+      await sse.end();
+    }
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })

@@ -216,12 +216,50 @@ Content-Type: application/json
         "inputSchema": "unknown"
       }
     ],
-    "effort": "low",
+    "effort": "EFFORT",
+    "verbosity": "low",
+    "reasoningSummary": "auto",
+    "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
     "isStep": false
   }
 }
+
+###
+
+POST {{baseUrl}}/api/qgrid/prepareStream
+Content-Type: application/json
+
+{
+  "args": {
+    "system": "SYSTEM",
+    "prompt": "PROMPT",
+    "model": "MODEL",
+    "timeout": 0,
+    "jsonSchema": "JSONSCHEMA",
+    "tools": [
+      {
+        "name": "NAME",
+        "description": "DESCRIPTION",
+        "inputSchema": "unknown"
+      }
+    ],
+    "effort": "EFFORT",
+    "verbosity": "low",
+    "reasoningSummary": "auto",
+    "serviceTier": "fast",
+    "history": "HISTORY",
+    "projectName": "PROJECTNAME",
+    "isStep": false
+  }
+}
+
+###
+
+GET {{baseUrl}}/api/qgrid/queryStream
+	?streamId=STREAMID
+Content-Type: application/json
 
 ###
 

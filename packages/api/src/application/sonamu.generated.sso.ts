@@ -71,7 +71,6 @@ export const requestLogStepSubsetQueries = {
     return qbWrapper.from("request_log_steps").select({
       id: "request_log_steps.id",
       created_at: "request_log_steps.created_at",
-      request_log_id: "request_log_steps.request_log_id",
       step_index: "request_log_steps.step_index",
       type: "request_log_steps.type",
       input_tokens: "request_log_steps.input_tokens",
@@ -116,6 +115,9 @@ export const tokenLoaderQueries = {
   A: [],
 } as const satisfies PuriLoaderQueries<TokenSubsetKey>;
 
+// ForeignKey Types
+export type RequestLogStepForeignKeys = "request_log_id";
+
 // DatabaseSchema
 declare module "sonamu" {
   export interface DatabaseSchemaExtend {
@@ -124,5 +126,7 @@ declare module "sonamu" {
     tokens: TokenBaseSchema;
   }
 
-  export interface DatabaseForeignKeys {}
+  export interface DatabaseForeignKeys {
+    request_log_steps: RequestLogStepForeignKeys;
+  }
 }
