@@ -209,10 +209,17 @@ Content-Type: application/json
     "model": "MODEL",
     "timeout": 0,
     "jsonSchema": "JSONSCHEMA",
+    "tools": [
+      {
+        "name": "NAME",
+        "description": "DESCRIPTION",
+        "inputSchema": "unknown"
+      }
+    ],
     "effort": "low",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
-    "logMode": "auto"
+    "isStep": false
   }
 }
 
