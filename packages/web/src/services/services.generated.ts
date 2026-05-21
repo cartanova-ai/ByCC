@@ -464,6 +464,103 @@ export namespace QgridService {
       mutationFn: (params: { args: QueryInput }) => query(params.args),
     });
 
+  export async function prepareStream(args: QueryInput): Promise<{ streamId: string }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/prepareStream`,
+      data: { args },
+    });
+  }
+
+  export const usePrepareStreamMutation = () =>
+    useMutation({
+      mutationFn: (params: { args: QueryInput }) => prepareStream(params.args),
+    });
+
+  export function useQueryStream(
+    params: { streamId: string },
+    handlers: EventHandlers<
+      {
+        delta: {
+          text: string;
+        };
+        toolCall: {
+          toolCallId: string;
+          toolName: string;
+          input: string;
+        };
+        done: {
+          text: string;
+          model?: string;
+          tokenName?: string;
+          finishReason: "stop" | "tool-calls";
+          usage: {
+            input_tokens: number;
+            output_tokens: number;
+            cache_creation_input_tokens: number;
+            cache_read_input_tokens: number;
+          };
+          durationMs: number;
+          costUsd: number;
+          content:
+            | {
+                type: "text";
+                text: string;
+              }
+            | {
+                type: "tool-call";
+                toolCallId: string;
+                toolName: string;
+                input: string;
+              }[];
+        };
+        error: {
+          message: string;
+        };
+      } & { end?: () => void }
+    >,
+    options: SSEStreamOptions,
+  ) {
+    return useSSEStream<{
+      delta: {
+        text: string;
+      };
+      toolCall: {
+        toolCallId: string;
+        toolName: string;
+        input: string;
+      };
+      done: {
+        text: string;
+        model?: string;
+        tokenName?: string;
+        finishReason: "stop" | "tool-calls";
+        usage: {
+          input_tokens: number;
+          output_tokens: number;
+          cache_creation_input_tokens: number;
+          cache_read_input_tokens: number;
+        };
+        durationMs: number;
+        costUsd: number;
+        content:
+          | {
+              type: "text";
+              text: string;
+            }
+          | {
+              type: "tool-call";
+              toolCallId: string;
+              toolName: string;
+              input: string;
+            }[];
+      };
+      error: {
+        message: string;
+      };
+    }>(`/api/qgrid/queryStream`, params, handlers, options);
+  }
+
   export async function createRun(input: CreateRunInput): Promise<{ requestLogId: number }> {
     return fetch({
       method: "POST",

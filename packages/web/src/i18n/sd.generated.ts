@@ -239,7 +239,7 @@ const entityLabels = {
   "entity.RequestLogStep": "RequestLogStep",
   "entity.RequestLogStep.id": "ID",
   "entity.RequestLogStep.created_at": "등록일시",
-  "entity.RequestLogStep.request_log_id": "부모 request log ID",
+  "entity.RequestLogStep.request_log": "부모 request log ID",
   "entity.RequestLogStep.step_index": "ai-sdk step number (0-based)",
   "entity.RequestLogStep.type": "step 타입",
   "entity.RequestLogStep.input_tokens": "입력 토큰 (generate)",

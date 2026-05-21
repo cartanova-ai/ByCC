@@ -136,3 +136,46 @@
     transparent 40px
   );
 }
+
+/* Markdown prose — earthy theme overrides */
+.prose-qgrid {
+  --tw-prose-body: var(--color-sand-800);
+  --tw-prose-headings: var(--color-sand-900);
+  --tw-prose-links: var(--color-sienna-500);
+  --tw-prose-bold: var(--color-sand-900);
+  --tw-prose-counters: var(--color-sand-500);
+  --tw-prose-bullets: var(--color-sand-400);
+  --tw-prose-hr: var(--color-sand-200);
+  --tw-prose-quotes: var(--color-sand-700);
+  --tw-prose-quote-borders: var(--color-sienna-300);
+  --tw-prose-code: var(--color-sienna-600);
+  --tw-prose-pre-code: var(--color-sand-800);
+  --tw-prose-pre-bg: var(--color-sand-50);
+  --tw-prose-th-borders: var(--color-sand-200);
+  --tw-prose-td-borders: var(--color-sand-100);
+}
+.prose-qgrid :where(code):not(:where(pre *)) {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--color-sand-100);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.prose-qgrid :where(pre) {
+  border-radius: 8px;
+  border: 1px solid var(--color-sand-200);
+}
+.prose-qgrid :where(blockquote) {
+  border-left-width: 3px;
+  font-style: normal;
+}
+.prose-qgrid :where(h1, h2, h3, h4) {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.prose-qgrid :where(ul, ol) {
+  padding-left: 1.25em;
+}
+.prose-qgrid :where(li)::marker {
+  color: var(--color-sand-400);
+}

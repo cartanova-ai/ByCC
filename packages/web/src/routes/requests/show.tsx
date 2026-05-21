@@ -84,7 +84,7 @@ function FormattedContent({ text, markdown }: { text: string; markdown?: boolean
   if (parsed === null) {
     if (markdown) {
       return (
-        <div className="prose prose-sm prose-sand max-w-none">
+        <div className="prose prose-sm prose-qgrid max-w-none">
           <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
         </div>
       );
@@ -157,7 +157,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">{label}</dt>
-      <dd className="text-[13px] font-medium text-sand-800 tabular-nums mt-0.5">{value}</dd>
+      <dd className="text-[15px] font-semibold text-sand-800 tabular-nums mt-0.5">{value}</dd>
     </div>
   );
 }
@@ -202,28 +202,18 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
   const cacheHitRate = denom > 0 ? `${Math.round((data.cache_read_tokens / denom) * 100)}%` : "—";
 
   return (
-    <div className="panel overflow-hidden">
-      <div className="px-5 py-3 grid grid-cols-3 gap-x-8 gap-y-2 border-b border-sand-100/60">
+    <div className="panel overflow-hidden px-5 py-3 space-y-3">
+      <div className="grid grid-cols-4 gap-x-6">
         <Metric label="Duration" value={`${(data.duration_ms / 1000).toFixed(1)}s`} />
         <Metric label="Cost" value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"} />
         <Metric label="Tool Calls" value={`${toolCallCount}회`} />
+        <Metric label="Cache Hit" value={cacheHitRate} />
       </div>
-
-      <div className="px-5 py-3">
-        <div className="grid grid-cols-4 gap-x-6 gap-y-1.5">
-          <Metric label="Input" value={formatNum(data.input_tokens)} />
-          <Metric label="Output" value={formatNum(data.output_tokens)} />
-          <Metric label="Cache Read" value={formatNum(data.cache_read_tokens)} />
-          <Metric label="Cache Write" value={formatNum(data.cache_creation_tokens)} />
-        </div>
-        <div className="mt-2 pt-2 border-t border-sand-100/60 flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">
-            Cache Hit Rate
-          </span>
-          <span className="text-[15px] font-semibold text-sienna-500 tabular-nums">
-            {cacheHitRate}
-          </span>
-        </div>
+      <div className="border-t border-sand-100/60 pt-3 grid grid-cols-4 gap-x-6">
+        <Metric label="Input" value={formatNum(data.input_tokens)} />
+        <Metric label="Output" value={formatNum(data.output_tokens)} />
+        <Metric label="Cache Read" value={formatNum(data.cache_read_tokens)} />
+        <Metric label="Cache Write" value={formatNum(data.cache_creation_tokens)} />
       </div>
     </div>
   );
@@ -253,22 +243,23 @@ function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
             : `${entry.durationMs}ms`}
         </span>
       </summary>
-      <div className="ml-5 mr-3 mb-2 space-y-2">
+      <div className="mt-1 mx-1 mb-3 space-y-2">
         <div>
-          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
             Request
           </span>
-          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto max-h-60">
+          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
             <FormattedContent text={JSON.stringify(entry.args)} />
           </div>
         </div>
         <div>
-          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
             Response
           </span>
-          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto max-h-60">
+          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
             <FormattedContent
               text={typeof entry.result === "string" ? entry.result : JSON.stringify(entry.result)}
+              markdown
             />
           </div>
         </div>
@@ -394,8 +385,8 @@ function RequestDetail({ id }: { id: number }) {
 
   const toolCalls: ToolCallEntry[] = steps
     .filter((s) => s.type === "tool_call")
-    .map((s) => ({
-      index: s.tool_call_index ?? 0,
+    .map((s, i) => ({
+      index: i,
       toolCallId: s.tool_call_id ?? "",
       toolName: s.tool_name ?? "",
       args: safeParseJson(s.tool_args) as Record<string, unknown>,
@@ -406,8 +397,25 @@ function RequestDetail({ id }: { id: number }) {
   const history = data.history ?? null;
   const hasHistory = history !== null && history.length > 0;
 
+  const promptSections = (
+    <div className="space-y-4">
+      <Section title="System">
+        <div className="relative">
+          <CopyButton text={data.system_prompt ?? "null"} />
+          <FormattedContent text={data.system_prompt ?? "null"} markdown />
+        </div>
+      </Section>
+      <Section title="User">
+        <div className="relative">
+          <CopyButton text={data.user_prompt ?? "null"} />
+          <FormattedContent text={data.user_prompt ?? "null"} markdown />
+        </div>
+      </Section>
+    </div>
+  );
+
   return (
-    <div className="max-w-6xl mx-auto space-y-4">
+    <div className={`mx-auto space-y-4 ${hasToolCalls ? "max-w-[120rem]" : "max-w-6xl"}`}>
       <Link
         to="/logs"
         className="inline-flex items-center gap-1 text-[13px] text-sand-500 hover:text-sienna-500 transition-colors"
@@ -421,38 +429,14 @@ function RequestDetail({ id }: { id: number }) {
       {hasHistory && <HistorySection history={history} />}
 
       {hasToolCalls ? (
-        <div className="grid grid-cols-2 gap-4 items-start">
-          <div className="space-y-4">
-            <Section title="System">
-              <div className="relative">
-                <CopyButton text={data.system_prompt ?? "null"} />
-                <FormattedContent text={data.system_prompt ?? "null"} />
-              </div>
-            </Section>
-            <Section title="User">
-              <div className="relative">
-                <CopyButton text={data.user_prompt ?? "null"} />
-                <FormattedContent text={data.user_prompt ?? "null"} />
-              </div>
-            </Section>
+        <div className="flex gap-4 items-start">
+          <div className="flex-1 min-w-0">{promptSections}</div>
+          <div className="flex-1 min-w-0">
+            <ToolCallsSection toolCalls={toolCalls} />
           </div>
-          <ToolCallsSection toolCalls={toolCalls} />
         </div>
       ) : (
-        <div className="space-y-4">
-          <Section title="System">
-            <div className="relative">
-              <CopyButton text={data.system_prompt ?? "null"} />
-              <FormattedContent text={data.system_prompt ?? "null"} />
-            </div>
-          </Section>
-          <Section title="User">
-            <div className="relative">
-              <CopyButton text={data.user_prompt ?? "null"} />
-              <FormattedContent text={data.user_prompt ?? "null"} />
-            </div>
-          </Section>
-        </div>
+        promptSections
       )}
 
       <Section title="Response">

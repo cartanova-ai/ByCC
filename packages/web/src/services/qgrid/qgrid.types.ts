@@ -77,6 +77,34 @@ export const QueryOutput = z.object({
 });
 export type QueryOutput = z.infer<typeof QueryOutput>;
 
+// ─── Stream Events ───
+
+export const StreamEvents = z.object({
+  delta: z.object({ text: z.string() }),
+  toolCall: z.object({
+    toolCallId: z.string(),
+    toolName: z.string(),
+    input: z.string(),
+  }),
+  done: z.object({
+    text: z.string(),
+    model: z.string().optional(),
+    tokenName: z.string().optional(),
+    finishReason: FinishReason,
+    usage: z.object({
+      input_tokens: z.number(),
+      output_tokens: z.number(),
+      cache_creation_input_tokens: z.number(),
+      cache_read_input_tokens: z.number(),
+    }),
+    durationMs: z.number(),
+    costUsd: z.number(),
+    content: z.array(QgridContent),
+  }),
+  error: z.object({ message: z.string() }),
+});
+export type StreamEvents = z.infer<typeof StreamEvents>;
+
 // ─── Run Lifecycle ───
 
 export const CreateRunInput = z.object({
