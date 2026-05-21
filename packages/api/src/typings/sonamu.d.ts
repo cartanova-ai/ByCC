@@ -14,3 +14,5 @@ declare module "sonamu" {
     // CustomGuardKey: true
   }
 }
+
+export {}
