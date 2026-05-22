@@ -22,6 +22,8 @@ export const RequestLogStepSaveParams = RequestLogStepBaseSchema.partial({
   cache_creation_tokens: true,
   duration_ms: true,
   finish_reason: true,
+  reasoning_text: true,
+  reasoning_tokens: true,
   tool_call_index: true,
   tool_call_id: true,
   tool_name: true,

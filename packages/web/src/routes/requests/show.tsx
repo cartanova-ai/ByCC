@@ -12,9 +12,13 @@ import CopyIcon from "~icons/lucide/copy";
 
 import { formatMicroUsd } from "@/lib/cost";
 import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
-import { type RequestLogSubsetMapping } from "@/services/sonamu.generated";
+import {
+  type RequestLogStepSubsetMapping,
+  type RequestLogSubsetMapping,
+} from "@/services/sonamu.generated";
 
 type RequestLog = RequestLogSubsetMapping["A"];
+type RequestLogStep = RequestLogStepSubsetMapping["A"];
 
 const showSearchSchema = z.object({
   id: z.number(),
@@ -220,64 +224,273 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
 }
 
 type ToolCallEntry = {
-  index: number;
+  stepIndex: number;
+  callIndex: number;
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
   result: unknown;
   durationMs: number;
+  error: string | null;
 };
 
-function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
+type GenerateStepEntry = {
+  stepIndex: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  durationMs: number | null;
+  finishReason: string | null;
+  reasoningText: string | null;
+  reasoningTokens: number | null;
+};
+
+type StepTreeEntry = {
+  stepIndex: number;
+  generate: GenerateStepEntry | null;
+  toolCalls: ToolCallEntry[];
+};
+
+function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function CompactMetric({ label, value }: { label: string; value: string }) {
   return (
-    <details className="group/tool">
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">{label}</div>
+      <div className="mt-0.5 text-[13px] font-semibold text-sand-800 tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
+  const hasError = !!entry.error;
+  const [opened, setOpened] = useState(false);
+  return (
+    <details
+      className="group/tool"
+      onToggle={(e) => setOpened((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none list-none hover:bg-sand-50 transition-colors rounded-md">
         <ChevronDownIcon className="size-3 text-sand-400 transition-transform group-open/tool:rotate-0 -rotate-90 shrink-0" />
-        <span className="text-[11px] text-sand-400 tabular-nums shrink-0">[{entry.index + 1}]</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sand-100 text-sand-500 font-mono shrink-0">
+          call {entry.callIndex + 1}
+        </span>
         <span className="text-[13px] font-medium text-sand-800 font-mono truncate">
           {entry.toolName}
         </span>
+        {hasError && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-medium uppercase shrink-0">
+            error
+          </span>
+        )}
         <span className="ml-auto text-[11px] text-sand-400 tabular-nums shrink-0">
-          {entry.durationMs >= 1000
-            ? `${(entry.durationMs / 1000).toFixed(1)}s`
-            : `${entry.durationMs}ms`}
+          {formatDurationMs(entry.durationMs)}
         </span>
       </summary>
-      <div className="mt-1 mx-1 mb-3 space-y-2">
-        <div>
-          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
-            Request
-          </span>
-          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
-            <FormattedContent text={JSON.stringify(entry.args)} />
+      {opened && (
+        <div className="mt-1 mx-1 mb-3 space-y-2">
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
+              Request
+            </span>
+            <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
+              <FormattedContent text={JSON.stringify(entry.args)} />
+            </div>
+          </div>
+          {entry.error && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-red-500 font-medium px-2">
+                Error
+              </span>
+              <div className="mt-1 rounded-md bg-red-50 border border-red-100 p-3 overflow-auto">
+                <FormattedContent text={entry.error} />
+              </div>
+            </div>
+          )}
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
+              Response
+            </span>
+            <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
+              <FormattedContent
+                text={
+                  typeof entry.result === "string" ? entry.result : JSON.stringify(entry.result)
+                }
+                markdown
+              />
+            </div>
           </div>
         </div>
-        <div>
-          <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
-            Response
-          </span>
-          <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
-            <FormattedContent
-              text={typeof entry.result === "string" ? entry.result : JSON.stringify(entry.result)}
-              markdown
-            />
-          </div>
+      )}
+    </details>
+  );
+}
+
+function ReasoningBlock({ reasoningText }: { reasoningText: string | null }) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <details
+      className="group/reason mt-3"
+      onToggle={(e) => setOpened((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="flex items-center gap-2 cursor-pointer select-none list-none">
+        <ChevronDownIcon className="size-3 text-sand-400 transition-transform group-open/reason:rotate-0 -rotate-90 shrink-0" />
+        <span className="text-[10px] uppercase tracking-wider text-sand-500 font-medium">
+          Reasoning
+        </span>
+      </summary>
+      {opened && (
+        <div className="mt-2 rounded-md bg-white/70 border border-sand-100 p-3 overflow-auto">
+          {reasoningText ? (
+            <FormattedContent text={reasoningText} markdown />
+          ) : (
+            <p className="text-sm text-sand-400">No reasoning text captured.</p>
+          )}
         </div>
+      )}
+    </details>
+  );
+}
+
+function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
+  const generate = entry.generate;
+  const hasReasoning =
+    generate != null &&
+    ((generate.reasoningText != null && generate.reasoningText.length > 0) ||
+      (generate.reasoningTokens != null && generate.reasoningTokens > 0));
+  const errorCount = entry.toolCalls.filter((toolCall) => toolCall.error).length;
+
+  return (
+    <details open className="group/step border-l border-sand-200 pl-3">
+      <summary className="flex items-center gap-2 py-2 cursor-pointer select-none list-none">
+        <ChevronDownIcon className="size-3.5 text-sand-400 transition-transform group-open/step:rotate-0 -rotate-90 shrink-0" />
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sienna-100 text-sienna-700 font-mono shrink-0">
+          step {entry.stepIndex + 1}
+        </span>
+        <span className="text-[13px] font-semibold text-sand-900">LLM call</span>
+        {generate?.finishReason && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-sand-100 text-sand-500 font-mono shrink-0">
+            {generate.finishReason}
+          </span>
+        )}
+        {hasReasoning && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium shrink-0">
+            reasoning
+          </span>
+        )}
+        {errorCount > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-medium uppercase shrink-0">
+            {errorCount} error
+          </span>
+        )}
+        <span className="ml-auto text-[11px] text-sand-400 tabular-nums shrink-0">
+          {entry.toolCalls.length} tools
+        </span>
+      </summary>
+
+      <div className="ml-4 mb-4 space-y-3">
+        {generate && (
+          <div className="rounded-md border border-sand-100 bg-sand-50/70 p-3">
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+              <CompactMetric label="Duration" value={formatDurationMs(generate.durationMs)} />
+              <CompactMetric label="Input" value={formatNum(generate.inputTokens ?? 0)} />
+              <CompactMetric label="Output" value={formatNum(generate.outputTokens ?? 0)} />
+              <CompactMetric label="Cache Read" value={formatNum(generate.cacheReadTokens ?? 0)} />
+              <CompactMetric
+                label="Cache Write"
+                value={formatNum(generate.cacheCreationTokens ?? 0)}
+              />
+              <CompactMetric
+                label="Reasoning"
+                value={generate.reasoningTokens != null ? formatNum(generate.reasoningTokens) : "—"}
+              />
+            </div>
+
+            {hasReasoning && <ReasoningBlock reasoningText={generate.reasoningText} />}
+          </div>
+        )}
+
+        {entry.toolCalls.length > 0 && (
+          <div className="space-y-0.5">
+            {entry.toolCalls.map((toolCall) => (
+              <ToolCallItem
+                key={`${toolCall.stepIndex}-${toolCall.callIndex}-${toolCall.toolCallId}`}
+                entry={toolCall}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </details>
   );
 }
 
-function ToolCallsSection({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
+function StepTreeSection({ steps }: { steps: StepTreeEntry[] }) {
+  const toolCallCount = steps.reduce((sum, step) => sum + step.toolCalls.length, 0);
+
   return (
-    <Section title={`Tool 호출 (${toolCalls.length}회)`} defaultOpen>
-      <div className="space-y-0.5 -mx-1">
-        {toolCalls.map((entry) => (
-          <ToolCallItem key={entry.toolCallId} entry={entry} />
+    <Section title={`Steps (${steps.length} steps · ${toolCallCount} tool calls)`} defaultOpen>
+      <div className="space-y-1">
+        {steps.map((step) => (
+          <StepTreeItem key={step.stepIndex} entry={step} />
         ))}
       </div>
     </Section>
   );
+}
+
+function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
+  const grouped = new Map<number, StepTreeEntry>();
+
+  function ensureStep(stepIndex: number): StepTreeEntry {
+    const existing = grouped.get(stepIndex);
+    if (existing) return existing;
+    const next = { stepIndex, generate: null, toolCalls: [] };
+    grouped.set(stepIndex, next);
+    return next;
+  }
+
+  for (const step of steps) {
+    const group = ensureStep(step.step_index);
+    if (step.type === "generate") {
+      group.generate = {
+        stepIndex: step.step_index,
+        inputTokens: step.input_tokens,
+        outputTokens: step.output_tokens,
+        cacheReadTokens: step.cache_read_tokens,
+        cacheCreationTokens: step.cache_creation_tokens,
+        durationMs: step.duration_ms,
+        finishReason: step.finish_reason,
+        reasoningText: step.reasoning_text,
+        reasoningTokens: step.reasoning_tokens,
+      };
+      continue;
+    }
+
+    if (step.type === "tool_call") {
+      group.toolCalls.push({
+        stepIndex: step.step_index,
+        callIndex: step.tool_call_index ?? group.toolCalls.length,
+        toolCallId: step.tool_call_id ?? "",
+        toolName: step.tool_name ?? "",
+        args: safeParseJson(step.tool_args) as Record<string, unknown>,
+        result: safeParseJson(step.tool_result),
+        durationMs: step.tool_duration_ms ?? 0,
+        error: step.error,
+      });
+    }
+  }
+
+  return [...grouped.values()]
+    .map((step) => ({
+      ...step,
+      toolCalls: step.toolCalls.sort((a, b) => a.callIndex - b.callIndex),
+    }))
+    .sort((a, b) => a.stepIndex - b.stepIndex);
 }
 
 type HistoryItem = {
@@ -351,7 +564,7 @@ function RequestDetail({ id }: { id: number }) {
   const { data, isLoading } = RequestLogService.useRequestLog("A", id);
   const { data: stepsData } = RequestLogStepService.useRequestLogSteps("A", {
     request_log_id: id,
-    num: 100,
+    num: 0,
     page: 1,
     orderBy: "id-asc" as const,
   });
@@ -383,17 +596,9 @@ function RequestDetail({ id }: { id: number }) {
 
   const steps = stepsData?.rows ?? [];
 
-  const toolCalls: ToolCallEntry[] = steps
-    .filter((s) => s.type === "tool_call")
-    .map((s, i) => ({
-      index: i,
-      toolCallId: s.tool_call_id ?? "",
-      toolName: s.tool_name ?? "",
-      args: safeParseJson(s.tool_args) as Record<string, unknown>,
-      result: safeParseJson(s.tool_result),
-      durationMs: s.tool_duration_ms ?? 0,
-    }));
-  const hasToolCalls = toolCalls.length > 0;
+  const stepTree = buildStepTree(steps);
+  const toolCalls = stepTree.flatMap((step) => step.toolCalls);
+  const hasSteps = stepTree.length > 0;
   const history = data.history ?? null;
   const hasHistory = history !== null && history.length > 0;
 
@@ -415,7 +620,7 @@ function RequestDetail({ id }: { id: number }) {
   );
 
   return (
-    <div className={`mx-auto space-y-4 ${hasToolCalls ? "max-w-[120rem]" : "max-w-6xl"}`}>
+    <div className={`mx-auto space-y-4 ${hasSteps ? "max-w-[120rem]" : "max-w-6xl"}`}>
       <Link
         to="/logs"
         className="inline-flex items-center gap-1 text-[13px] text-sand-500 hover:text-sienna-500 transition-colors"
@@ -428,11 +633,11 @@ function RequestDetail({ id }: { id: number }) {
 
       {hasHistory && <HistorySection history={history} />}
 
-      {hasToolCalls ? (
+      {hasSteps ? (
         <div className="flex gap-4 items-start">
           <div className="flex-1 min-w-0">{promptSections}</div>
-          <div className="flex-1 min-w-0">
-            <ToolCallsSection toolCalls={toolCalls} />
+          <div className="flex-1 min-w-0 space-y-4">
+            <StepTreeSection steps={stepTree} />
           </div>
         </div>
       ) : (
