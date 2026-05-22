@@ -527,4 +527,6 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
   return model;
 }
 
+export { createQgridLogger } from "./logger";
+export type { QgridLoggerConfig } from "./index.types";
 export default qgrid;

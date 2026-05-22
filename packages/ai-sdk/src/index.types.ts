@@ -60,6 +60,8 @@ export type AppendStepInput = {
   cacheCreationTokens?: number;
   durationMs?: number;
   finishReason?: string;
+  reasoningText?: string;
+  reasoningTokens?: number;
   toolCallIndex?: number;
   toolCallId?: string;
   toolName?: string;
@@ -67,6 +69,18 @@ export type AppendStepInput = {
   toolResult?: string;
   toolDurationMs?: number;
   error?: string;
+};
+
+export type QgridLoggerConfig = {
+  serverUrl: string;
+  projectName?: string;
+  tokenName?: string;
+  /**
+   * Receives qgrid logging failures. When reusing one logger integration across
+   * overlapping AI SDK calls, pass a unique `metadata.qgridRunId` per call so
+   * lifecycle events can be attributed to the correct run.
+   */
+  onLogError?: (error: Error) => void;
 };
 
 export type FinishRunInput = {
