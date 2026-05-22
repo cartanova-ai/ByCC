@@ -94,7 +94,10 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
 
   function serializeHistory(messages: unknown): string | undefined {
     if (!Array.isArray(messages) || messages.length === 0) return undefined;
-    const filtered = messages
+    // 마지막 메시지가 user면 현재 turn이므로 제외 (user_prompt와 중복)
+    const lastRecord = getRecord(messages[messages.length - 1]);
+    const sliced = lastRecord?.role === "user" ? messages.slice(0, -1) : messages;
+    const filtered = sliced
       .map((msg) => getRecord(msg))
       .filter((record): record is Record<string, unknown> =>
         record?.role === "user" || record?.role === "assistant",

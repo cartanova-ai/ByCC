@@ -289,10 +289,10 @@ describe("createQgridLogger", () => {
     expect(createRunCall?.body.input.userPrompt).toBe("second message");
 
     const finishCall = calls.find((c) => c.url.includes("/finishRun"));
+    // 마지막 user 메시지는 현재 turn이라 history에서 제외됨
     expect(JSON.parse(String(finishCall?.body.input.history))).toEqual([
       { type: "message", role: "user", content: "first message" },
       { type: "message", role: "assistant", content: "response" },
-      { type: "message", role: "user", content: "second message" },
     ]);
   });
 
@@ -319,10 +319,10 @@ describe("createQgridLogger", () => {
     } as never);
 
     const finishCall = calls.find((c) => c.url.includes("/finishRun"));
+    // 마지막 user 메시지(follow-up)는 현재 turn이라 제외됨. system/tool도 필터됨.
     expect(JSON.parse(String(finishCall?.body.input.history))).toEqual([
       { type: "message", role: "user", content: "hi" },
       { type: "message", role: "assistant", content: "answer" },
-      { type: "message", role: "user", content: "follow-up" },
     ]);
   });
 
