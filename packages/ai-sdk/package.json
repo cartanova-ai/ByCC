@@ -13,7 +13,9 @@
   },
   "scripts": {
     "build": "tsdown && mv dist/index-*.d.ts dist/index.d.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "tsx e2e/e2e.ts",
+    "e2e:logger": "tsx e2e/e2e-logger.ts"
   },
   "devDependencies": {
     "@ai-sdk/provider": "catalog:",
