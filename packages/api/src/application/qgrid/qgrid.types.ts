@@ -121,6 +121,8 @@ export const AppendStepInput = z.object({
   cacheCreationTokens: z.number().optional(),
   durationMs: z.number().optional(),
   finishReason: z.string().optional(),
+  reasoningText: z.string().optional(),
+  reasoningTokens: z.number().optional(),
   toolCallIndex: z.number().optional(),
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),

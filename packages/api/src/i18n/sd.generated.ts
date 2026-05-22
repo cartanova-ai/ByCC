@@ -249,6 +249,8 @@ const entityLabels = {
   "entity.RequestLogStep.cache_creation_tokens": "캐시 생성 토큰",
   "entity.RequestLogStep.duration_ms": "소요시간(ms)",
   "entity.RequestLogStep.finish_reason": "완료 사유",
+  "entity.RequestLogStep.reasoning_text": "reasoning 텍스트",
+  "entity.RequestLogStep.reasoning_tokens": "reasoning 토큰 수",
   "entity.RequestLogStep.tool_call_index": "같은 step 내 tool call 순서",
   "entity.RequestLogStep.tool_call_id": "tool call ID",
   "entity.RequestLogStep.tool_name": "tool 이름",

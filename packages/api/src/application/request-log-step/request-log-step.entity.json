@@ -40,6 +40,18 @@
       "desc": "완료 사유"
     },
     {
+      "name": "reasoning_text",
+      "type": "string",
+      "nullable": true,
+      "desc": "reasoning 텍스트"
+    },
+    {
+      "name": "reasoning_tokens",
+      "type": "integer",
+      "nullable": true,
+      "desc": "reasoning 토큰 수"
+    },
+    {
       "name": "tool_call_index",
       "type": "integer",
       "nullable": true,
@@ -88,6 +100,8 @@
       "cache_creation_tokens",
       "duration_ms",
       "finish_reason",
+      "reasoning_text",
+      "reasoning_tokens",
       "tool_call_index",
       "tool_call_id",
       "tool_name",

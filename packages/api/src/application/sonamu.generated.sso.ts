@@ -79,6 +79,8 @@ export const requestLogStepSubsetQueries = {
       cache_creation_tokens: "request_log_steps.cache_creation_tokens",
       duration_ms: "request_log_steps.duration_ms",
       finish_reason: "request_log_steps.finish_reason",
+      reasoning_text: "request_log_steps.reasoning_text",
+      reasoning_tokens: "request_log_steps.reasoning_tokens",
       tool_call_index: "request_log_steps.tool_call_index",
       tool_call_id: "request_log_steps.tool_call_id",
       tool_name: "request_log_steps.tool_name",

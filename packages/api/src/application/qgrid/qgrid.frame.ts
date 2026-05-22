@@ -188,6 +188,8 @@ class QgridFrameClass extends BaseFrameClass {
       cache_creation_tokens: input.cacheCreationTokens,
       duration_ms: input.durationMs,
       finish_reason: input.finishReason,
+      reasoning_text: input.reasoningText,
+      reasoning_tokens: input.reasoningTokens,
       tool_call_index: input.toolCallIndex,
       tool_call_id: input.toolCallId,
       tool_name: input.toolName,
