@@ -215,3 +215,91 @@ function extractTextFromContent(content: LanguageModelV3Message["content"]): str
   }
   return parts.join("\n");
 }
+
+// --- shared helpers (used by both index.ts and logger.ts) ---
+
+export function safeStringify(value: unknown): string {
+  try {
+    const json = JSON.stringify(value);
+    return json === undefined ? String(value) : json;
+  } catch {
+    return String(value);
+  }
+}
+
+export function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+export function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  const parts: string[] = [];
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part && typeof part === "object" && "type" in part) {
+        if (part.type === "text" && "text" in part && typeof part.text === "string") {
+          parts.push(part.text);
+        }
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+export function getErrorMessage(value: unknown): string {
+  if (value instanceof Error) return String(value);
+  if (value === undefined || value === null) return "unknown error";
+  return String(value);
+}
+
+export function extractUserPrompt(prompt: unknown, messages: unknown): string {
+  if (typeof prompt === "string") return prompt;
+  const messageList = Array.isArray(messages) ? messages : Array.isArray(prompt) ? prompt : [];
+  for (let i = messageList.length - 1; i >= 0; i--) {
+    const msg = getRecord(messageList[i]);
+    if (msg?.role === "user") {
+      return extractTextContent(msg.content);
+    }
+  }
+  return "";
+}
+
+export function extractSystemPrompt(system: unknown): string | undefined {
+  if (typeof system === "string") return system;
+  if (system && typeof system === "object" && "content" in system) {
+    const content = (system as { content: unknown }).content;
+    if (typeof content === "string") return content;
+  }
+  return undefined;
+}
+
+export function serializeHistory(messages: unknown): string | undefined {
+  if (!Array.isArray(messages) || messages.length === 0) return undefined;
+  const lastRecord = getRecord(messages[messages.length - 1]);
+  const sliced = lastRecord?.role === "user" ? messages.slice(0, -1) : messages;
+  const history: Array<Record<string, unknown>> = [];
+  for (const msg of sliced) {
+    const record = getRecord(msg);
+    if (record?.role !== "user" && record?.role !== "assistant") continue;
+    const text = extractTextContent(record.content);
+    if (text.length === 0) continue;
+    history.push({
+      type: "message",
+      role: record.role,
+      content: [{ type: record.role === "user" ? "input_text" : "output_text", text }],
+    });
+  }
+  if (history.length === 0) return undefined;
+  return safeStringify(history);
+}
+
+export function filterHistoryForStorage(history: unknown[]): string | undefined {
+  const filtered = history.filter((item) => {
+    if (!item || typeof item !== "object") return false;
+    const record = item as Record<string, unknown>;
+    return record.type === "message" && (record.role === "user" || record.role === "assistant");
+  });
+  return filtered.length > 0 ? JSON.stringify(filtered) : undefined;
+}

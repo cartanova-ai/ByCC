@@ -30,6 +30,7 @@ function mockFetch() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -104,7 +105,12 @@ describe("createQgridLogger", () => {
       finishReason: "tool-calls",
       usage: { inputTokens: 200, outputTokens: 30, inputTokenDetails: {} },
       content: [
-        { type: "tool-call", toolCallId: "call_1", toolName: "getWeather", input: { city: "Seoul" } },
+        {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "getWeather",
+          input: { city: "Seoul" },
+        },
       ],
     } as never);
 
@@ -113,9 +119,7 @@ describe("createQgridLogger", () => {
       stepNumber: 1,
       finishReason: "stop",
       usage: { inputTokens: 400, outputTokens: 80, inputTokenDetails: {} },
-      content: [
-        { type: "tool-result", toolCallId: "call_1", output: { temperature: 22 } },
-      ],
+      content: [{ type: "tool-result", toolCallId: "call_1", output: { temperature: 22 } }],
     } as never);
 
     await logger.onFinish!({
@@ -291,19 +295,25 @@ describe("createQgridLogger", () => {
     const finishCall = calls.find((c) => c.url.includes("/finishRun"));
     // 마지막 user 메시지는 현재 turn이라 history에서 제외됨
     expect(JSON.parse(String(finishCall?.body.input.history))).toEqual([
-      { type: "message", role: "user", content: "first message" },
-      { type: "message", role: "assistant", content: "response" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "first message" }] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "response" }] },
     ]);
   });
 
-  it("filters out tool and system messages from history", async () => {
+  it("filters tool calls and tool results from history (user/assistant only)", async () => {
     const calls = mockFetch();
     const logger = createQgridLogger({ serverUrl: SERVER });
     const messages = [
       { role: "system", content: "you are helpful" },
       { role: "user", content: [{ type: "text", text: "hi" }] },
-      { role: "assistant", content: [{ type: "text", text: "answer" }, { type: "tool-call", toolName: "getX" }] },
-      { role: "tool", content: [{ type: "tool-result", output: "x" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "answer" },
+          { type: "tool-call", toolCallId: "call_1", toolName: "getX", input: { id: 1 } },
+        ],
+      },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "call_1", output: "x" }] },
       { role: "user", content: [{ type: "text", text: "follow-up" }] },
     ];
 
@@ -319,10 +329,10 @@ describe("createQgridLogger", () => {
     } as never);
 
     const finishCall = calls.find((c) => c.url.includes("/finishRun"));
-    // 마지막 user 메시지(follow-up)는 현재 turn이라 제외됨. system/tool도 필터됨.
+    // 마지막 user 메시지(follow-up)는 현재 turn이라 제외. system/tool/function_call 도 제외.
     expect(JSON.parse(String(finishCall?.body.input.history))).toEqual([
-      { type: "message", role: "user", content: "hi" },
-      { type: "message", role: "assistant", content: "answer" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer" }] },
     ]);
   });
 
@@ -340,7 +350,12 @@ describe("createQgridLogger", () => {
       finishReason: "tool-calls",
       usage: { inputTokens: 200, outputTokens: 30, inputTokenDetails: {} },
       content: [
-        { type: "tool-call", toolCallId: "call_1", toolName: "getWeather", input: { city: "Seoul" } },
+        {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "getWeather",
+          input: { city: "Seoul" },
+        },
       ],
     } as never);
 
@@ -357,7 +372,9 @@ describe("createQgridLogger", () => {
       totalUsage: { inputTokens: 450, outputTokens: 50, inputTokenDetails: {} },
     } as never);
 
-    const toolCallStep = calls.find((c) => c.url.includes("/appendStep") && c.body.input.type === "tool_call");
+    const toolCallStep = calls.find(
+      (c) => c.url.includes("/appendStep") && c.body.input.type === "tool_call",
+    );
     expect(toolCallStep?.body.input).toMatchObject({
       stepIndex: 0,
       toolName: "getWeather",
@@ -394,7 +411,117 @@ describe("createQgridLogger", () => {
     } as never);
 
     const finishCalls = calls.filter((c) => c.url.includes("/finishRun"));
-    expect(finishCalls.map((c) => c.body.input.response)).toEqual(["first response", "second response"]);
+    expect(finishCalls.map((c) => c.body.input.response)).toEqual([
+      "first response",
+      "second response",
+    ]);
+  });
+
+  it("closes the active run and quarantines when telemetry keys overlap", async () => {
+    const calls = mockFetch();
+    const errors: Error[] = [];
+    const logger = createQgridLogger({
+      serverUrl: SERVER,
+      onLogError: (err) => errors.push(err),
+    });
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "first",
+    } as never);
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "second",
+    } as never);
+
+    // 늦게 도착하는 이전 onFinish들 — quarantine 중이므로 무시됨
+    await logger.onFinish!({
+      finishReason: "stop",
+      text: "first response",
+      totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+    } as never);
+    await logger.onFinish!({
+      finishReason: "stop",
+      text: "second response",
+      totalUsage: { inputTokens: 2, outputTokens: 2, inputTokenDetails: {} },
+    } as never);
+
+    // overlap된 첫 run만 error finalize됨. 새 run은 생성 안 됨.
+    const finishCalls = calls.filter((c) => c.url.includes("/finishRun"));
+    expect(finishCalls).toHaveLength(1);
+    expect(finishCalls[0].body.input).toMatchObject({
+      status: "error",
+      errorMessage: expect.stringContaining("overlapping runs"),
+    });
+    expect(errors[0].message).toContain("overlapping runs");
+  });
+
+  it("marks runs as error when onFinish is never emitted", async () => {
+    vi.useFakeTimers();
+    const calls = mockFetch();
+    const logger = createQgridLogger({ serverUrl: SERVER, staleRunTimeoutMs: 100 });
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "test",
+    } as never);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const finishCall = calls.find((c) => c.url.includes("/finishRun"));
+    expect(finishCall?.body.input).toMatchObject({
+      status: "error",
+      errorMessage: "AI SDK generation ended before onFinish was emitted",
+    });
+  });
+
+  it("marks runs as aborted when the AI SDK abort signal fires", async () => {
+    const calls = mockFetch();
+    const abortController = new AbortController();
+    const logger = createQgridLogger({ serverUrl: SERVER, staleRunTimeoutMs: 0 });
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "test",
+      abortSignal: abortController.signal,
+    } as never);
+
+    abortController.abort("user stopped");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const finishCall = calls.find((c) => c.url.includes("/finishRun"));
+    expect(finishCall?.body.input).toMatchObject({
+      status: "aborted",
+      errorMessage: "user stopped",
+    });
+  });
+
+  it("expires suppressed qgrid runs when their finish event never arrives", async () => {
+    vi.useFakeTimers();
+    const calls = mockFetch();
+    const logger = createQgridLogger({ serverUrl: SERVER, staleRunTimeoutMs: 100 });
+
+    await logger.onStart!({
+      model: { provider: "qgrid", modelId: "openai/gpt-5.4" },
+      prompt: "handled by qgrid wrapper",
+    } as never);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "next normal call",
+    } as never);
+    await logger.onFinish!({
+      finishReason: "stop",
+      text: "ok",
+      totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+    } as never);
+
+    const createRunCall = calls.find((c) => c.url.includes("/createRun"));
+    expect(createRunCall?.body.input).toMatchObject({
+      userPrompt: "next normal call",
+    });
   });
 
   it("uses custom tokenName from config", async () => {

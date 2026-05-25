@@ -3,6 +3,26 @@ export type QgridProviderConfig = {
   defaultEffort?: string;
 };
 
+/**
+ * qgrid OpenAI provider options.
+ *
+ * codex app-server에서 처리 가능한 옵션들만 정의
+ * https://ai-sdk.dev/providers/ai-sdk-providers/openai#provider-options
+ */
+type QgridOpenAIProviderOptions = {
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoningSummary?: "auto" | "concise" | "detailed" | "none";
+  textVerbosity?: "low" | "medium" | "high";
+  serviceTier?: "fast";
+};
+
+/**
+ * {@link QgridOpenAIProviderOptions}
+ */
+export type QgridProviderOptions = {
+  openai?: QgridOpenAIProviderOptions;
+};
+
 export type QgridSupportedModel =
   | "openai/gpt-5.5"
   | "openai/gpt-5.4"
@@ -75,6 +95,15 @@ export type QgridLoggerConfig = {
   serverUrl: string;
   projectName?: string;
   tokenName?: string;
+  /**
+   * Fallback timeout for runs that receive onStart but never receive onFinish.
+   * AI SDK TelemetryIntegration does not expose an error hook, so provider
+   * failures before a final step can otherwise leave request logs running.
+   *
+   * Set to 0 to disable. Defaults to 30 minutes, or the AI SDK total timeout
+   * plus a short grace period when one is provided.
+   */
+  staleRunTimeoutMs?: number;
   /**
    * Receives qgrid logging failures. When reusing one logger integration across
    * overlapping AI SDK calls, pass a unique `metadata.qgridRunId` per call so

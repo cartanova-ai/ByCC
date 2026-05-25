@@ -1,8 +1,17 @@
+import { type TelemetryIntegration } from "ai";
 
-
-import type { TelemetryIntegration } from "ai";
-import type { QgridLoggerConfig } from "./index.types";
-import { appendStep, createRun, finishRun } from "./utils";
+import { type QgridLoggerConfig } from "./index.types";
+import {
+  appendStep,
+  createRun,
+  extractSystemPrompt,
+  extractUserPrompt,
+  finishRun,
+  getErrorMessage,
+  getRecord,
+  safeStringify,
+  serializeHistory,
+} from "./utils";
 
 type PendingToolCall = {
   stepIndex: number;
@@ -19,116 +28,127 @@ type RunState = {
   startTime: number;
   toolDurations: Map<string, number>;
   history?: string;
+  watchdog?: ReturnType<typeof setTimeout>;
+  cleanupAbortListener?: () => void;
+  finishing: boolean;
 };
 
 const DEFAULT_RUN_KEY = "__qgrid_default_run__";
+const DEFAULT_STALE_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+const STALE_RUN_GRACE_MS = 5000;
 
-function safeStringify(value: unknown): string {
-  try {
-    const json = JSON.stringify(value);
-    return json === undefined ? String(value) : json;
-  } catch {
-    return String(value);
-  }
+function timedKeySet() {
+  const keys = new Set<string>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  return {
+    has: (k: string) => keys.has(k),
+    add(k: string, ttlMs: number) {
+      keys.add(k);
+      const existing = timers.get(k);
+      if (existing) clearTimeout(existing);
+      const t = setTimeout(() => { keys.delete(k); timers.delete(k); }, ttlMs);
+      t.unref?.();
+      timers.set(k, t);
+    },
+    remove(k: string) {
+      keys.delete(k);
+      const t = timers.get(k);
+      if (t) clearTimeout(t);
+      timers.delete(k);
+    },
+  };
 }
 
 export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegration {
   const runs = new Map<string, RunState>();
-  const skippedRuns = new Set<string>();
+  const keyTtl =
+    typeof config.staleRunTimeoutMs === "number" && config.staleRunTimeoutMs > 0
+      ? config.staleRunTimeoutMs
+      : DEFAULT_STALE_RUN_TIMEOUT_MS;
 
-  function handleLogError(err: unknown) {
-    if (config.onLogError) {
-      config.onLogError(err instanceof Error ? err : new Error(String(err)));
+  const suppressedQgrid = timedKeySet();
+  const quarantined = timedKeySet();
+
+  async function finalizeRun(
+    runKey: string,
+    result: {
+      status: "succeeded" | "error" | "aborted";
+      response?: string;
+      errorMessage?: string;
+      totalUsage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+      };
+    },
+  ) {
+    const run = runs.get(runKey);
+    if (!run || run.finishing) return;
+    run.finishing = true;
+    runs.delete(runKey);
+    if (run.watchdog) clearTimeout(run.watchdog);
+    run.cleanupAbortListener?.();
+
+    for (const pending of run.pendingToolCalls) {
+      run.pendingSteps.push(
+        appendStep(config.serverUrl, {
+          requestLogId: run.requestLogId,
+          stepIndex: pending.stepIndex,
+          type: "tool_call",
+          toolCallIndex: pending.toolCallIndex,
+          toolCallId: pending.toolCallId,
+          toolName: pending.toolName,
+          toolArgs: pending.toolArgs,
+          toolDurationMs: run.toolDurations.get(pending.toolCallId),
+        }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
+      );
     }
-  }
+    run.pendingToolCalls = [];
 
-  function getRunKey(event: unknown): string {
-    const record = getRecord(event);
-    const metadata = getRecord(record?.metadata);
-    const qgridRunId = metadata?.qgridRunId;
-    if (typeof qgridRunId === "string" && qgridRunId.length > 0) return `qgridRunId:${qgridRunId}`;
-    const functionId = record?.functionId;
-    if (typeof functionId === "string" && functionId.length > 0) return `functionId:${functionId}`;
-    return DEFAULT_RUN_KEY;
-  }
-
-  function extractTextContent(content: unknown): string {
-    if (typeof content === "string") return content;
-    const parts: string[] = [];
-    if (Array.isArray(content)) {
-      for (const part of content) {
-        if (part && typeof part === "object" && "type" in part) {
-          if (part.type === "text" && "text" in part && typeof part.text === "string") {
-            parts.push(part.text);
-          }
-        }
-      }
-    }
-    return parts.join("\n");
-  }
-
-  function getRecord(value: unknown): Record<string, unknown> | undefined {
-    return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
-  }
-
-  function extractUserPrompt(prompt: unknown, messages: unknown): string {
-    if (typeof prompt === "string") return prompt;
-    const messageList = Array.isArray(messages) ? messages : Array.isArray(prompt) ? prompt : [];
-    for (let i = messageList.length - 1; i >= 0; i--) {
-      const msg = getRecord(messageList[i]);
-      if (msg?.role === "user") {
-        return extractTextContent(msg.content);
-      }
-    }
-    return "";
-  }
-
-  function extractSystemPrompt(system: unknown): string | undefined {
-    if (typeof system === "string") return system;
-    if (system && typeof system === "object" && "content" in system) {
-      const content = (system as { content: unknown }).content;
-      if (typeof content === "string") return content;
-    }
-    return undefined;
-  }
-
-  function serializeHistory(messages: unknown): string | undefined {
-    if (!Array.isArray(messages) || messages.length === 0) return undefined;
-    // 마지막 메시지가 user면 현재 turn이므로 제외 (user_prompt와 중복)
-    const lastRecord = getRecord(messages[messages.length - 1]);
-    const sliced = lastRecord?.role === "user" ? messages.slice(0, -1) : messages;
-    const filtered = sliced
-      .map((msg) => getRecord(msg))
-      .filter((record): record is Record<string, unknown> =>
-        record?.role === "user" || record?.role === "assistant",
-      )
-      .map((record) => ({
-        type: "message",
-        role: record.role as string,
-        content: extractTextContent(record.content),
-      }))
-      .filter((entry) => entry.content.length > 0);
-    if (filtered.length === 0) return undefined;
-    return safeStringify(filtered);
+    await Promise.allSettled(run.pendingSteps);
+    await finishRun(config.serverUrl, {
+      requestLogId: run.requestLogId,
+      status: result.status,
+      response: result.response,
+      tokenName: config.tokenName ?? "external",
+      totalInputTokens: result.totalUsage?.inputTokens ?? 0,
+      totalOutputTokens: result.totalUsage?.outputTokens ?? 0,
+      totalCacheReadTokens: result.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
+      totalCacheCreationTokens: result.totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
+      totalDurationMs: Date.now() - run.startTime,
+      history: run.history,
+      ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+    }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e))));
   }
 
   return {
     async onStart(event) {
-      const runKey = getRunKey(event);
-      skippedRuns.delete(runKey);
+      // run key 결정
+      const record = getRecord(event);
+      const metadata = getRecord(record?.metadata);
+      const qgridRunId = metadata?.qgridRunId;
+      let runKey = DEFAULT_RUN_KEY;
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
+      else {
+        const functionId = record?.functionId;
+        if (typeof functionId === "string" && functionId.length > 0) runKey = `functionId:${functionId}`;
+      }
+
+      if (quarantined.has(runKey)) {
+        config.onLogError?.(new Error("createQgridLogger: telemetry key is quarantined after overlap"));
+        return;
+      }
 
       if ((event.model as { provider?: string })?.provider === "qgrid") {
-        skippedRuns.add(runKey);
+        suppressedQgrid.add(runKey, keyTtl);
         return;
       }
 
       if (runs.has(runKey)) {
-        skippedRuns.add(runKey);
-        handleLogError(
-          new Error(
-            "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.",
-          ),
-        );
+        const msg = "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
+        await finalizeRun(runKey, { status: "error", errorMessage: msg });
+        quarantined.add(runKey, keyTtl);
+        config.onLogError?.(new Error(msg));
         return;
       }
 
@@ -140,22 +160,58 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
           modelName: (event.model as { modelId?: string })?.modelId,
           projectName: config.projectName,
         });
+
+        // watchdog timeout
+        let watchdogTimeout = DEFAULT_STALE_RUN_TIMEOUT_MS;
+        if (typeof config.staleRunTimeoutMs === "number") watchdogTimeout = config.staleRunTimeoutMs;
+        else if (typeof event.timeout === "number" && event.timeout > 0) watchdogTimeout = event.timeout + STALE_RUN_GRACE_MS;
+        else {
+          const rec = getRecord(event.timeout);
+          const totalMs = rec?.totalMs;
+          if (typeof totalMs === "number" && totalMs > 0) watchdogTimeout = totalMs + STALE_RUN_GRACE_MS;
+        }
+
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        if (watchdogTimeout > 0) {
+          watchdog = setTimeout(() => {
+            void finalizeRun(runKey, { status: "error", errorMessage: "AI SDK generation ended before onFinish was emitted" });
+          }, watchdogTimeout);
+          watchdog.unref?.();
+        }
+
+        // abort listener
+        let cleanupAbortListener: (() => void) | undefined;
+        const signal = event.abortSignal;
+        if (signal) {
+          const onAbort = () => {
+            void finalizeRun(runKey, { status: "aborted", errorMessage: getErrorMessage(signal.reason) });
+          };
+          if (signal.aborted) queueMicrotask(onAbort);
+          else {
+            signal.addEventListener("abort", onAbort, { once: true });
+            cleanupAbortListener = () => signal.removeEventListener("abort", onAbort);
+          }
+        }
+
         runs.set(runKey, {
-          requestLogId: result.requestLogId,
-          pendingSteps: [],
-          pendingToolCalls: [],
-          startTime: Date.now(),
-          toolDurations: new Map(),
-          history: serializeHistory(messages),
+          requestLogId: result.requestLogId, pendingSteps: [], pendingToolCalls: [],
+          startTime: Date.now(), toolDurations: new Map(), history: serializeHistory(messages),
+          watchdog, cleanupAbortListener, finishing: false,
         });
       } catch (e) {
-        handleLogError(e);
+        config.onLogError?.(e instanceof Error ? e : new Error(String(e)));
       }
     },
 
     onToolCallFinish(event) {
-      const runKey = getRunKey(event);
-      if (skippedRuns.has(runKey)) return;
+      const record = getRecord(event);
+      const metadata = getRecord(record?.metadata);
+      const qgridRunId = metadata?.qgridRunId;
+      let runKey = DEFAULT_RUN_KEY;
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
+      else { const fid = record?.functionId; if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`; }
+
+      if (suppressedQgrid.has(runKey) || quarantined.has(runKey)) return;
       const run = runs.get(runKey);
       if (!run) return;
       const toolCallId = (event.toolCall as { toolCallId?: string })?.toolCallId;
@@ -165,167 +221,124 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
     },
 
     onStepFinish(event) {
-      const runKey = getRunKey(event);
-      if (skippedRuns.has(runKey)) return;
+      const record = getRecord(event);
+      const metadata = getRecord(record?.metadata);
+      const qgridRunId = metadata?.qgridRunId;
+      let runKey = DEFAULT_RUN_KEY;
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
+      else { const fid = record?.functionId; if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`; }
+
+      if (suppressedQgrid.has(runKey) || quarantined.has(runKey)) return;
       const run = runs.get(runKey);
       if (!run) return;
 
       const stepNumber = (event as { stepNumber?: number }).stepNumber ?? 0;
       const usage = event.usage as {
-        inputTokens?: number;
-        outputTokens?: number;
+        inputTokens?: number; outputTokens?: number;
         inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
         outputTokenDetails?: { reasoningTokens?: number };
       };
-      const content = (event as { content?: Array<{ type: string; toolCallId?: string; toolName?: string; input?: unknown; output?: unknown; error?: unknown; text?: string }> }).content ?? [];
+      const content = ((event as { content?: Array<{ type: string; toolCallId?: string; toolName?: string; input?: unknown; output?: unknown; error?: unknown; text?: string }> }).content ?? []);
 
-      // reasoningText는 getter라서 telemetry로 넘어올 때 유실될 수 있음 — content에서 직접 추출
+      // reasoning
       const reasoningParts = content.filter((p) => p.type === "reasoning") as Array<{ text?: string }>;
-      const reasoningTextFromContent = reasoningParts.map((p) => p.text ?? "").join("");
-      const reasoningTextRaw = (event as { reasoningText?: unknown }).reasoningText;
+      const reasoningFromContent = reasoningParts.map((p) => p.text ?? "").join("");
+      const reasoningRaw = (event as { reasoningText?: unknown }).reasoningText;
       const reasoningText =
-        typeof reasoningTextRaw === "string" && reasoningTextRaw.length > 0
-          ? reasoningTextRaw
-          : reasoningTextFromContent.length > 0
-            ? reasoningTextFromContent
-            : undefined;
+        typeof reasoningRaw === "string" && reasoningRaw.length > 0 ? reasoningRaw
+          : reasoningFromContent.length > 0 ? reasoningFromContent : undefined;
 
-      // tool-result/tool-error는 이전 step의 tool-call에 대한 결과 — 먼저 처리
+      // 이전 step의 pending tool-call 매칭
       const toolResults = content.filter((p) => p.type === "tool-result") as Array<{ toolCallId: string; output: unknown }>;
       const toolErrors = content.filter((p) => p.type === "tool-error") as Array<{ toolCallId: string; error: unknown }>;
 
-      const remainingPendingToolCalls: PendingToolCall[] = [];
+      const remainingPending: PendingToolCall[] = [];
       for (const pending of run.pendingToolCalls) {
         const tr = toolResults.find((r) => r.toolCallId === pending.toolCallId);
         const te = toolErrors.find((e) => e.toolCallId === pending.toolCallId);
         if (tr || te) {
           run.pendingSteps.push(
             appendStep(config.serverUrl, {
-              requestLogId: run.requestLogId,
-              stepIndex: pending.stepIndex,
-              type: "tool_call",
-              toolCallIndex: pending.toolCallIndex,
-              toolCallId: pending.toolCallId,
-              toolName: pending.toolName,
-              toolArgs: pending.toolArgs,
+              requestLogId: run.requestLogId, stepIndex: pending.stepIndex, type: "tool_call",
+              toolCallIndex: pending.toolCallIndex, toolCallId: pending.toolCallId,
+              toolName: pending.toolName, toolArgs: pending.toolArgs,
               toolResult: tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(pending.toolCallId),
               error: te ? safeStringify(te.error) : undefined,
-            }).catch(handleLogError),
+            }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
           );
           run.toolDurations.delete(pending.toolCallId);
         } else {
-          remainingPendingToolCalls.push(pending);
+          remainingPending.push(pending);
         }
       }
-      run.pendingToolCalls = remainingPendingToolCalls;
+      run.pendingToolCalls = remainingPending;
 
       // generate step
       run.pendingSteps.push(
         appendStep(config.serverUrl, {
-          requestLogId: run.requestLogId,
-          stepIndex: stepNumber,
-          type: "generate",
-          inputTokens: usage.inputTokens ?? 0,
-          outputTokens: usage.outputTokens ?? 0,
+          requestLogId: run.requestLogId, stepIndex: stepNumber, type: "generate",
+          inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
           cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
           cacheCreationTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
           finishReason: event.finishReason as string,
           reasoningText: typeof reasoningText === "string" && reasoningText.length > 0 ? reasoningText : undefined,
           reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
-        }).catch(handleLogError),
+        }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
       );
 
-      // 이번 step의 tool-call들
+      // 이번 step의 새 tool-call
       const toolCalls = content.filter((p) => p.type === "tool-call") as Array<{ toolCallId: string; toolName: string; input: unknown }>;
       for (const [i, tc] of toolCalls.entries()) {
         const tr = toolResults.find((r) => r.toolCallId === tc.toolCallId);
         const te = toolErrors.find((e) => e.toolCallId === tc.toolCallId);
         if (tr || te) {
-          // 같은 step에 result/error가 있으면 바로 기록 (에러 시 동일 step에 포함됨)
           run.pendingSteps.push(
             appendStep(config.serverUrl, {
-              requestLogId: run.requestLogId,
-              stepIndex: stepNumber,
-              type: "tool_call",
-              toolCallIndex: i,
-              toolCallId: tc.toolCallId,
-              toolName: tc.toolName,
+              requestLogId: run.requestLogId, stepIndex: stepNumber, type: "tool_call",
+              toolCallIndex: i, toolCallId: tc.toolCallId, toolName: tc.toolName,
               toolArgs: safeStringify(tc.input),
               toolResult: tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(tc.toolCallId),
               error: te ? safeStringify(te.error) : undefined,
-            }).catch(handleLogError),
+            }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
           );
           run.toolDurations.delete(tc.toolCallId);
         } else {
-          // result가 아직 없으면 다음 step에서 매칭
           run.pendingToolCalls.push({
-            stepIndex: stepNumber,
-            toolCallIndex: i,
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            toolArgs: safeStringify(tc.input),
+            stepIndex: stepNumber, toolCallIndex: i, toolCallId: tc.toolCallId,
+            toolName: tc.toolName, toolArgs: safeStringify(tc.input),
           });
         }
       }
     },
 
     async onFinish(event) {
-      const runKey = getRunKey(event);
-      if (skippedRuns.has(runKey)) {
-        skippedRuns.delete(runKey);
-        return;
-      }
+      const record = getRecord(event);
+      const metadata = getRecord(record?.metadata);
+      const qgridRunId = metadata?.qgridRunId;
+      let runKey = DEFAULT_RUN_KEY;
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
+      else { const fid = record?.functionId; if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`; }
+
+      if (suppressedQgrid.has(runKey)) { suppressedQgrid.remove(runKey); return; }
+      if (quarantined.has(runKey)) return;
+
       const run = runs.get(runKey);
       if (!run) return;
 
-      // 남은 pendingToolCalls — result 없이 기록 (마지막 step에서 tool-call만 있고 끝난 경우)
-      for (const pending of run.pendingToolCalls) {
-        run.pendingSteps.push(
-          appendStep(config.serverUrl, {
-            requestLogId: run.requestLogId,
-            stepIndex: pending.stepIndex,
-            type: "tool_call",
-            toolCallIndex: pending.toolCallIndex,
-            toolCallId: pending.toolCallId,
-            toolName: pending.toolName,
-            toolArgs: pending.toolArgs,
-            toolDurationMs: run.toolDurations.get(pending.toolCallId),
-          }).catch(handleLogError),
-        );
-      }
-      run.pendingToolCalls = [];
-
-      await Promise.allSettled(run.pendingSteps);
-
       const finishReason = event.finishReason as string;
-      const status =
-        finishReason === "error" ? "error" as const
-        : finishReason === "abort" ? "aborted" as const
-        : "succeeded" as const;
+      const status = finishReason === "error" ? "error" as const
+        : finishReason === "abort" ? "aborted" as const : "succeeded" as const;
 
-      const totalUsage = (event as { totalUsage?: {
-        inputTokens?: number;
-        outputTokens?: number;
-        inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
-      } }).totalUsage;
+      const totalUsage = (event as {
+        totalUsage?: { inputTokens?: number; outputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } };
+      }).totalUsage;
 
-      await finishRun(config.serverUrl, {
-        requestLogId: run.requestLogId,
-        status,
-        response: (event as { text?: string }).text,
-        tokenName: config.tokenName ?? "external",
-        totalInputTokens: totalUsage?.inputTokens ?? 0,
-        totalOutputTokens: totalUsage?.outputTokens ?? 0,
-        totalCacheReadTokens: totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
-        totalCacheCreationTokens: totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
-        totalDurationMs: Date.now() - run.startTime,
-        history: run.history,
-        ...(status === "error" ? { errorMessage: String((event as { error?: unknown }).error) } : {}),
-      }).catch(handleLogError);
-
-      runs.delete(runKey);
+      await finalizeRun(runKey, {
+        status, response: event.text, totalUsage,
+        ...(status === "error" ? { errorMessage: getErrorMessage((event as { error?: unknown }).error) } : {}),
+      });
     },
   };
 }
