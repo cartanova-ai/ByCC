@@ -90,11 +90,32 @@ export const requestLogStepSubsetQueries = {
       error: "request_log_steps.error",
     });
   },
+  T: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
+    return qbWrapper.from("request_log_steps").select({
+      id: "request_log_steps.id",
+      created_at: "request_log_steps.created_at",
+      step_index: "request_log_steps.step_index",
+      type: "request_log_steps.type",
+      input_tokens: "request_log_steps.input_tokens",
+      output_tokens: "request_log_steps.output_tokens",
+      cache_read_tokens: "request_log_steps.cache_read_tokens",
+      cache_creation_tokens: "request_log_steps.cache_creation_tokens",
+      duration_ms: "request_log_steps.duration_ms",
+      finish_reason: "request_log_steps.finish_reason",
+      reasoning_tokens: "request_log_steps.reasoning_tokens",
+      tool_call_index: "request_log_steps.tool_call_index",
+      tool_call_id: "request_log_steps.tool_call_id",
+      tool_name: "request_log_steps.tool_name",
+      tool_duration_ms: "request_log_steps.tool_duration_ms",
+      error: "request_log_steps.error",
+    });
+  },
 };
 
 // LoaderQuery: RequestLogStep
 export const requestLogStepLoaderQueries = {
   A: [],
+  T: [],
 } as const satisfies PuriLoaderQueries<RequestLogStepSubsetKey>;
 
 // SubsetQuery: Token

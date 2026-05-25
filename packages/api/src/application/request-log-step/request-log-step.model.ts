@@ -114,6 +114,9 @@ class RequestLogStepModelClass extends BaseModelClass<
         ...row,
         // 서브셋별로 virtual 필드 계산로직 추가
       }),
+      T: (row) => ({
+        ...row,
+      }),
     });
 
     return this.executeSubsetQuery({

@@ -309,10 +309,30 @@ export const RequestLogStepSubsetA = z.object({
   error: z.string().nullable(),
 });
 export type RequestLogStepSubsetA = z.infer<typeof RequestLogStepSubsetA>;
+export const RequestLogStepSubsetT = z.object({
+  id: z.int(),
+  created_at: z.date(),
+  step_index: z.int(),
+  type: RequestLogStepType,
+  input_tokens: z.int().nullable(),
+  output_tokens: z.int().nullable(),
+  cache_read_tokens: z.int().nullable(),
+  cache_creation_tokens: z.int().nullable(),
+  duration_ms: z.int().nullable(),
+  finish_reason: z.string().max(20).nullable(),
+  reasoning_tokens: z.int().nullable(),
+  tool_call_index: z.int().nullable(),
+  tool_call_id: z.string().max(100).nullable(),
+  tool_name: z.string().max(100).nullable(),
+  tool_duration_ms: z.int().nullable(),
+  error: z.string().nullable(),
+});
+export type RequestLogStepSubsetT = z.infer<typeof RequestLogStepSubsetT>;
 export type RequestLogStepSubsetMapping = {
   A: RequestLogStepSubsetA;
+  T: RequestLogStepSubsetT;
 };
-export const RequestLogStepSubsetKey = z.enum(["A"]);
+export const RequestLogStepSubsetKey = z.enum(["A", "T"]);
 export type RequestLogStepSubsetKey = z.infer<typeof RequestLogStepSubsetKey>;
 
 // Subsets: Token
