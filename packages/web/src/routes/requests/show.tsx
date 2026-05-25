@@ -18,7 +18,7 @@ import {
 } from "@/services/sonamu.generated";
 
 type RequestLog = RequestLogSubsetMapping["A"];
-type RequestLogStep = RequestLogStepSubsetMapping["A"];
+type RequestLogStep = RequestLogStepSubsetMapping["T"];
 
 const showSearchSchema = z.object({
   id: z.number(),
@@ -173,6 +173,21 @@ const STATUS_STYLE: Record<string, string> = {
   aborted: "bg-caution-400/15 text-caution-500",
 };
 
+function ErrorPanel({ message }: { message: string }) {
+  return (
+    <div className="panel overflow-hidden border border-red-200 bg-red-50/60">
+      <div className="px-4 py-2.5 border-b border-red-100 flex items-center gap-1.5">
+        <span className="text-[11px] uppercase tracking-wider text-red-600 font-medium">Error</span>
+      </div>
+      <div className="p-4">
+        <pre className="text-[12px] text-red-700 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-80 overflow-auto">
+          {message}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 function HeaderBar({ data }: { data: RequestLog }) {
   const status = (data as Record<string, unknown>).status as string | undefined;
 
@@ -202,7 +217,7 @@ function HeaderBar({ data }: { data: RequestLog }) {
 }
 
 function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount: number }) {
-  const denom = data.input_tokens + data.cache_read_tokens + data.cache_creation_tokens;
+  const denom = data.input_tokens;
   const cacheHitRate = denom > 0 ? `${Math.round((data.cache_read_tokens / denom) * 100)}%` : "—";
 
   return (
@@ -224,17 +239,17 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
 }
 
 type ToolCallEntry = {
+  id: number;
   stepIndex: number;
   callIndex: number;
   toolCallId: string;
   toolName: string;
-  args: Record<string, unknown>;
-  result: unknown;
   durationMs: number;
   error: string | null;
 };
 
 type GenerateStepEntry = {
+  id: number;
   stepIndex: number;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -242,7 +257,6 @@ type GenerateStepEntry = {
   cacheCreationTokens: number | null;
   durationMs: number | null;
   finishReason: string | null;
-  reasoningText: string | null;
   reasoningTokens: number | null;
 };
 
@@ -269,6 +283,12 @@ function CompactMetric({ label, value }: { label: string; value: string }) {
 function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
   const hasError = !!entry.error;
   const [opened, setOpened] = useState(false);
+  const { data: detail } = RequestLogStepService.useRequestLogStep("A", entry.id, {
+    enabled: opened,
+  });
+  const args = detail ? safeParseJson(detail.tool_args) : null;
+  const result = detail ? safeParseJson(detail.tool_result) : null;
+  const error = detail?.error ?? entry.error;
   return (
     <details
       className="group/tool"
@@ -298,16 +318,16 @@ function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
               Request
             </span>
             <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
-              <FormattedContent text={JSON.stringify(entry.args)} />
+              <FormattedContent text={detail ? JSON.stringify(args) : "Loading..."} />
             </div>
           </div>
-          {entry.error && (
+          {error && (
             <div>
               <span className="text-[10px] uppercase tracking-wider text-red-500 font-medium px-2">
                 Error
               </span>
               <div className="mt-1 rounded-md bg-red-50 border border-red-100 p-3 overflow-auto">
-                <FormattedContent text={entry.error} />
+                <FormattedContent text={error} />
               </div>
             </div>
           )}
@@ -318,7 +338,11 @@ function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
             <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
               <FormattedContent
                 text={
-                  typeof entry.result === "string" ? entry.result : JSON.stringify(entry.result)
+                  detail
+                    ? typeof result === "string"
+                      ? result
+                      : JSON.stringify(result)
+                    : "Loading..."
                 }
                 markdown
               />
@@ -330,8 +354,12 @@ function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
   );
 }
 
-function ReasoningBlock({ reasoningText }: { reasoningText: string | null }) {
+function ReasoningBlock({ stepId }: { stepId: number }) {
   const [opened, setOpened] = useState(false);
+  const { data: detail } = RequestLogStepService.useRequestLogStep("A", stepId, {
+    enabled: opened,
+  });
+  const reasoningText = detail?.reasoning_text ?? null;
   return (
     <details
       className="group/reason mt-3"
@@ -347,6 +375,8 @@ function ReasoningBlock({ reasoningText }: { reasoningText: string | null }) {
         <div className="mt-2 rounded-md bg-white/70 border border-sand-100 p-3 overflow-auto">
           {reasoningText ? (
             <FormattedContent text={reasoningText} markdown />
+          ) : !detail ? (
+            <p className="text-sm text-sand-400">Loading...</p>
           ) : (
             <p className="text-sm text-sand-400">No reasoning text captured.</p>
           )}
@@ -359,9 +389,7 @@ function ReasoningBlock({ reasoningText }: { reasoningText: string | null }) {
 function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
   const generate = entry.generate;
   const hasReasoning =
-    generate != null &&
-    ((generate.reasoningText != null && generate.reasoningText.length > 0) ||
-      (generate.reasoningTokens != null && generate.reasoningTokens > 0));
+    generate != null && generate.reasoningTokens != null && generate.reasoningTokens > 0;
   const errorCount = entry.toolCalls.filter((toolCall) => toolCall.error).length;
 
   return (
@@ -410,7 +438,7 @@ function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
               />
             </div>
 
-            {hasReasoning && <ReasoningBlock reasoningText={generate.reasoningText} />}
+            {hasReasoning && <ReasoningBlock stepId={generate.id} />}
           </div>
         )}
 
@@ -458,6 +486,7 @@ function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
     const group = ensureStep(step.step_index);
     if (step.type === "generate") {
       group.generate = {
+        id: step.id,
         stepIndex: step.step_index,
         inputTokens: step.input_tokens,
         outputTokens: step.output_tokens,
@@ -465,7 +494,6 @@ function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
         cacheCreationTokens: step.cache_creation_tokens,
         durationMs: step.duration_ms,
         finishReason: step.finish_reason,
-        reasoningText: step.reasoning_text,
         reasoningTokens: step.reasoning_tokens,
       };
       continue;
@@ -473,12 +501,11 @@ function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
 
     if (step.type === "tool_call") {
       group.toolCalls.push({
+        id: step.id,
         stepIndex: step.step_index,
         callIndex: step.tool_call_index ?? group.toolCalls.length,
         toolCallId: step.tool_call_id ?? "",
         toolName: step.tool_name ?? "",
-        args: safeParseJson(step.tool_args) as Record<string, unknown>,
-        result: safeParseJson(step.tool_result),
         durationMs: step.tool_duration_ms ?? 0,
         error: step.error,
       });
@@ -488,9 +515,9 @@ function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
   return [...grouped.values()]
     .map((step) => ({
       ...step,
-      toolCalls: step.toolCalls.sort((a, b) => a.callIndex - b.callIndex),
+      toolCalls: step.toolCalls.toSorted((a, b) => a.callIndex - b.callIndex),
     }))
-    .sort((a, b) => a.stepIndex - b.stepIndex);
+    .toSorted((a, b) => a.stepIndex - b.stepIndex);
 }
 
 type HistoryItem = {
@@ -562,7 +589,7 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
 
 function RequestDetail({ id }: { id: number }) {
   const { data, isLoading } = RequestLogService.useRequestLog("A", id);
-  const { data: stepsData } = RequestLogStepService.useRequestLogSteps("A", {
+  const { data: stepsData } = RequestLogStepService.useRequestLogSteps("T", {
     request_log_id: id,
     num: 0,
     page: 1,
@@ -630,6 +657,8 @@ function RequestDetail({ id }: { id: number }) {
       </Link>
 
       <HeaderBar data={data} />
+
+      {data.error_message && <ErrorPanel message={data.error_message} />}
 
       {hasHistory && <HistorySection history={history} />}
 
