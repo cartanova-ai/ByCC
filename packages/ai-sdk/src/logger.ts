@@ -46,7 +46,10 @@ function timedKeySet() {
       keys.add(k);
       const existing = timers.get(k);
       if (existing) clearTimeout(existing);
-      const t = setTimeout(() => { keys.delete(k); timers.delete(k); }, ttlMs);
+      const t = setTimeout(() => {
+        keys.delete(k);
+        timers.delete(k);
+      }, ttlMs);
       t.unref?.();
       timers.set(k, t);
     },
@@ -128,14 +131,18 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       const metadata = getRecord(record?.metadata);
       const qgridRunId = metadata?.qgridRunId;
       let runKey = DEFAULT_RUN_KEY;
-      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0)
+        runKey = `qgridRunId:${qgridRunId}`;
       else {
         const functionId = record?.functionId;
-        if (typeof functionId === "string" && functionId.length > 0) runKey = `functionId:${functionId}`;
+        if (typeof functionId === "string" && functionId.length > 0)
+          runKey = `functionId:${functionId}`;
       }
 
       if (quarantined.has(runKey)) {
-        config.onLogError?.(new Error("createQgridLogger: telemetry key is quarantined after overlap"));
+        config.onLogError?.(
+          new Error("createQgridLogger: telemetry key is quarantined after overlap"),
+        );
         return;
       }
 
@@ -145,7 +152,8 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       }
 
       if (runs.has(runKey)) {
-        const msg = "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
+        const msg =
+          "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
         await finalizeRun(runKey, { status: "error", errorMessage: msg });
         quarantined.add(runKey, keyTtl);
         config.onLogError?.(new Error(msg));
@@ -163,18 +171,24 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
 
         // watchdog timeout
         let watchdogTimeout = DEFAULT_STALE_RUN_TIMEOUT_MS;
-        if (typeof config.staleRunTimeoutMs === "number") watchdogTimeout = config.staleRunTimeoutMs;
-        else if (typeof event.timeout === "number" && event.timeout > 0) watchdogTimeout = event.timeout + STALE_RUN_GRACE_MS;
+        if (typeof config.staleRunTimeoutMs === "number")
+          watchdogTimeout = config.staleRunTimeoutMs;
+        else if (typeof event.timeout === "number" && event.timeout > 0)
+          watchdogTimeout = event.timeout + STALE_RUN_GRACE_MS;
         else {
           const rec = getRecord(event.timeout);
           const totalMs = rec?.totalMs;
-          if (typeof totalMs === "number" && totalMs > 0) watchdogTimeout = totalMs + STALE_RUN_GRACE_MS;
+          if (typeof totalMs === "number" && totalMs > 0)
+            watchdogTimeout = totalMs + STALE_RUN_GRACE_MS;
         }
 
         let watchdog: ReturnType<typeof setTimeout> | undefined;
         if (watchdogTimeout > 0) {
           watchdog = setTimeout(() => {
-            void finalizeRun(runKey, { status: "error", errorMessage: "AI SDK generation ended before onFinish was emitted" });
+            void finalizeRun(runKey, {
+              status: "error",
+              errorMessage: "AI SDK generation ended before onFinish was emitted",
+            });
           }, watchdogTimeout);
           watchdog.unref?.();
         }
@@ -184,7 +198,10 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
         const signal = event.abortSignal;
         if (signal) {
           const onAbort = () => {
-            void finalizeRun(runKey, { status: "aborted", errorMessage: getErrorMessage(signal.reason) });
+            void finalizeRun(runKey, {
+              status: "aborted",
+              errorMessage: getErrorMessage(signal.reason),
+            });
           };
           if (signal.aborted) queueMicrotask(onAbort);
           else {
@@ -194,9 +211,15 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
         }
 
         runs.set(runKey, {
-          requestLogId: result.requestLogId, pendingSteps: [], pendingToolCalls: [],
-          startTime: Date.now(), toolDurations: new Map(), history: serializeHistory(messages),
-          watchdog, cleanupAbortListener, finishing: false,
+          requestLogId: result.requestLogId,
+          pendingSteps: [],
+          pendingToolCalls: [],
+          startTime: Date.now(),
+          toolDurations: new Map(),
+          history: serializeHistory(messages),
+          watchdog,
+          cleanupAbortListener,
+          finishing: false,
         });
       } catch (e) {
         config.onLogError?.(e instanceof Error ? e : new Error(String(e)));
@@ -208,8 +231,12 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       const metadata = getRecord(record?.metadata);
       const qgridRunId = metadata?.qgridRunId;
       let runKey = DEFAULT_RUN_KEY;
-      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
-      else { const fid = record?.functionId; if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`; }
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0)
+        runKey = `qgridRunId:${qgridRunId}`;
+      else {
+        const fid = record?.functionId;
+        if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`;
+      }
 
       if (suppressedQgrid.has(runKey) || quarantined.has(runKey)) return;
       const run = runs.get(runKey);
@@ -225,8 +252,12 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       const metadata = getRecord(record?.metadata);
       const qgridRunId = metadata?.qgridRunId;
       let runKey = DEFAULT_RUN_KEY;
-      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
-      else { const fid = record?.functionId; if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`; }
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0)
+        runKey = `qgridRunId:${qgridRunId}`;
+      else {
+        const fid = record?.functionId;
+        if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`;
+      }
 
       if (suppressedQgrid.has(runKey) || quarantined.has(runKey)) return;
       const run = runs.get(runKey);
@@ -234,23 +265,48 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
 
       const stepNumber = (event as { stepNumber?: number }).stepNumber ?? 0;
       const usage = event.usage as {
-        inputTokens?: number; outputTokens?: number;
+        inputTokens?: number;
+        outputTokens?: number;
         inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
         outputTokenDetails?: { reasoningTokens?: number };
       };
-      const content = ((event as { content?: Array<{ type: string; toolCallId?: string; toolName?: string; input?: unknown; output?: unknown; error?: unknown; text?: string }> }).content ?? []);
+      const content =
+        (
+          event as {
+            content?: Array<{
+              type: string;
+              toolCallId?: string;
+              toolName?: string;
+              input?: unknown;
+              output?: unknown;
+              error?: unknown;
+              text?: string;
+            }>;
+          }
+        ).content ?? [];
 
       // reasoning
-      const reasoningParts = content.filter((p) => p.type === "reasoning") as Array<{ text?: string }>;
+      const reasoningParts = content.filter((p) => p.type === "reasoning") as Array<{
+        text?: string;
+      }>;
       const reasoningFromContent = reasoningParts.map((p) => p.text ?? "").join("");
       const reasoningRaw = (event as { reasoningText?: unknown }).reasoningText;
       const reasoningText =
-        typeof reasoningRaw === "string" && reasoningRaw.length > 0 ? reasoningRaw
-          : reasoningFromContent.length > 0 ? reasoningFromContent : undefined;
+        typeof reasoningRaw === "string" && reasoningRaw.length > 0
+          ? reasoningRaw
+          : reasoningFromContent.length > 0
+            ? reasoningFromContent
+            : undefined;
 
       // 이전 step의 pending tool-call 매칭
-      const toolResults = content.filter((p) => p.type === "tool-result") as Array<{ toolCallId: string; output: unknown }>;
-      const toolErrors = content.filter((p) => p.type === "tool-error") as Array<{ toolCallId: string; error: unknown }>;
+      const toolResults = content.filter((p) => p.type === "tool-result") as Array<{
+        toolCallId: string;
+        output: unknown;
+      }>;
+      const toolErrors = content.filter((p) => p.type === "tool-error") as Array<{
+        toolCallId: string;
+        error: unknown;
+      }>;
 
       const remainingPending: PendingToolCall[] = [];
       for (const pending of run.pendingToolCalls) {
@@ -259,9 +315,13 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
         if (tr || te) {
           run.pendingSteps.push(
             appendStep(config.serverUrl, {
-              requestLogId: run.requestLogId, stepIndex: pending.stepIndex, type: "tool_call",
-              toolCallIndex: pending.toolCallIndex, toolCallId: pending.toolCallId,
-              toolName: pending.toolName, toolArgs: pending.toolArgs,
+              requestLogId: run.requestLogId,
+              stepIndex: pending.stepIndex,
+              type: "tool_call",
+              toolCallIndex: pending.toolCallIndex,
+              toolCallId: pending.toolCallId,
+              toolName: pending.toolName,
+              toolArgs: pending.toolArgs,
               toolResult: tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(pending.toolCallId),
               error: te ? safeStringify(te.error) : undefined,
@@ -277,26 +337,40 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       // generate step
       run.pendingSteps.push(
         appendStep(config.serverUrl, {
-          requestLogId: run.requestLogId, stepIndex: stepNumber, type: "generate",
-          inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+          requestLogId: run.requestLogId,
+          stepIndex: stepNumber,
+          type: "generate",
+          inputTokens: usage.inputTokens ?? 0,
+          outputTokens: usage.outputTokens ?? 0,
           cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
           cacheCreationTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
           finishReason: event.finishReason as string,
-          reasoningText: typeof reasoningText === "string" && reasoningText.length > 0 ? reasoningText : undefined,
+          reasoningText:
+            typeof reasoningText === "string" && reasoningText.length > 0
+              ? reasoningText
+              : undefined,
           reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
         }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
       );
 
       // 이번 step의 새 tool-call
-      const toolCalls = content.filter((p) => p.type === "tool-call") as Array<{ toolCallId: string; toolName: string; input: unknown }>;
+      const toolCalls = content.filter((p) => p.type === "tool-call") as Array<{
+        toolCallId: string;
+        toolName: string;
+        input: unknown;
+      }>;
       for (const [i, tc] of toolCalls.entries()) {
         const tr = toolResults.find((r) => r.toolCallId === tc.toolCallId);
         const te = toolErrors.find((e) => e.toolCallId === tc.toolCallId);
         if (tr || te) {
           run.pendingSteps.push(
             appendStep(config.serverUrl, {
-              requestLogId: run.requestLogId, stepIndex: stepNumber, type: "tool_call",
-              toolCallIndex: i, toolCallId: tc.toolCallId, toolName: tc.toolName,
+              requestLogId: run.requestLogId,
+              stepIndex: stepNumber,
+              type: "tool_call",
+              toolCallIndex: i,
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
               toolArgs: safeStringify(tc.input),
               toolResult: tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(tc.toolCallId),
@@ -306,8 +380,11 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
           run.toolDurations.delete(tc.toolCallId);
         } else {
           run.pendingToolCalls.push({
-            stepIndex: stepNumber, toolCallIndex: i, toolCallId: tc.toolCallId,
-            toolName: tc.toolName, toolArgs: safeStringify(tc.input),
+            stepIndex: stepNumber,
+            toolCallIndex: i,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            toolArgs: safeStringify(tc.input),
           });
         }
       }
@@ -318,26 +395,47 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       const metadata = getRecord(record?.metadata);
       const qgridRunId = metadata?.qgridRunId;
       let runKey = DEFAULT_RUN_KEY;
-      if (typeof qgridRunId === "string" && qgridRunId.length > 0) runKey = `qgridRunId:${qgridRunId}`;
-      else { const fid = record?.functionId; if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`; }
+      if (typeof qgridRunId === "string" && qgridRunId.length > 0)
+        runKey = `qgridRunId:${qgridRunId}`;
+      else {
+        const fid = record?.functionId;
+        if (typeof fid === "string" && fid.length > 0) runKey = `functionId:${fid}`;
+      }
 
-      if (suppressedQgrid.has(runKey)) { suppressedQgrid.remove(runKey); return; }
+      if (suppressedQgrid.has(runKey)) {
+        suppressedQgrid.remove(runKey);
+        return;
+      }
       if (quarantined.has(runKey)) return;
 
       const run = runs.get(runKey);
       if (!run) return;
 
       const finishReason = event.finishReason as string;
-      const status = finishReason === "error" ? "error" as const
-        : finishReason === "abort" ? "aborted" as const : "succeeded" as const;
+      const status =
+        finishReason === "error"
+          ? ("error" as const)
+          : finishReason === "abort"
+            ? ("aborted" as const)
+            : ("succeeded" as const);
 
-      const totalUsage = (event as {
-        totalUsage?: { inputTokens?: number; outputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } };
-      }).totalUsage;
+      const totalUsage = (
+        event as {
+          totalUsage?: {
+            inputTokens?: number;
+            outputTokens?: number;
+            inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+          };
+        }
+      ).totalUsage;
 
       await finalizeRun(runKey, {
-        status, response: event.text, totalUsage,
-        ...(status === "error" ? { errorMessage: getErrorMessage((event as { error?: unknown }).error) } : {}),
+        status,
+        response: event.text,
+        totalUsage,
+        ...(status === "error"
+          ? { errorMessage: getErrorMessage((event as { error?: unknown }).error) }
+          : {}),
       });
     },
   };
