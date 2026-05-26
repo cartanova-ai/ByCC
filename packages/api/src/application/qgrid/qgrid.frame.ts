@@ -22,6 +22,12 @@ import {
   generatePKCE,
   refreshAccessToken,
 } from "./oauth";
+import {
+  afterQuery,
+  beforeQuery,
+  finishRunAborted,
+  finishRunWithError,
+} from "./qgrid-run-lifecycle";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type QueryInput,
@@ -35,12 +41,6 @@ import {
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
-import {
-  afterQuery,
-  beforeQuery,
-  finishRunAborted,
-  finishRunWithError,
-} from "./qgrid-run-lifecycle";
 
 const pendingStreams = new Map<string, QueryInput>();
 
@@ -162,14 +162,12 @@ class QgridFrameClass extends BaseFrameClass {
     const sse = ctx.createSSE(StreamEvents);
     let threadId: string | undefined;
     let turnId: string | undefined;
-    let completed = false;
+    let streamResult: QueryOutput | undefined;
+    let streamError: Error | undefined;
 
     sse.onClose(() => {
       if (threadId && turnId) {
         QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
-      }
-      if (!completed && runInfo) {
-        finishRunAborted(runInfo.requestLogId, args).catch(() => {});
       }
     });
 
@@ -190,36 +188,42 @@ class QgridFrameClass extends BaseFrameClass {
             QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
           }
         },
-        onComplete: async (result) => {
-          completed = true;
-          let runContext: { requestLogId: number } | undefined;
-          if (runInfo) {
-            try {
-              const lifecycle = await afterQuery(runInfo.requestLogId, runInfo.stepIndex, args, result as QueryOutput);
-              runContext = lifecycle.runContext;
-            } catch (e) {
-              logger.error(`stream afterQuery failed: ${(e as Error).message}`);
-            }
-          }
-          if (!sse.closed) sse.publish("done", { ...result, runContext });
+        onComplete: (result) => {
+          streamResult = result;
         },
-        onError: async (err) => {
-          completed = true;
-          if (runInfo) {
-            await finishRunWithError(runInfo.requestLogId, err.message, args);
-          }
-          if (!sse.closed) sse.publish("error", { message: err.message });
+        onError: (err) => {
+          streamError = err;
         },
       });
     } catch (e) {
-      completed = true;
-      if (runInfo) {
-        await finishRunWithError(runInfo.requestLogId, (e as Error).message, args);
-      }
-      if (!sse.closed) sse.publish("error", { message: (e as Error).message });
-    } finally {
-      await sse.end();
+      streamError = e as Error;
     }
+
+    // dispatcher 완료 후 lifecycle 처리 (await 안전)
+    if (streamResult) {
+      let runContext: { requestLogId: number } | undefined;
+      if (runInfo) {
+        try {
+          const lifecycle = await afterQuery(
+            runInfo.requestLogId,
+            runInfo.stepIndex,
+            args,
+            streamResult,
+          );
+          runContext = lifecycle.runContext;
+        } catch (e) {
+          logger.error(`stream afterQuery failed: ${(e as Error).message}`);
+        }
+      }
+      if (!sse.closed) sse.publish("done", { ...streamResult, runContext });
+    } else if (streamError) {
+      if (runInfo) await finishRunWithError(runInfo.requestLogId, streamError.message, args);
+      if (!sse.closed) sse.publish("error", { message: streamError.message });
+    } else if (sse.closed && runInfo) {
+      await finishRunAborted(runInfo.requestLogId, args);
+    }
+
+    await sse.end();
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })

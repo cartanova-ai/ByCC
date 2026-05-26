@@ -60,6 +60,7 @@ export type QueryOutput = {
   };
   durationMs: number;
   costUsd: number;
+  runContext?: { requestLogId: number };
 };
 
 export type CreateRunInput = {

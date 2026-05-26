@@ -10,7 +10,6 @@ const usage = {
 };
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -67,7 +66,7 @@ function sseDone(data: unknown) {
 }
 
 describe("qgrid AI SDK provider", () => {
-  it("passes tools to qgrid server and maps qgrid-native tool calls", async () => {
+  it("sends tools and maps tool-call response", async () => {
     let queryBody: unknown;
     vi.stubGlobal(
       "fetch",
@@ -91,36 +90,24 @@ describe("qgrid AI SDK provider", () => {
               usage,
               durationMs: 100,
               costUsd: 0.01,
+              runContext: { requestLogId: 1 },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
-        return new Response(JSON.stringify({ requestLogId: 1, stepId: 1, ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response("{}", { status: 200 });
       }),
     );
 
     const result = await qgrid("openai/gpt-5.5").doGenerate({
       prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
-      tools: [
-        {
-          type: "function",
-          name: "getWeather",
-          description: "Get weather",
-          inputSchema: {
-            type: "object",
-            properties: { city: { type: "string" } },
-            required: ["city"],
-          },
-        },
-      ],
+      tools: [tool()],
     } as never);
 
     expect(queryBody).toMatchObject({
       args: {
         prompt: "weather",
+        logMode: "run",
         tools: [{ name: "getWeather", description: "Get weather" }],
       },
     });
@@ -135,11 +122,8 @@ describe("qgrid AI SDK provider", () => {
     ]);
   });
 
-  it("finalizes previous run as error when sequential overlap arrives on same instance", async () => {
-    const calls: Array<{
-      url: string;
-      body: { input?: Record<string, unknown>; args?: Record<string, unknown> };
-    }> = [];
+  it("sends runContext and toolResults on tool-call follow-up", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     vi.stubGlobal(
       "fetch",
@@ -147,215 +131,113 @@ describe("qgrid AI SDK provider", () => {
         const body = JSON.parse(String(init?.body));
         calls.push({ url, body });
 
-        if (url.includes("/createRun")) {
-          return new Response(JSON.stringify({ requestLogId: 1 }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-
         if (url.includes("/query")) {
-          return new Response(
-            JSON.stringify({
-              text: "",
-              content: [
-                {
-                  type: "tool-call",
-                  toolCallId: "call_1",
-                  toolName: "getWeather",
-                  input: JSON.stringify({ city: "Seoul" }),
-                },
-              ],
-              finishReason: "tool-calls",
-              model: "gpt-5.5",
-              usage,
-              durationMs: 100,
-              costUsd: 0.01,
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        }
-
-        return new Response(JSON.stringify({ stepId: 1, ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }),
-    );
-
-    const model = qgrid("openai/gpt-5.5");
-    // first: tool-calls로 끝나므로 runState가 살아 있음
-    await model.doGenerate({
-      prompt: [{ role: "user", content: [{ type: "text", text: "first" }] }],
-      tools: [tool()],
-    } as never);
-
-    // second: follow-up이 아닌 새 호출 → runState !== null && !match → overlap
-    await model.doGenerate({
-      prompt: [{ role: "user", content: [{ type: "text", text: "second" }] }],
-      tools: [tool()],
-    } as never);
-
-    const finishRuns = calls.filter((c) => c.url.includes("/finishRun"));
-    expect(finishRuns).toHaveLength(1);
-    expect(finishRuns[0].body.input).toMatchObject({
-      status: "error",
-      errorMessage: expect.stringContaining("overlapping"),
-    });
-  });
-
-  it("logs only newly completed tool calls and stores final prompt history", async () => {
-    const calls: Array<{
-      url: string;
-      body: { input?: Record<string, unknown>; args?: Record<string, unknown> };
-    }> = [];
-    let queryCount = 0;
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
-        calls.push({ url, body });
-
-        if (url.includes("/createRun")) {
-          return new Response(JSON.stringify({ requestLogId: 1 }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-
-        if (url.includes("/query")) {
-          queryCount += 1;
-          const content =
-            queryCount === 1
-              ? [
+          const prompt = body.args.prompt as string;
+          if (prompt === "weather") {
+            return new Response(
+              JSON.stringify({
+                text: "",
+                content: [
                   {
                     type: "tool-call",
                     toolCallId: "call_1",
                     toolName: "getWeather",
-                    input: JSON.stringify({ city: "Seoul" }),
+                    input: '{"city":"Seoul"}',
                   },
-                ]
-              : queryCount === 2
-                ? [
-                    {
-                      type: "tool-call",
-                      toolCallId: "call_2",
-                      toolName: "getWeather",
-                      input: JSON.stringify({ city: "Busan" }),
-                    },
-                  ]
-                : [{ type: "text", text: "done" }];
+                ],
+                finishReason: "tool-calls",
+                model: "gpt-5.5",
+                usage,
+                durationMs: 100,
+                costUsd: 0.01,
+                runContext: { requestLogId: 42 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+          // follow-up (stop)
           return new Response(
             JSON.stringify({
-              text: queryCount === 3 ? "done" : "",
-              content,
-              finishReason: queryCount === 3 ? "stop" : "tool-calls",
+              text: "Seoul is 22°C",
+              content: [{ type: "text", text: "Seoul is 22°C" }],
+              finishReason: "stop",
               model: "gpt-5.5",
               usage,
-              durationMs: 100,
-              costUsd: 0.01,
+              durationMs: 80,
+              costUsd: 0.005,
             }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
-
-        return new Response(JSON.stringify({ stepId: 1, ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response("{}", { status: 200 });
       }),
     );
 
     const model = qgrid("openai/gpt-5.5");
+
+    // 턴 1: tool-calls
     await model.doGenerate({
       prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
       tools: [tool()],
     } as never);
-    await model.doGenerate({ prompt: toolPrompt(["call_1"]), tools: [tool()] } as never);
-    await model.doGenerate({ prompt: toolPrompt(["call_1", "call_2"]), tools: [tool()] } as never);
 
-    const toolCallIds = calls
-      .filter((c) => c.url.includes("/appendStep") && c.body.input?.type === "tool_call")
-      .map((c) => c.body.input?.toolCallId);
-    expect(toolCallIds).toEqual(["call_1", "call_2"]);
+    // 턴 2: follow-up with tool result
+    const result = await model.doGenerate({
+      prompt: toolPrompt(["call_1"]),
+      tools: [tool()],
+    } as never);
 
-    const finishRun = calls.find((c) => c.url.includes("/finishRun"));
-    expect(JSON.parse(String(finishRun?.body.input?.history))).toEqual([
-      { type: "message", role: "user", content: [{ type: "input_text", text: "weather" }] },
-    ]);
+    // follow-up 호출에 runContext + toolResults가 포함되어야 함
+    const followUpQuery = calls.filter((c) => c.url.includes("/query"))[1];
+    expect(followUpQuery?.body.args).toMatchObject({
+      logMode: "run",
+      runContext: { requestLogId: 42 },
+      toolResults: [{ toolCallId: "call_1" }],
+    });
+
+    // SDK는 직접 createRun/appendStep/finishRun 호출 안 함
+    expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
+    expect(calls.filter((c) => c.url.includes("/appendStep"))).toHaveLength(0);
+    expect(calls.filter((c) => c.url.includes("/finishRun"))).toHaveLength(0);
+
+    expect(result.content).toEqual([{ type: "text", text: "Seoul is 22°C" }]);
   });
 
-  it("finalizes a tool-call run when no follow-up step arrives before the stale timeout", async () => {
-    vi.useFakeTimers();
-    const calls: Array<{
-      url: string;
-      body: { input?: Record<string, unknown>; args?: Record<string, unknown> };
-    }> = [];
-
+  it("does not send logMode for non-tool doGenerate", async () => {
+    let queryBody: unknown;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
-        calls.push({ url, body });
-
-        if (url.includes("/createRun")) {
-          return new Response(JSON.stringify({ requestLogId: 1 }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-
         if (url.includes("/query")) {
+          queryBody = body;
           return new Response(
             JSON.stringify({
-              text: "",
-              content: [
-                {
-                  type: "tool-call",
-                  toolCallId: "call_1",
-                  toolName: "getWeather",
-                  input: JSON.stringify({ city: "Seoul" }),
-                },
-              ],
-              finishReason: "tool-calls",
+              text: "hello",
+              content: [{ type: "text", text: "hello" }],
+              finishReason: "stop",
               model: "gpt-5.5",
               usage,
-              durationMs: 100,
-              costUsd: 0.01,
+              durationMs: 50,
+              costUsd: 0.001,
             }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
-
-        return new Response(JSON.stringify({ stepId: 1, ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response("{}", { status: 200 });
       }),
     );
 
     await qgrid("openai/gpt-5.5").doGenerate({
-      prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
-      tools: [tool()],
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
     } as never);
 
-    // hardcoded 30분 timer
-    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
-
-    const finishRun = calls.find((c) => c.url.includes("/finishRun"));
-    expect(finishRun?.body.input).toMatchObject({
-      requestLogId: 1,
-      status: "error",
-      errorMessage: expect.stringContaining("no follow-up"),
-    });
+    // logMode가 없어야 함 (서버 auto 경로)
+    expect((queryBody as Record<string, unknown>).args).not.toHaveProperty("logMode");
   });
 
-  it("logs non-tool streams through the wrapper lifecycle", async () => {
-    const calls: Array<{
-      url: string;
-      body: { input?: Record<string, unknown>; args?: Record<string, unknown> };
-    }> = [];
+  it("sends logMode:'run' for all doStream calls", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     vi.stubGlobal(
       "fetch",
@@ -363,14 +245,8 @@ describe("qgrid AI SDK provider", () => {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         calls.push({ url, body });
 
-        if (url.includes("/createRun")) {
-          return new Response(JSON.stringify({ requestLogId: 1 }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
         if (url.includes("/prepareStream")) {
-          return new Response(JSON.stringify({ streamId: "stream-1" }), {
+          return new Response(JSON.stringify({ streamId: "s1" }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
@@ -378,8 +254,8 @@ describe("qgrid AI SDK provider", () => {
         if (url.includes("/queryStream")) {
           return new Response(
             sseDone({
-              text: "stream done",
-              content: [{ type: "text", text: "stream done" }],
+              text: "streamed",
+              content: [{ type: "text", text: "streamed" }],
               finishReason: "stop",
               model: "gpt-5.5",
               usage,
@@ -389,10 +265,7 @@ describe("qgrid AI SDK provider", () => {
             { status: 200 },
           );
         }
-        return new Response(JSON.stringify({ stepId: 1, ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response("{}", { status: 200 });
       }),
     );
 
@@ -400,17 +273,66 @@ describe("qgrid AI SDK provider", () => {
       prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     } as never);
     for await (const _part of result.stream) {
-      // drain stream
+      // drain
     }
 
-    const createRun = calls.find((c) => c.url.includes("/createRun"));
-    expect(createRun?.body.input).toMatchObject({ userPrompt: "hello" });
+    const prepareCall = calls.find((c) => c.url.includes("/prepareStream"));
+    expect(prepareCall?.body.args).toMatchObject({ logMode: "run" });
 
-    const finishRun = calls.find((c) => c.url.includes("/finishRun"));
-    expect(finishRun?.body.input).toMatchObject({
-      requestLogId: 1,
-      status: "succeeded",
-      response: "stream done",
-    });
+    // SDK는 직접 lifecycle 호출 안 함
+    expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
+    expect(calls.filter((c) => c.url.includes("/finishRun"))).toHaveLength(0);
+  });
+
+  it("clears client run state when prompt does not match pending tool calls", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        calls.push({ url, body });
+
+        if (url.includes("/query")) {
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call_1",
+                  toolName: "getWeather",
+                  input: '{"city":"Seoul"}',
+                },
+              ],
+              finishReason: "tool-calls",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0.01,
+              runContext: { requestLogId: 1 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const model = qgrid("openai/gpt-5.5");
+    await model.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
+      tools: [tool()],
+    } as never);
+
+    // 다른 prompt로 호출 (tool result 없음) → overlap, runContext 안 보냄
+    await model.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "different" }] }],
+      tools: [tool()],
+    } as never);
+
+    const secondQuery = calls.filter((c) => c.url.includes("/query"))[1];
+    expect(secondQuery?.body.args).not.toHaveProperty("runContext");
+    expect(secondQuery?.body.args).toMatchObject({ logMode: "run" });
   });
 });
