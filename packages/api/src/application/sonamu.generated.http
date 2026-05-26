@@ -224,7 +224,19 @@ Content-Type: application/json
     "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
-    "isStep": false
+    "isStep": false,
+    "logMode": "auto",
+    "runContext": {
+      "requestLogId": 0
+    },
+    "toolResults": [
+      {
+        "toolCallId": "TOOLCALLID",
+        "toolName": "TOOLNAME",
+        "output": "OUTPUT",
+        "isError": false
+      }
+    ]
   }
 }
 
@@ -253,7 +265,19 @@ Content-Type: application/json
     "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
-    "isStep": false
+    "isStep": false,
+    "logMode": "auto",
+    "runContext": {
+      "requestLogId": 0
+    },
+    "toolResults": [
+      {
+        "toolCallId": "TOOLCALLID",
+        "toolName": "TOOLNAME",
+        "output": "OUTPUT",
+        "isError": false
+      }
+    ]
   }
 }
 

@@ -35,6 +35,12 @@ import {
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
+import {
+  afterQuery,
+  beforeQuery,
+  finishRunAborted,
+  finishRunWithError,
+} from "./qgrid-run-lifecycle";
 
 const pendingStreams = new Map<string, QueryInput>();
 
@@ -76,14 +82,31 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
-    const result = await QgridDispatcher.query(args, args.timeout);
-    const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
-    const responseText = result.content
-      .filter((item) => item.type === "text")
-      .map((item) => item.text)
-      .join("\n");
+    const effectiveLogMode = args.logMode ?? (args.isStep ? "run" : "auto");
 
-    if (!args.isStep) {
+    // logMode: "run" → 서버가 lifecycle 관리
+    if (effectiveLogMode === "run") {
+      const { requestLogId, stepIndex } = await beforeQuery(args);
+      try {
+        const result = await QgridDispatcher.query(args, args.timeout);
+        const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
+        return { ...result, runContext: lifecycle.runContext };
+      } catch (e) {
+        await finishRunWithError(requestLogId, (e as Error).message, args);
+        throw e;
+      }
+    }
+
+    // logMode: "auto" (기존 non-step 경로) 또는 "none"
+    const result = await QgridDispatcher.query(args, args.timeout);
+
+    if (effectiveLogMode === "auto") {
+      const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
+      const responseText = result.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join("\n");
+
       RequestLogModel.save([
         {
           token_name: result.tokenName,
@@ -123,14 +146,30 @@ class QgridFrameClass extends BaseFrameClass {
     pendingStreams.delete(streamId);
     if (!args) throw new Error("invalid or expired streamId");
 
+    const effectiveLogMode = args.logMode ?? (args.isStep ? "run" : "auto");
+    const shouldLog = effectiveLogMode === "run";
+
+    let runInfo: { requestLogId: number; stepIndex: number } | undefined;
+    if (shouldLog) {
+      try {
+        runInfo = await beforeQuery(args);
+      } catch (e) {
+        logger.error(`stream beforeQuery failed: ${(e as Error).message}`);
+      }
+    }
+
     const ctx = Sonamu.getContext();
     const sse = ctx.createSSE(StreamEvents);
     let threadId: string | undefined;
     let turnId: string | undefined;
+    let completed = false;
 
     sse.onClose(() => {
       if (threadId && turnId) {
         QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
+      }
+      if (!completed && runInfo) {
+        finishRunAborted(runInfo.requestLogId, args).catch(() => {});
       }
     });
 
@@ -151,14 +190,32 @@ class QgridFrameClass extends BaseFrameClass {
             QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
           }
         },
-        onComplete: (result) => {
-          if (!sse.closed) sse.publish("done", result);
+        onComplete: async (result) => {
+          completed = true;
+          let runContext: { requestLogId: number } | undefined;
+          if (runInfo) {
+            try {
+              const lifecycle = await afterQuery(runInfo.requestLogId, runInfo.stepIndex, args, result as QueryOutput);
+              runContext = lifecycle.runContext;
+            } catch (e) {
+              logger.error(`stream afterQuery failed: ${(e as Error).message}`);
+            }
+          }
+          if (!sse.closed) sse.publish("done", { ...result, runContext });
         },
-        onError: (err) => {
+        onError: async (err) => {
+          completed = true;
+          if (runInfo) {
+            await finishRunWithError(runInfo.requestLogId, err.message, args);
+          }
           if (!sse.closed) sse.publish("error", { message: err.message });
         },
       });
     } catch (e) {
+      completed = true;
+      if (runInfo) {
+        await finishRunWithError(runInfo.requestLogId, (e as Error).message, args);
+      }
       if (!sse.closed) sse.publish("error", { message: (e as Error).message });
     } finally {
       await sse.end();

@@ -256,6 +256,75 @@ class RequestLogModelClass extends BaseModelClass<
     });
   }
 
+  async aggregateStepUsage(requestLogId: number): Promise<{
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    duration_ms: number;
+  }> {
+    const db = this.getDB("r");
+    const [row] = await db("request_log_steps")
+      .where("request_log_id", requestLogId)
+      .where("type", "generate")
+      .sum({
+        input_tokens: "input_tokens",
+        output_tokens: "output_tokens",
+        cache_read_tokens: "cache_read_tokens",
+        cache_creation_tokens: "cache_creation_tokens",
+        duration_ms: "duration_ms",
+      });
+    return {
+      input_tokens: Number(row?.input_tokens ?? 0),
+      output_tokens: Number(row?.output_tokens ?? 0),
+      cache_read_tokens: Number(row?.cache_read_tokens ?? 0),
+      cache_creation_tokens: Number(row?.cache_creation_tokens ?? 0),
+      duration_ms: Number(row?.duration_ms ?? 0),
+    };
+  }
+
+  async findStaleRunningIds(thresholdMs: number, limit = 10): Promise<number[]> {
+    const db = this.getDB("r");
+    const threshold = new Date(Date.now() - thresholdMs);
+    const rows = await db("request_logs")
+      .select("id")
+      .where("status", "running")
+      .where("created_at", "<", threshold)
+      .limit(limit);
+    return rows.map((r: { id: number }) => r.id);
+  }
+
+  async getNextStepIndex(requestLogId: number): Promise<number> {
+    const db = this.getDB("r");
+    const [row] = await db("request_log_steps")
+      .where("request_log_id", requestLogId)
+      .max("step_index as maxStep");
+    return ((row as { maxStep: number | null })?.maxStep ?? -1) + 1;
+  }
+
+  async completeToolCall(
+    requestLogId: number,
+    toolCallId: string,
+    params: { tool_result?: string; tool_duration_ms?: number; error?: string },
+  ): Promise<number> {
+    const wdb = this.getPuri("w");
+    return wdb.transaction(async (trx) => {
+      const updated = await trx
+        .from("request_log_steps")
+        .where("request_log_id", requestLogId)
+        .where("tool_call_id", toolCallId)
+        .where("type", "tool_call")
+        .update({
+          ...(params.tool_result !== undefined ? { tool_result: params.tool_result } : {}),
+          ...(params.tool_duration_ms !== undefined
+            ? { tool_duration_ms: params.tool_duration_ms }
+            : {}),
+          ...(params.error !== undefined ? { error: params.error } : {}),
+        });
+      return updated;
+    });
+  }
+
   // Sonamu findMany는 subset 전체 컬럼(text 포함)을 페치해서 aggregate엔 너무 무거움 → raw sum 사용.
   async totalCost(params: { token_name?: string } = {}): Promise<number> {
     const qb = this.getDB("r")("request_logs");

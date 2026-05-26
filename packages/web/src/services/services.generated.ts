@@ -513,6 +513,9 @@ export namespace QgridService {
                 toolName: string;
                 input: string;
               }[];
+          runContext?: {
+            requestLogId: number;
+          };
         };
         error: {
           message: string;
@@ -554,6 +557,9 @@ export namespace QgridService {
               toolName: string;
               input: string;
             }[];
+        runContext?: {
+          requestLogId: number;
+        };
       };
       error: {
         message: string;

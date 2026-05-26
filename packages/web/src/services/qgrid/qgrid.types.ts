@@ -43,6 +43,24 @@ export type ReasoningSummary = z.infer<typeof ReasoningSummary>;
 export const ServiceTier = z.enum(["fast", "flex"]);
 export type ServiceTier = z.infer<typeof ServiceTier>;
 
+// ─── Run Lifecycle Context (SDK ↔ Server contract) ───
+
+export const QgridLogMode = z.enum(["auto", "run", "none"]);
+export type QgridLogMode = z.infer<typeof QgridLogMode>;
+
+export const QgridRunContext = z.object({
+  requestLogId: z.number(),
+});
+export type QgridRunContext = z.infer<typeof QgridRunContext>;
+
+export const QgridToolResultInput = z.object({
+  toolCallId: z.string(),
+  toolName: z.string().optional(),
+  output: z.string(),
+  isError: z.boolean().optional(),
+});
+export type QgridToolResultInput = z.infer<typeof QgridToolResultInput>;
+
 export const QueryInput = z.object({
   system: z.string().optional(),
   prompt: z.string(),
@@ -57,6 +75,9 @@ export const QueryInput = z.object({
   history: z.string().optional(),
   projectName: z.string().optional(),
   isStep: z.boolean().optional(),
+  logMode: QgridLogMode.optional(),
+  runContext: QgridRunContext.optional(),
+  toolResults: z.array(QgridToolResultInput).optional(),
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 
@@ -74,6 +95,7 @@ export const QueryOutput = z.object({
   }),
   durationMs: z.number(),
   costUsd: z.number(),
+  runContext: QgridRunContext.optional(),
 });
 export type QueryOutput = z.infer<typeof QueryOutput>;
 
@@ -100,6 +122,7 @@ export const StreamEvents = z.object({
     durationMs: z.number(),
     costUsd: z.number(),
     content: z.array(QgridContent),
+    runContext: QgridRunContext.optional(),
   }),
   error: z.object({ message: z.string() }),
 });
