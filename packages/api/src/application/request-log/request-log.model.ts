@@ -283,7 +283,7 @@ class RequestLogModelClass extends BaseModelClass<
     };
   }
 
-  async findStaleRunningIds(thresholdMs: number, limit = 10): Promise<number[]> {
+  async findStaleRunningIds(thresholdMs: number, limit: number = 10): Promise<number[]> {
     const db = this.getDB("r");
     const threshold = new Date(Date.now() - thresholdMs);
     const rows = await db("request_logs")

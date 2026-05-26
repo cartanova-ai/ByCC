@@ -11,7 +11,10 @@ import {
 const logger = getLogger(["qgrid", "run-lifecycle"]);
 const STALE_RUN_THRESHOLD_MS = 30 * 60 * 1000;
 
-function filterHistoryForStorage(rawHistory: string | undefined): unknown | undefined {
+/**
+ * history는 원본 그대로 저장하기보다는, run 분석에 필요한 user/assistant 정보만 필터링해서 저장
+ */
+function filterHistoryForStorage(rawHistory: string | undefined): unknown {
   if (!rawHistory) return undefined;
   try {
     const items = JSON.parse(rawHistory) as unknown[];
@@ -136,10 +139,7 @@ export async function finishRunWithError(
   }
 }
 
-export async function finishRunAborted(
-  requestLogId: number,
-  args?: QueryInput,
-): Promise<void> {
+export async function finishRunAborted(requestLogId: number, args?: QueryInput): Promise<void> {
   try {
     await RequestLogModel.finishRun(requestLogId, {
       status: "aborted",
