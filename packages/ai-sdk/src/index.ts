@@ -54,6 +54,18 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
       const serviceTier = openaiOpts?.serviceTier as string | undefined;
 
+      // top-level이 object인지 검사, 아니면 무시 (SDK 방어로직)
+      const rawSchema =
+        options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
+      const schemaType = rawSchema ? (rawSchema as { type?: string }).type : undefined;
+      if (rawSchema && !hasTools && schemaType !== "object") {
+        console.warn(
+          `[qgrid] responseFormat.schema top-level type is "${schemaType ?? "unknown"}". OpenAI structured output requires "object". Falling back to client-side parsing.`,
+        );
+      }
+      const jsonSchema =
+        !hasTools && rawSchema && schemaType === "object" ? JSON.stringify(rawSchema) : undefined;
+
       // follow-up 판단 + toolResults 구성
       let runContext: { requestLogId: number } | undefined;
       let toolResultsPayload:
@@ -97,6 +109,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(reasoningSummary ? { reasoningSummary } : {}),
             ...(serviceTier ? { serviceTier } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
+            ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
             ...(logMode ? { logMode } : {}),
             ...(runContext ? { runContext } : {}),
@@ -191,6 +204,13 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
       const serviceTier = openaiOpts?.serviceTier as string | undefined;
 
+      const rawSchema =
+        options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
+      const jsonSchema =
+        !hasTools && rawSchema && (rawSchema as { type?: string }).type === "object"
+          ? JSON.stringify(rawSchema)
+          : undefined;
+
       // follow-up 판단
       let runContext: { requestLogId: number } | undefined;
       let toolResultsPayload:
@@ -229,6 +249,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(reasoningSummary ? { reasoningSummary } : {}),
             ...(serviceTier ? { serviceTier } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
+            ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
             logMode: "run",
             ...(runContext ? { runContext } : {}),
