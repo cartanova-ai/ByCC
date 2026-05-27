@@ -4,16 +4,20 @@ export type QgridProviderConfig = {
 };
 
 /**
- * qgrid OpenAI provider options.
+ * codex app-server가 지원하는 OpenAI provider options.
  *
- * codex app-server에서 처리 가능한 옵션들만 정의
- * https://ai-sdk.dev/providers/ai-sdk-providers/openai#provider-options
+ * AI SDK의 openai provider options 중 codex가 처리할 수 있는 subset만 정의.
+ * 여기에 없는 옵션(temperature, maxOutputTokens 등)은 codex가 무시합니다.
+ *
+ * @see https://ai-sdk.dev/providers/ai-sdk-providers/openai#provider-options
  */
 type QgridOpenAIProviderOptions = {
+  /** reasoning 모델의 추론 깊이. 기본값은 qgrid config의 defaultEffort. */
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  /** reasoning 모델의 추론 요약 출력 방식. Responses API 전용. */
   reasoningSummary?: "auto" | "concise" | "detailed" | "none";
+  /** 응답 텍스트의 상세도. */
   textVerbosity?: "low" | "medium" | "high";
-  serviceTier?: "fast";
 };
 
 /**

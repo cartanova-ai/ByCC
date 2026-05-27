@@ -52,7 +52,6 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
       const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
       const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
-      const serviceTier = openaiOpts?.serviceTier as string | undefined;
 
       // top-level이 object인지 검사, 아니면 무시 (SDK 방어로직)
       const rawSchema =
@@ -107,7 +106,6 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             effort: effectiveEffort,
             ...(verbosity ? { verbosity } : {}),
             ...(reasoningSummary ? { reasoningSummary } : {}),
-            ...(serviceTier ? { serviceTier } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
@@ -202,7 +200,6 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
       const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
       const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
-      const serviceTier = openaiOpts?.serviceTier as string | undefined;
 
       const rawSchema =
         options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
@@ -247,7 +244,6 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             effort: effectiveEffort,
             ...(verbosity ? { verbosity } : {}),
             ...(reasoningSummary ? { reasoningSummary } : {}),
-            ...(serviceTier ? { serviceTier } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
