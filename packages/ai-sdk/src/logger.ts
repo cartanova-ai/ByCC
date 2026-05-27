@@ -124,6 +124,8 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
     }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e))));
   };
 
+  let autoRunIdCounter = 0;
+
   const resolveRunKey = (event: {
     metadata?: Record<string, unknown>;
     functionId?: string;
@@ -135,8 +137,13 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
     return DEFAULT_RUN_KEY;
   };
 
-  return {
+  const integration: TelemetryIntegration = {
     async onStart(event) {
+      // qgridRunId/functionId가 없으면 자동 생성 → 병렬 호출 시 run 자동 분리
+      // metadata 객체 참조가 같은 generation의 모든 hook에서 공유되므로 이후 hook에서도 동일 key
+      if (!event.metadata?.qgridRunId && !event.functionId && event.metadata) {
+        event.metadata.qgridRunId = `auto-${++autoRunIdCounter}`;
+      }
       const runKey = resolveRunKey(event);
       if (quarantined.has(runKey)) {
         config.onLogError?.(
