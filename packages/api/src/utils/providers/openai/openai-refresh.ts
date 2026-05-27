@@ -15,8 +15,10 @@ const logger = getLogger(["qgrid", "openai-refresh"]);
 
 import { OPENAI_CLIENT_ID, OPENAI_TOKEN_URL } from "./openai-constants";
 
-// per-token inflight promise dedup
+// per-token inflight promise dedup + minimum interval
 const inflightRefresh = new Map<number, Promise<RefreshResult>>();
+const lastRefreshTime = new Map<number, number>();
+const REFRESH_MIN_INTERVAL_MS = 5_000;
 
 interface RefreshResult {
   accessToken: string;
@@ -31,6 +33,13 @@ export async function handleChatgptAuthTokensRefresh(tokenId: number): Promise<R
     return existing;
   }
 
+  const lastAt = lastRefreshTime.get(tokenId) ?? 0;
+  if (Date.now() - lastAt < REFRESH_MIN_INTERVAL_MS) {
+    logger.info(`refresh too soon for token ${tokenId}, reading current creds from DB`);
+    return readCurrentCreds(tokenId);
+  }
+
+  lastRefreshTime.set(tokenId, Date.now());
   const promise = doRefresh(tokenId);
   inflightRefresh.set(tokenId, promise);
 
@@ -39,6 +48,17 @@ export async function handleChatgptAuthTokensRefresh(tokenId: number): Promise<R
   } finally {
     inflightRefresh.delete(tokenId);
   }
+}
+
+async function readCurrentCreds(tokenId: number): Promise<RefreshResult> {
+  const token = await TokenModel.findOne("A", { id: tokenId });
+  if (!token || token.provider !== "openai") throw new Error(`token ${tokenId} not found`);
+  const creds = token.credentials as OpenAICredentials;
+  return {
+    accessToken: creds.accessToken,
+    chatgptAccountId: creds.accountId,
+    chatgptPlanType: creds.planType,
+  };
 }
 
 async function doRefresh(tokenId: number): Promise<RefreshResult> {
