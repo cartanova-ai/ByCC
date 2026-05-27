@@ -1,4 +1,4 @@
-import { type TelemetryIntegration } from "ai";
+import { type TelemetryIntegration, type TelemetrySettings } from "ai";
 
 import { type QgridLoggerConfig } from "./index.types";
 import {
@@ -62,7 +62,7 @@ function timedKeySet() {
   };
 }
 
-export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegration {
+export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings {
   const runs = new Map<string, RunState>();
   const keyTtl =
     typeof config.staleRunTimeoutMs === "number" && config.staleRunTimeoutMs > 0
@@ -359,4 +359,6 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetryIntegrati
       });
     },
   };
+
+  return { isEnabled: true, integrations: [integration] };
 }

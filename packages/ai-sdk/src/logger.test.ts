@@ -1,8 +1,19 @@
+import { type TelemetryIntegration } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createQgridLogger } from "./logger";
 
 const SERVER = "http://localhost:44900";
+
+function getIntegration(config: Parameters<typeof createQgridLogger>[0]): TelemetryIntegration {
+  const settings = createQgridLogger(config);
+  const integrations = Array.isArray(settings.integrations)
+    ? settings.integrations
+    : settings.integrations
+      ? [settings.integrations]
+      : [];
+  return integrations[0]!;
+}
 
 type FetchCall = { url: string; body: { input: Record<string, unknown> } };
 
@@ -37,7 +48,7 @@ afterEach(() => {
 describe("createQgridLogger", () => {
   it("logs simple text generation (no tools)", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER, projectName: "test" });
+    const logger = getIntegration({ serverUrl: SERVER, projectName: "test" });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -86,7 +97,7 @@ describe("createQgridLogger", () => {
 
   it("logs tool calling multi-step", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -149,7 +160,7 @@ describe("createQgridLogger", () => {
 
   it("logs step reasoning text and token usage when provided", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
 
     await logger.onStart!({
       model: { provider: "openai", modelId: "gpt-5.4" },
@@ -186,7 +197,7 @@ describe("createQgridLogger", () => {
 
   it("handles error — finishRun with status error", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -209,7 +220,7 @@ describe("createQgridLogger", () => {
 
   it("skips when model.provider is qgrid", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
 
     await logger.onStart!({
       model: { provider: "qgrid", modelId: "openai/gpt-5.4" },
@@ -241,7 +252,7 @@ describe("createQgridLogger", () => {
       }),
     );
 
-    const logger = createQgridLogger({
+    const logger = getIntegration({
       serverUrl: SERVER,
       onLogError: (err) => errors.push(err),
     });
@@ -270,7 +281,7 @@ describe("createQgridLogger", () => {
 
   it("uses messages array for prompt extraction", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
     const messages = [
       { role: "user", content: [{ type: "text", text: "first message" }] },
       { role: "assistant", content: [{ type: "text", text: "response" }] },
@@ -302,7 +313,7 @@ describe("createQgridLogger", () => {
 
   it("filters tool calls and tool results from history (user/assistant only)", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
     const messages = [
       { role: "system", content: "you are helpful" },
       { role: "user", content: [{ type: "text", text: "hi" }] },
@@ -338,7 +349,7 @@ describe("createQgridLogger", () => {
 
   it("keeps unmatched pending tool calls until a later step or finish", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -384,7 +395,7 @@ describe("createQgridLogger", () => {
 
   it("separates overlapping runs by metadata qgridRunId", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER });
+    const logger = getIntegration({ serverUrl: SERVER });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -420,7 +431,7 @@ describe("createQgridLogger", () => {
   it("closes the active run and quarantines when telemetry keys overlap", async () => {
     const calls = mockFetch();
     const errors: Error[] = [];
-    const logger = createQgridLogger({
+    const logger = getIntegration({
       serverUrl: SERVER,
       onLogError: (err) => errors.push(err),
     });
@@ -459,7 +470,7 @@ describe("createQgridLogger", () => {
   it("marks runs as error when onFinish is never emitted", async () => {
     vi.useFakeTimers();
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER, staleRunTimeoutMs: 100 });
+    const logger = getIntegration({ serverUrl: SERVER, staleRunTimeoutMs: 100 });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -478,7 +489,7 @@ describe("createQgridLogger", () => {
   it("marks runs as aborted when the AI SDK abort signal fires", async () => {
     const calls = mockFetch();
     const abortController = new AbortController();
-    const logger = createQgridLogger({ serverUrl: SERVER, staleRunTimeoutMs: 0 });
+    const logger = getIntegration({ serverUrl: SERVER, staleRunTimeoutMs: 0 });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
@@ -499,7 +510,7 @@ describe("createQgridLogger", () => {
   it("expires suppressed qgrid runs when their finish event never arrives", async () => {
     vi.useFakeTimers();
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER, staleRunTimeoutMs: 100 });
+    const logger = getIntegration({ serverUrl: SERVER, staleRunTimeoutMs: 100 });
 
     await logger.onStart!({
       model: { provider: "qgrid", modelId: "openai/gpt-5.4" },
@@ -526,7 +537,7 @@ describe("createQgridLogger", () => {
 
   it("uses custom tokenName from config", async () => {
     const calls = mockFetch();
-    const logger = createQgridLogger({ serverUrl: SERVER, tokenName: "...abc1" });
+    const logger = getIntegration({ serverUrl: SERVER, tokenName: "...abc1" });
 
     await logger.onStart!({
       model: { provider: "google", modelId: "gemini-3-flash" },
