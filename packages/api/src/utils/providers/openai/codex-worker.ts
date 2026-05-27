@@ -24,6 +24,7 @@ export interface WorkerConfig {
   accessToken: string;
   accountId: string;
   planType?: string;
+  workerIndex?: number;
 }
 
 export interface TurnRequest {
@@ -78,9 +79,11 @@ export class CodexAppServerWorker {
   private destroyed = false;
   private busy = false;
   active = true;
+  onReady?: () => void;
 
   constructor(private config: WorkerConfig) {
-    this.codexHome = `/tmp/qgrid-codex/${config.tokenId}`;
+    const suffix = config.workerIndex !== undefined ? `-${config.workerIndex}` : "";
+    this.codexHome = `/tmp/qgrid-codex/${config.tokenId}${suffix}`;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
@@ -239,7 +242,7 @@ export class CodexAppServerWorker {
     return !this.busy;
   }
 
-  private async startThread(
+  async startThread(
     req: TurnRequest,
   ): Promise<{ threadId: string; turnId: string; model: string }> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
@@ -446,17 +449,21 @@ export class CodexAppServerWorker {
     }
 
     this.restartAttempts++;
-    const delay = RESTART_BACKOFF_BASE_MS * 2 ** (this.restartAttempts - 1);
+    const baseDelay = RESTART_BACKOFF_BASE_MS * 2 ** (this.restartAttempts - 1);
+    const stagger = (this.config.workerIndex ?? 0) * 2_000;
+    const delay = baseDelay + stagger;
     logger.info(
-      `worker ${this.config.tokenName} restarting in ${delay}ms (attempt ${this.restartAttempts})`,
+      `worker ${this.config.tokenName}[${this.config.workerIndex ?? 0}] restarting in ${delay}ms (attempt ${this.restartAttempts})`,
     );
 
     setTimeout(() => {
       if (this.destroyed) return;
-      this.initialize().catch((e) => {
-        logger.warn(`worker ${this.config.tokenName} restart failed: ${(e as Error).message}`);
-        this.scheduleRestart();
-      });
+      this.initialize()
+        .then(() => this.onReady?.())
+        .catch((e) => {
+          logger.warn(`worker ${this.config.tokenName} restart failed: ${(e as Error).message}`);
+          this.scheduleRestart();
+        });
     }, delay);
   }
 }

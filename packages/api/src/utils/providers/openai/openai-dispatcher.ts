@@ -1,10 +1,10 @@
 /**
  * OpenAIDispatcher — codex app-server worker pool + 토큰 라우팅.
  *
- * - 토큰당 1 worker (CodexAppServerWorker)
- * - RoundRobinPicker + saturation skip (α 패턴)
+ * - 토큰당 N worker (CodexAppServerWorker), 기본 3
+ * - idle worker round-robin 선택 + 큐 대기 (전부 busy 시)
  * - TokenSubscriber 이벤트로 worker pool 동기화
- * - backpressure: 503 SERVER_BUSY
+ * - backpressure: 큐 full 또는 timeout 시 SERVER_BUSY
  */
 import { getLogger } from "@logtape/logtape";
 
@@ -15,7 +15,6 @@ import {
   type GenerateResult,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
-import { RoundRobinPicker } from "../common/token-picker";
 import {
   CodexAppServerWorker,
   type StreamCallbacks,
@@ -27,29 +26,49 @@ import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
 
 const DEFAULT_EFFORT = "low";
+const MAX_WORKERS_PER_TOKEN = 5;
+const WORKERS_PER_TOKEN = Math.min(
+  Number(process.env.QGRID_WORKERS_PER_TOKEN ?? 3),
+  MAX_WORKERS_PER_TOKEN,
+);
+const QUEUE_TIMEOUT_MS = 60_000;
+const MAX_QUEUE_SIZE = 50;
+const SPAWN_INTERVAL_MS = 500;
 
-type WorkerCandidate = { id: number; worker: CodexAppServerWorker };
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type QueueItem = {
+  resolve: (worker: CodexAppServerWorker) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+  abortCleanup?: () => void;
+};
 
 export class OpenAIDispatcher implements ProviderDispatcher {
-  private workerPool = new Map<number, CodexAppServerWorker>();
-  private picker = new RoundRobinPicker<WorkerCandidate>();
+  workerPool = new Map<number, CodexAppServerWorker[]>();
+  rrCursor = 0;
+  queue: QueueItem[] = [];
 
-  // 비활성 토큰도 worker를 띄움 (usage 조회용). query 라우팅에서만 active 필터.
   async start(): Promise<void> {
     const { rows } = await TokenModel.findMany("A");
     const openaiTokens = rows.filter((t) => t.provider === "openai");
-    logger.info(`starting ${openaiTokens.length} openai workers`);
+    logger.info(
+      `starting ${openaiTokens.length} openai tokens (${WORKERS_PER_TOKEN} workers each)`,
+    );
 
     await Promise.allSettled(
       openaiTokens.map(async (t) => {
-        await this.spawnWorker(t.id, t.name, t.credentials as OpenAICredentials);
+        await this.spawnWorkers(t.id, t.name, t.credentials as OpenAICredentials);
         if (!t.active) this.onTokenDeactivated(t.id);
       }),
     );
   }
 
   async stop(): Promise<void> {
-    const kills = [...this.workerPool.values()].map((w) => w.kill());
+    this.rejectAllQueued("DISPATCHER_SHUTDOWN");
+    const kills = [...this.workerPool.values()].flat().map((w) => w.kill());
     await Promise.allSettled(kills);
     this.workerPool.clear();
   }
@@ -58,124 +77,182 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async onTokenAdded(id: number, name: string, credentials: OpenAICredentials): Promise<void> {
     if (this.workerPool.has(id)) return;
-    await this.spawnWorker(id, name, credentials);
+    await this.spawnWorkers(id, name, credentials);
   }
 
   async onTokenRemoved(id: number): Promise<void> {
-    const worker = this.workerPool.get(id);
-    if (!worker) return;
-    await worker.kill();
+    const workers = this.workerPool.get(id) ?? [];
     this.workerPool.delete(id);
-    logger.info(`worker removed: ${worker.tokenName}`);
+    await Promise.allSettled(workers.map((w) => w.kill()));
+    if (this.getAllReadyActiveWorkers().length === 0) {
+      this.rejectAllQueued("NO_OPENAI_WORKERS");
+    }
+    if (workers.length > 0) logger.info(`workers removed for token ${id}: ${workers.length}`);
   }
 
   async onTokenUpdated(id: number, name: string, credentials: OpenAICredentials): Promise<void> {
-    const existing = this.workerPool.get(id);
-    if (existing) {
-      await existing.kill();
-      this.workerPool.delete(id);
-    }
-    await this.spawnWorker(id, name, credentials);
+    const existing = this.workerPool.get(id) ?? [];
+    this.workerPool.delete(id);
+    await Promise.allSettled(existing.map((w) => w.kill()));
+    await this.spawnWorkers(id, name, credentials);
   }
 
   onTokenDeactivated(id: number): void {
-    const worker = this.workerPool.get(id);
-    if (worker) {
-      worker.active = false;
-      logger.info(`worker deactivated: ${worker.tokenName}`);
+    (this.workerPool.get(id) ?? []).forEach((w) => {
+      w.active = false;
+    });
+    if (this.getAllReadyActiveWorkers().length === 0) {
+      this.rejectAllQueued("NO_ACTIVE_WORKERS");
     }
+    logger.info(`workers deactivated: token ${id}`);
   }
 
   onTokenActivated(id: number): void {
-    const worker = this.workerPool.get(id);
-    if (worker) {
-      worker.active = true;
-      logger.info(`worker activated: ${worker.tokenName}`);
-    }
+    (this.workerPool.get(id) ?? []).forEach((w) => {
+      w.active = true;
+    });
+    this.drainQueue();
+    logger.info(`workers activated: token ${id}`);
   }
 
   // ── Generate ────────────────────────────────────────────────────
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    const workers = [...this.workerPool.values()].filter((w) => w.isReady && w.active);
-    if (workers.length === 0) {
-      throw new Error("NO_OPENAI_WORKERS");
+    const worker = this.acquireIdleWorker();
+    if (worker) {
+      logger.info(`→ ${worker.tokenName}[${worker.tokenId}] (model: ${req.model})`);
+      return this.executeAndRelease(worker, (w) => this.executeTurn(w, req));
     }
-
-    // α pattern: RoundRobin pick → saturation skip
-    const candidates = workers.map((w) => ({ id: w.tokenId, worker: w }));
-    for (let i = 0; i < candidates.length; i++) {
-      const picked = this.picker.pick(candidates);
-      if (!picked) break;
-      if (picked.worker.tryAcquireTurn()) {
-        logger.info(`→ ${picked.worker.tokenName} (model: ${req.model})`);
-        try {
-          return await this.executeTurn(picked.worker, req);
-        } finally {
-          picked.worker.releaseTurn();
-        }
-      }
-    }
-
-    throw new Error("SERVER_BUSY");
+    return this.enqueue((w) => {
+      logger.info(`→ ${w.tokenName}[${w.tokenId}] (model: ${req.model}, queued)`);
+      return this.executeTurn(w, req);
+    });
   }
 
   async generateStream(req: GenerateRequest, cb: StreamCallbacks): Promise<void> {
-    const workers = [...this.workerPool.values()].filter((w) => w.isReady && w.active);
-    if (workers.length === 0) throw new Error("NO_OPENAI_WORKERS");
-
-    const candidates = workers.map((w) => ({ id: w.tokenId, worker: w }));
-    for (let i = 0; i < candidates.length; i++) {
-      const picked = this.picker.pick(candidates);
-      if (!picked) break;
-      if (picked.worker.tryAcquireTurn()) {
-        logger.info(`→ ${picked.worker.tokenName} (model: ${req.model}, [stream])`);
-        try {
-          const turnReq: TurnRequest = {
-            input: req.input,
-            developerInstructions: req.systemPrompt,
-            outputSchema: req.outputSchema,
-            effort: req.effort ?? DEFAULT_EFFORT,
-            model: req.model,
-            history: req.history,
-            verbosity: req.verbosity,
-            reasoningSummary: req.reasoningSummary,
-            serviceTier: req.serviceTier,
-          };
-          const wrappedCb: StreamCallbacks = {
-            ...cb,
-            onComplete: (result) => {
-              cb.onComplete({
-                ...result,
-                tokenName: picked.worker.tokenName,
-              } as TurnResult & { tokenName: string });
-            },
-          };
-          await picked.worker.executeTurnStream(turnReq, wrappedCb);
-          return;
-        } finally {
-          picked.worker.releaseTurn();
-        }
-      }
+    const worker = this.acquireIdleWorker();
+    if (worker) {
+      logger.info(`→ ${worker.tokenName}[${worker.tokenId}] (model: ${req.model}, [stream])`);
+      return this.executeAndRelease(worker, (w) => this.executeStreamTurn(w, req, cb));
     }
-
-    throw new Error("SERVER_BUSY");
+    return this.enqueue((w) => {
+      logger.info(`→ ${w.tokenName}[${w.tokenId}] (model: ${req.model}, [stream], queued)`);
+      return this.executeStreamTurn(w, req, cb);
+    });
   }
 
   async interruptWorkerTurn(threadId: string, turnId: string): Promise<void> {
-    for (const worker of this.workerPool.values()) {
-      if (worker.isReady) {
-        await worker.interruptTurn(threadId, turnId);
+    const allWorkers = [...this.workerPool.values()].flat().filter((w) => w.isReady);
+    await Promise.allSettled(allWorkers.map((w) => w.interruptTurn(threadId, turnId)));
+  }
+
+  // ── Worker selection ────────────────────────────────────────────
+  //  기본 round-robin
+  // TODO: 추후 다른 알고리즘으로 변경 가능하게 지원
+  acquireIdleWorker(): CodexAppServerWorker | null {
+    const allWorkers = this.getAllReadyActiveWorkers();
+    if (allWorkers.length === 0) return null;
+    for (let i = 0; i < allWorkers.length; i++) {
+      const w = allWorkers[(this.rrCursor + i) % allWorkers.length]!;
+      if (w.tryAcquireTurn()) {
+        this.rrCursor = (this.rrCursor + i + 1) % allWorkers.length;
+        return w;
       }
+    }
+    return null;
+  }
+
+  getAllReadyActiveWorkers(): CodexAppServerWorker[] {
+    return [...this.workerPool.values()].flat().filter((w) => w.isReady && w.active);
+  }
+
+  // ── Queue ───────────────────────────────────────────────────────
+
+  enqueue<T>(execute: (worker: CodexAppServerWorker) => Promise<T>): Promise<T> {
+    if (this.getAllReadyActiveWorkers().length === 0) {
+      return Promise.reject(new Error("NO_OPENAI_WORKERS"));
+    }
+    if (this.queue.length >= MAX_QUEUE_SIZE) {
+      return Promise.reject(new Error("SERVER_BUSY"));
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const item: QueueItem = {
+        resolve: (worker) => {
+          clearTimeout(item.timer);
+          item.abortCleanup?.();
+          Promise.resolve()
+            .then(() => this.executeAndRelease(worker, execute))
+            .then(resolve, reject);
+        },
+        reject: (err) => {
+          clearTimeout(item.timer);
+          item.abortCleanup?.();
+          reject(err);
+        },
+        timer: setTimeout(() => {
+          this.removeFromQueue(item);
+          reject(new Error("SERVER_BUSY"));
+        }, QUEUE_TIMEOUT_MS),
+      };
+
+      this.queue.push(item);
+    });
+  }
+
+  removeFromQueue(item: QueueItem): void {
+    clearTimeout(item.timer);
+    item.abortCleanup?.();
+    const idx = this.queue.indexOf(item);
+    if (idx !== -1) this.queue.splice(idx, 1);
+  }
+
+  rejectAllQueued(reason: string): void {
+    const err = new Error(reason);
+    this.queue.forEach((item) => {
+      clearTimeout(item.timer);
+      item.abortCleanup?.();
+      item.reject(err);
+    });
+    this.queue = [];
+  }
+
+  drainQueue(releasedWorker?: CodexAppServerWorker): void {
+    if (
+      releasedWorker &&
+      this.queue.length > 0 &&
+      releasedWorker.isReady &&
+      releasedWorker.active &&
+      releasedWorker.tryAcquireTurn()
+    ) {
+      const next = this.queue.shift()!;
+      next.resolve(releasedWorker);
+      return;
+    }
+
+    while (this.queue.length > 0) {
+      const worker = this.acquireIdleWorker();
+      if (!worker) break;
+      const next = this.queue.shift()!;
+      next.resolve(worker);
     }
   }
 
-  // ── Internal ────────────────────────────────────────────────────
+  // ── Execution ───────────────────────────────────────────────────
 
-  private async executeTurn(
+  async executeAndRelease<T>(
     worker: CodexAppServerWorker,
-    req: GenerateRequest,
-  ): Promise<GenerateResult> {
+    execute: (worker: CodexAppServerWorker) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await execute(worker);
+    } finally {
+      worker.releaseTurn();
+      this.drainQueue(worker);
+    }
+  }
+
+  async executeTurn(worker: CodexAppServerWorker, req: GenerateRequest): Promise<GenerateResult> {
     const turnReq: TurnRequest = {
       input: req.input,
       developerInstructions: req.systemPrompt,
@@ -187,9 +264,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       reasoningSummary: req.reasoningSummary,
       serviceTier: req.serviceTier,
     };
-
     const result: TurnResult = await worker.executeTurn(turnReq);
-
     return {
       text: result.text,
       tokenName: worker.tokenName,
@@ -199,18 +274,68 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     };
   }
 
-  private async spawnWorker(
+  async executeStreamTurn(
+    worker: CodexAppServerWorker,
+    req: GenerateRequest,
+    cb: StreamCallbacks,
+  ): Promise<void> {
+    const turnReq: TurnRequest = {
+      input: req.input,
+      developerInstructions: req.systemPrompt,
+      outputSchema: req.outputSchema,
+      effort: req.effort ?? DEFAULT_EFFORT,
+      model: req.model,
+      history: req.history,
+      verbosity: req.verbosity,
+      reasoningSummary: req.reasoningSummary,
+      serviceTier: req.serviceTier,
+    };
+    const wrappedCb: StreamCallbacks = {
+      ...cb,
+      onComplete: (result) => {
+        cb.onComplete({ ...result, tokenName: worker.tokenName } as TurnResult & {
+          tokenName: string;
+        });
+      },
+    };
+    await worker.executeTurnStream(turnReq, wrappedCb);
+  }
+
+  // ── Spawn ───────────────────────────────────────────────────────
+
+  async spawnWorkers(
     tokenId: number,
     tokenName: string,
     credentials: OpenAICredentials,
   ): Promise<void> {
+    const workers: CodexAppServerWorker[] = [];
+    for (let i = 0; i < WORKERS_PER_TOKEN; i++) {
+      if (i > 0) await sleep(SPAWN_INTERVAL_MS);
+      const worker = await this.spawnSingleWorker(tokenId, tokenName, credentials, i);
+      if (worker) workers.push(worker);
+    }
+    if (workers.length > 0) {
+      this.workerPool.set(tokenId, workers);
+      logger.info(`${workers.length}/${WORKERS_PER_TOKEN} workers spawned for ${tokenName}`);
+    }
+  }
+
+  async spawnSingleWorker(
+    tokenId: number,
+    tokenName: string,
+    credentials: OpenAICredentials,
+    workerIndex: number,
+  ): Promise<CodexAppServerWorker | null> {
     const worker = new CodexAppServerWorker({
       tokenId,
       tokenName,
       accessToken: credentials.accessToken,
       accountId: credentials.accountId,
       planType: credentials.planType,
+      workerIndex,
     });
+
+    worker.onReady = () => this.drainQueue();
 
     worker.setServerRequestHandler(async (method) => {
       if (method === "account/chatgptAuthTokens/refresh") {
@@ -221,16 +346,19 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     try {
       await worker.initialize();
-      this.workerPool.set(tokenId, worker);
-      logger.info(`worker spawned: ${tokenName} (id=${tokenId})`);
+      logger.info(`worker spawned: ${tokenName}[${workerIndex}] (id=${tokenId + 1})`);
+      return worker;
     } catch (e) {
-      logger.warn(`worker spawn failed: ${tokenName}: ${(e as Error).message}`);
+      logger.warn(`worker spawn failed: ${tokenName}[${workerIndex}]: ${(e as Error).message}`);
       await worker.kill().catch(() => {});
+      return null;
     }
   }
 
-  private rateLimitsCache = new Map<string, { data: unknown; cachedAt: number }>();
-  private static readonly RATE_LIMITS_CACHE_TTL = 60_000;
+  // ── Rate limits ─────────────────────────────────────────────────
+
+  rateLimitsCache = new Map<string, { data: unknown; cachedAt: number }>();
+  static readonly RATE_LIMITS_CACHE_TTL = 60_000;
 
   async getRateLimits(tokenName?: string): Promise<unknown> {
     const cacheKey = tokenName ?? "_default";
@@ -239,8 +367,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       return cached.data;
     }
 
-    const workers = [...this.workerPool.values()].filter((w) => w.isReady);
-    const worker = tokenName ? workers.find((w) => w.tokenName === tokenName) : workers[0];
+    const allWorkers = [...this.workerPool.values()].flat().filter((w) => w.isReady);
+    const worker = tokenName ? allWorkers.find((w) => w.tokenName === tokenName) : allWorkers[0];
     if (!worker) throw new Error("no ready openai workers");
     const data = await worker.getRateLimits();
     this.rateLimitsCache.set(cacheKey, { data, cachedAt: Date.now() });
@@ -249,14 +377,13 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   // ── Browser login flow ───────────────────────────────────────────
 
-  private pendingLogin: {
+  pendingLogin: {
     worker: CodexAppServerWorker;
     name: string;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
 
   async startBrowserLogin(name: string): Promise<{ authUrl: string }> {
-    // 기존 pending 정리
     if (this.pendingLogin) {
       this.pendingLogin.worker.kill().catch(() => {});
       clearTimeout(this.pendingLogin.timer);
@@ -273,7 +400,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     const authUrl = await worker.startBrowserLogin();
 
-    // 5분 후 자동 정리
     const timer = setTimeout(() => {
       if (this.pendingLogin?.worker === worker) {
         logger.warn(`browser login timeout for ${name}, killing worker`);
@@ -311,11 +437,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
   }
 
+  // ── Stats ───────────────────────────────────────────────────────
+
   get workerCount(): number {
-    return this.workerPool.size;
+    return [...this.workerPool.values()].flat().length;
   }
 
   get readyWorkerCount(): number {
-    return [...this.workerPool.values()].filter((w) => w.isReady).length;
+    return [...this.workerPool.values()].flat().filter((w) => w.isReady).length;
+  }
+
+  get queueLength(): number {
+    return this.queue.length;
   }
 }
