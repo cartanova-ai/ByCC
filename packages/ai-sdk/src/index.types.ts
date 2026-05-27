@@ -32,14 +32,14 @@ export type QgridSupportedModel =
   | "openai/gpt-5.3-codex-spark"
   | "anthropic/claude-haiku-4-5"
   | "anthropic/claude-sonnet-4"
-  | "anthropic/claude-sonnet-4.5"
-  | "anthropic/claude-sonnet-4.6"
-  | "anthropic/claude-sonnet-4.7"
+  | "anthropic/claude-sonnet-4-5"
+  | "anthropic/claude-sonnet-4-6"
+  | "anthropic/claude-sonnet-4-7"
   | "anthropic/claude-opus-4"
-  | "anthropic/claude-opus-4.1"
-  | "anthropic/claude-opus-4.5"
-  | "anthropic/claude-opus-4.6"
-  | "anthropic/claude-opus-4.7"
+  | "anthropic/claude-opus-4-1"
+  | "anthropic/claude-opus-4-5"
+  | "anthropic/claude-opus-4-6"
+  | "anthropic/claude-opus-4-7"
   | (string & {});
 
 // 아래 타입들은 Qgrid에서 생성된 type을 그대로 가져와서 사용합니다.
