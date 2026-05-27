@@ -402,7 +402,6 @@ export function useSSEStream<T extends Record<string, any>>(
               ...init?.headers,
               "Accept-Language": getCurrentLocale(),
             },
-            credentials: "include",
           }),
       });
       eventSourceRef.current = eventSource;

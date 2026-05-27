@@ -20,6 +20,7 @@
     "**/*.generated.ts",
     "**/*.generated.tsx",
     "**/*.mdx",
-    "**/*.md"
+    "**/*.md",
+    "**/*.d.ts"
   ]
 }

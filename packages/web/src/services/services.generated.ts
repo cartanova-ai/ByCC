@@ -18,17 +18,26 @@ import { type AxiosProgressEvent } from "axios";
 import qs from "qs";
 
 import {
-  Effort,
-  CliResult,
+  QueryInput,
+  QueryOutput,
+  CreateRunInput,
+  AppendStepInput,
+  FinishRunInput,
   TokenStats,
   OAuthStartResult,
   UsageResponse,
   HealthResponse,
 } from "./qgrid/qgrid.types";
+import {
+  RequestLogStepListParams,
+  RequestLogStepSaveParams,
+} from "./request-log-step/request-log-step.types";
 import { RequestLogListParams, RequestLogSaveParams } from "./request-log/request-log.types";
 import {
   TokenSubsetKey,
   TokenSubsetMapping,
+  RequestLogStepSubsetKey,
+  RequestLogStepSubsetMapping,
   RequestLogSubsetKey,
   RequestLogSubsetMapping,
 } from "./sonamu.generated";
@@ -45,7 +54,7 @@ import {
   dedupeAndFlatten,
   useRefreshable,
 } from "./sonamu.shared";
-import { TokenListParams, TokenSaveParams } from "./token/token.types";
+import { TokenListParams, TokenSaveParams, TokenCredentials } from "./token/token.types";
 
 export namespace TokenService {
   export async function getToken<T extends TokenSubsetKey>(
@@ -171,6 +180,139 @@ export namespace TokenService {
     return fetch({
       method: "POST",
       url: `/api/token/del`,
+      data: { ids },
+    });
+  }
+
+  export const useDelMutation = () =>
+    useMutation({
+      mutationFn: (params: { ids: number[] }) => del(params.ids),
+    });
+}
+
+export namespace RequestLogStepService {
+  export async function getRequestLogStep<T extends RequestLogStepSubsetKey>(
+    subset: T,
+    id: number,
+  ): Promise<RequestLogStepSubsetMapping[T]> {
+    return fetch({
+      method: "GET",
+      url: `/api/requestLogStep/findById?${qs.stringify({ subset, id })}`,
+    });
+  }
+
+  export const getRequestLogStepQueryOptions = <T extends RequestLogStepSubsetKey>(
+    subset: T,
+    id: number,
+  ) =>
+    queryOptions({
+      queryKey: ["RequestLogStep", "getRequestLogStep", subset, id],
+      queryFn: () => getRequestLogStep(subset, id),
+    });
+
+  export const useRequestLogStep = <T extends RequestLogStepSubsetKey>(
+    subset: T,
+    id: number,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useQuery({
+        ...getRequestLogStepQueryOptions(subset, id),
+        ...options,
+      }),
+    );
+
+  export async function getRequestLogSteps<
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(subset: T, rawParams?: LP): Promise<ListResult<LP, RequestLogStepSubsetMapping[T]>> {
+    return fetch({
+      method: "GET",
+      url: `/api/requestLogStep/findMany?${qs.stringify({ subset, rawParams })}`,
+    });
+  }
+
+  export const getRequestLogStepsQueryOptions = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+  ) =>
+    queryOptions({
+      queryKey: ["RequestLogStep", "getRequestLogSteps", subset, rawParams],
+      queryFn: () => getRequestLogSteps(subset, rawParams),
+    });
+
+  export const useRequestLogSteps = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useQuery({
+        ...getRequestLogStepsQueryOptions(subset, rawParams),
+        ...options,
+      }),
+    );
+
+  export const getRequestLogStepsInfiniteQueryOptions = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+  ) =>
+    infiniteQueryOptions({
+      queryKey: ["RequestLogStep", "getRequestLogSteps", "infinite", subset, rawParams],
+      queryFn: ({ pageParam }) => getRequestLogSteps(subset, { ...rawParams, page: pageParam }),
+      initialPageParam: 1 as number,
+      getNextPageParam: (lastPage, allPages) => {
+        const total = (lastPage as { total?: number })?.total ?? 0;
+        const loaded = allPages.reduce(
+          (sum, p) => sum + ((p as { rows?: unknown[] })?.rows?.length ?? 0),
+          0,
+        );
+        return loaded < total ? allPages.length + 1 : undefined;
+      },
+      select: dedupeAndFlatten,
+    });
+
+  export const useRequestLogStepsInfinite = <
+    T extends RequestLogStepSubsetKey,
+    LP extends RequestLogStepListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useInfiniteQuery({
+        ...getRequestLogStepsInfiniteQueryOptions(subset, rawParams),
+        ...options,
+      }),
+    );
+
+  export async function save(spa: RequestLogStepSaveParams[]): Promise<number[]> {
+    return fetch({
+      method: "POST",
+      url: `/api/requestLogStep/save`,
+      data: { spa },
+    });
+  }
+
+  export const useSaveMutation = () =>
+    useMutation({
+      mutationFn: (params: { spa: RequestLogStepSaveParams[] }) => save(params.spa),
+    });
+
+  export async function del(ids: number[]): Promise<number> {
+    return fetch({
+      method: "POST",
+      url: `/api/requestLogStep/del`,
       data: { ids },
     });
   }
@@ -309,42 +451,159 @@ export namespace RequestLogService {
 }
 
 export namespace QgridService {
-  export async function query(
-    prompt: string,
-    system?: string,
-    timeout?: number,
-    model?: string,
-    projectName?: string,
-    jsonSchema?: string,
-    effort?: Effort,
-  ): Promise<CliResult> {
+  export async function query(args: QueryInput): Promise<QueryOutput> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/query`,
-      data: { prompt, system, timeout, model, projectName, jsonSchema, effort },
+      data: { args },
     });
   }
 
   export const useQueryMutation = () =>
     useMutation({
-      mutationFn: (params: {
-        prompt: string;
-        system: string;
-        timeout: number;
-        model: string;
-        projectName: string;
-        jsonSchema: string;
-        effort: Effort;
-      }) =>
-        query(
-          params.prompt,
-          params.system,
-          params.timeout,
-          params.model,
-          params.projectName,
-          params.jsonSchema,
-          params.effort,
-        ),
+      mutationFn: (params: { args: QueryInput }) => query(params.args),
+    });
+
+  export async function prepareStream(args: QueryInput): Promise<{ streamId: string }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/prepareStream`,
+      data: { args },
+    });
+  }
+
+  export const usePrepareStreamMutation = () =>
+    useMutation({
+      mutationFn: (params: { args: QueryInput }) => prepareStream(params.args),
+    });
+
+  export function useQueryStream(
+    params: { streamId: string },
+    handlers: EventHandlers<
+      {
+        delta: {
+          text: string;
+        };
+        toolCall: {
+          toolCallId: string;
+          toolName: string;
+          input: string;
+        };
+        done: {
+          text: string;
+          model?: string;
+          tokenName?: string;
+          finishReason: "stop" | "tool-calls";
+          usage: {
+            input_tokens: number;
+            output_tokens: number;
+            cache_creation_input_tokens: number;
+            cache_read_input_tokens: number;
+          };
+          durationMs: number;
+          costUsd: number;
+          content:
+            | {
+                type: "text";
+                text: string;
+              }
+            | {
+                type: "tool-call";
+                toolCallId: string;
+                toolName: string;
+                input: string;
+              }[];
+          runContext?: {
+            requestLogId: number;
+          };
+        };
+        error: {
+          message: string;
+        };
+      } & { end?: () => void }
+    >,
+    options: SSEStreamOptions,
+  ) {
+    return useSSEStream<{
+      delta: {
+        text: string;
+      };
+      toolCall: {
+        toolCallId: string;
+        toolName: string;
+        input: string;
+      };
+      done: {
+        text: string;
+        model?: string;
+        tokenName?: string;
+        finishReason: "stop" | "tool-calls";
+        usage: {
+          input_tokens: number;
+          output_tokens: number;
+          cache_creation_input_tokens: number;
+          cache_read_input_tokens: number;
+        };
+        durationMs: number;
+        costUsd: number;
+        content:
+          | {
+              type: "text";
+              text: string;
+            }
+          | {
+              type: "tool-call";
+              toolCallId: string;
+              toolName: string;
+              input: string;
+            }[];
+        runContext?: {
+          requestLogId: number;
+        };
+      };
+      error: {
+        message: string;
+      };
+    }>(`/api/qgrid/queryStream`, params, handlers, options);
+  }
+
+  export async function createRun(input: CreateRunInput): Promise<{ requestLogId: number }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/createRun`,
+      data: { input },
+    });
+  }
+
+  export const useCreateRunMutation = () =>
+    useMutation({
+      mutationFn: (params: { input: CreateRunInput }) => createRun(params.input),
+    });
+
+  export async function appendStep(input: AppendStepInput): Promise<{ stepId: number }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/appendStep`,
+      data: { input },
+    });
+  }
+
+  export const useAppendStepMutation = () =>
+    useMutation({
+      mutationFn: (params: { input: AppendStepInput }) => appendStep(params.input),
+    });
+
+  export async function finishRun(input: FinishRunInput): Promise<{ ok: boolean }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/finishRun`,
+      data: { input },
+    });
+  }
+
+  export const useFinishRunMutation = () =>
+    useMutation({
+      mutationFn: (params: { input: FinishRunInput }) => finishRun(params.input),
     });
 
   export async function stats(): Promise<TokenStats[]> {
@@ -411,57 +670,47 @@ export namespace QgridService {
     );
 
   export async function addToken(
-    token: string,
+    provider: string,
+    credentials: TokenCredentials,
     name: string,
-    refreshToken?: string,
   ): Promise<{ added: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/addToken`,
-      data: { token, name, refreshToken },
+      data: { provider, credentials, name },
     });
   }
 
   export const useAddTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { token: string; name: string; refreshToken: string }) =>
-        addToken(params.token, params.name, params.refreshToken),
+      mutationFn: (params: { provider: string; credentials: TokenCredentials; name: string }) =>
+        addToken(params.provider, params.credentials, params.name),
     });
 
-  export async function updateToken(
-    token: string,
-    name?: string,
-    newToken?: string,
-    refreshToken?: string,
-  ): Promise<{ updated: boolean }> {
+  export async function updateToken(id: number, name?: string): Promise<{ updated: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/updateToken`,
-      data: { token, name, newToken, refreshToken },
+      data: { id, name },
     });
   }
 
   export const useUpdateTokenMutation = () =>
     useMutation({
-      mutationFn: (params: {
-        token: string;
-        name: string;
-        newToken: string;
-        refreshToken: string;
-      }) => updateToken(params.token, params.name, params.newToken, params.refreshToken),
+      mutationFn: (params: { id: number; name: string }) => updateToken(params.id, params.name),
     });
 
-  export async function removeToken(token: string): Promise<{ removed: boolean }> {
+  export async function removeToken(id: number): Promise<{ removed: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/removeToken`,
-      data: { token },
+      data: { id },
     });
   }
 
   export const useRemoveTokenMutation = () =>
     useMutation({
-      mutationFn: (params: { token: string }) => removeToken(params.token),
+      mutationFn: (params: { id: number }) => removeToken(params.id),
     });
 
   export async function toggleToken(id: number): Promise<{ active: boolean }> {
@@ -490,23 +739,36 @@ export namespace QgridService {
       mutationFn: (params: { name: string }) => oauthStart(params.name),
     });
 
-  export async function usage(tokenName?: string): Promise<UsageResponse> {
+  export async function oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
     return fetch({
-      method: "GET",
-      url: `/api/qgrid/usage?${qs.stringify({ tokenName })}`,
+      method: "POST",
+      url: `/api/qgrid/oauthStartOpenAI`,
+      data: { name },
     });
   }
 
-  export const usageQueryOptions = (tokenName?: string) =>
-    queryOptions({
-      queryKey: ["Qgrid", "usage", tokenName],
-      queryFn: () => usage(tokenName),
+  export const useOauthStartOpenAIMutation = () =>
+    useMutation({
+      mutationFn: (params: { name: string }) => oauthStartOpenAI(params.name),
     });
 
-  export const useUsage = (tokenName?: string, options?: { enabled?: boolean }) =>
+  export async function usage(tokenId?: number): Promise<UsageResponse> {
+    return fetch({
+      method: "GET",
+      url: `/api/qgrid/usage?${qs.stringify({ tokenId })}`,
+    });
+  }
+
+  export const usageQueryOptions = (tokenId?: number) =>
+    queryOptions({
+      queryKey: ["Qgrid", "usage", tokenId],
+      queryFn: () => usage(tokenId),
+    });
+
+  export const useUsage = (tokenId?: number, options?: { enabled?: boolean }) =>
     useRefreshable(
       useQuery({
-        ...usageQueryOptions(tokenName),
+        ...usageQueryOptions(tokenId),
         ...options,
       }),
     );
@@ -542,6 +804,17 @@ export const RequestLogAsyncIdConfig: AsyncIdConfig<
   placeholderKey: "entity.RequestLog",
   useList: RequestLogService.useRequestLogs,
   useListInfinite: RequestLogService.useRequestLogsInfinite,
+};
+
+// AsyncIdConfig: RequestLogStep
+export const RequestLogStepAsyncIdConfig: AsyncIdConfig<
+  RequestLogStepSubsetKey,
+  RequestLogStepSubsetMapping,
+  RequestLogStepListParams
+> = {
+  placeholderKey: "entity.RequestLogStep",
+  useList: RequestLogStepService.useRequestLogSteps,
+  useListInfinite: RequestLogStepService.useRequestLogStepsInfinite,
 };
 
 // AsyncIdConfig: Token

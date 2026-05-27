@@ -17,34 +17,60 @@ const MOCK_USAGE = {
 const server = setupServer(
   http.post("http://localhost:44900/api/qgrid/query", async ({ request }) => {
     const body = (await request.json()) as {
-      prompt: string;
-      system?: string;
-      jsonSchema?: string;
+      args: {
+        prompt: string;
+        system?: string;
+        jsonSchema?: string;
+        tools?: Array<{ name: string; description?: string; inputSchema: unknown }>;
+      };
     };
+    const args = body.args;
 
     // 특수 프롬프트로 에러 시나리오 테스트
-    if (body.prompt === "__error_429__") {
+    if (args.prompt === "__error_429__") {
       return HttpResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }
-    if (body.prompt === "__error_503__") {
+    if (args.prompt === "__error_503__") {
       return HttpResponse.json({ error: "Server unavailable" }, { status: 503 });
     }
-    if (body.prompt === "__error_500__") {
+    if (args.prompt === "__error_500__") {
       return HttpResponse.json({ error: "Internal error" }, { status: 500 });
     }
-    if (body.prompt === "__invalid_json__") {
+    if (args.prompt === "__invalid_json__") {
       return HttpResponse.json({
         text: "not valid json {[",
+        content: [{ type: "text", text: "not valid json {[" }],
+        finishReason: "stop",
         usage: MOCK_USAGE,
         durationMs: 100,
         costUsd: 0.01,
       });
     }
 
+    if (args.tools?.length) {
+      return HttpResponse.json({
+        text: "",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call_weather",
+            toolName: args.tools[0].name,
+            input: JSON.stringify({ city: "Seoul" }),
+          },
+        ],
+        finishReason: "tool-calls",
+        usage: MOCK_USAGE,
+        durationMs: 180,
+        costUsd: 0.018,
+      });
+    }
+
     // jsonSchema 가 body 에 오면 structured output 모의 (JSON-encoded 문자열)
-    if (body.jsonSchema) {
+    if (args.jsonSchema) {
       return HttpResponse.json({
         text: JSON.stringify({ questions: ["Q1", "Q2", "Q3"] }),
+        content: [{ type: "text", text: JSON.stringify({ questions: ["Q1", "Q2", "Q3"] }) }],
+        finishReason: "stop",
         usage: MOCK_USAGE,
         durationMs: 200,
         costUsd: 0.02,
@@ -52,7 +78,9 @@ const server = setupServer(
     }
 
     return HttpResponse.json({
-      text: `Echo: ${body.prompt}`,
+      text: `Echo: ${args.prompt}`,
+      content: [{ type: "text", text: `Echo: ${args.prompt}` }],
+      finishReason: "stop",
       usage: MOCK_USAGE,
       durationMs: 150,
       costUsd: 0.015,
@@ -75,6 +103,33 @@ describe("queryQgrid", () => {
     expect(result.usage.output_tokens).toBe(50);
     expect(result.durationMs).toBe(150);
     expect(result.costUsd).toBe(0.015);
+  });
+
+  it("tools 요청은 qgrid-native tool-call content를 반환", async () => {
+    const result = await queryQgrid({
+      prompt: "날씨",
+      tools: [
+        {
+          name: "getWeather",
+          description: "Get weather",
+          inputSchema: {
+            type: "object",
+            properties: { city: { type: "string" } },
+            required: ["city"],
+          },
+        },
+      ],
+    });
+
+    expect(result.finishReason).toBe("tool-calls");
+    expect(result.content).toEqual([
+      {
+        type: "tool-call",
+        toolCallId: "call_weather",
+        toolName: "getWeather",
+        input: JSON.stringify({ city: "Seoul" }),
+      },
+    ]);
   });
 
   it("returnType으로 구조화 응답", async () => {

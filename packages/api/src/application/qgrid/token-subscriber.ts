@@ -3,6 +3,7 @@ import { getLogger } from "@logtape/logtape";
 import { Client, type ClientConfig } from "pg";
 
 import { TokenModel } from "../token/token.model";
+import { type OpenAICredentials } from "../token/token.types";
 import { type QgridDispatcherClass } from "./qgrid.dispatcher";
 import { type SubscriberStatus } from "./qgrid.types";
 
@@ -153,19 +154,40 @@ export class TokenSubscriber {
     const payload = JSON.parse(payloadJson) as Payload;
     if (payload.op === "DELETE") {
       this.dispatcher.removeCache(payload.id);
+      this.dispatcher.openaiDispatcher
+        ?.onTokenRemoved(payload.id)
+        .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → removed from cache`);
       return;
     }
     const row = await TokenModel.findOne("A", { id: payload.id });
-    if (!row || !row.active) {
+    if (!row) {
       this.dispatcher.removeCache(payload.id);
-      logger.info(
-        `NOTIFY ${payload.op} id=${payload.id} (${row?.name ?? "?"}) active=${row?.active ?? "missing"} → removed from cache`,
-      );
+      this.dispatcher.openaiDispatcher
+        ?.onTokenRemoved(payload.id)
+        .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
+      logger.info(`NOTIFY ${payload.op} id=${payload.id} → missing, removed from cache`);
       return;
     }
+
     this.dispatcher.upsertCache(payload.id, row);
-    logger.info(`NOTIFY ${payload.op} id=${payload.id} (${row.name}) active=true → cache upserted`);
+
+    if (row.provider === "openai") {
+      const creds = row.credentials as Record<string, unknown>;
+      if (payload.op === "INSERT") {
+        this.dispatcher.openaiDispatcher
+          ?.onTokenAdded(payload.id, row.name, creds as OpenAICredentials)
+          .catch((e) => logger.warn(`openai worker spawn failed: ${(e as Error).message}`));
+      } else if (row.active) {
+        this.dispatcher.openaiDispatcher?.onTokenActivated(payload.id);
+        this.dispatcher.openaiDispatcher
+          ?.onTokenUpdated(payload.id, row.name, creds as OpenAICredentials)
+          .catch((e) => logger.warn(`openai worker update failed: ${(e as Error).message}`));
+      } else {
+        this.dispatcher.openaiDispatcher?.onTokenDeactivated(payload.id);
+      }
+    }
+    logger.info(`NOTIFY ${payload.op} id=${payload.id} (${row.name}) active=${row.active}`);
   }
 
   async reconcile(): Promise<void> {

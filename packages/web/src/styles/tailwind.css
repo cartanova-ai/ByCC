@@ -12,6 +12,8 @@
 
 /* SocratsAI Design System — Custom Palette */
 @theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
   --color-sand-50: #f6f3ee;
   --color-sand-100: #f0ece4;
   --color-sand-200: #e3dacc;
@@ -38,4 +40,142 @@
   --color-sage-400: #788c5d;
   --color-sage-500: #637549;
   --color-sage-600: #4d5b39;
+
+  /* Status — muted warm tones for bar warnings */
+  --color-caution-400: #c9a24e;
+  --color-caution-500: #b08c3a;
+  --color-danger-400: #c06a5b;
+  --color-danger-500: #a8554a;
+
+  /* Provider — OpenAI (warm charcoal/onyx, earthy) */
+  --color-openai-50: #f2f0ee;
+  --color-openai-100: #e8e4e0;
+  --color-openai-200: #cdc7c0;
+  --color-openai-300: #a69e95;
+  --color-openai-400: #7a726a;
+  --color-openai-500: #5a524a;
+  --color-openai-600: #3f3a34;
+  --color-openai-bar: #8a9a7a;
+
+  /* Provider — Anthropic (existing sienna, aliased for clarity) */
+  --color-anthropic-50: #f5ede6;
+  --color-anthropic-100: #f0e2d7;
+  --color-anthropic-200: #e8ccba;
+  --color-anthropic-300: #dbb09a;
+  --color-anthropic-400: #d97757;
+  --color-anthropic-500: #c4643d;
+  --color-anthropic-600: #a84e2e;
+
+  /* Provider — Google (muted slate blue, earthy) */
+  --color-google-50: #eef0f5;
+  --color-google-100: #dce0ec;
+  --color-google-200: #b5bdd6;
+  --color-google-300: #8d98be;
+  --color-google-400: #6a78a3;
+  --color-google-500: #535f82;
+  --color-google-600: #3f4963;
+}
+
+/* macOS-style panel depth */
+.panel {
+  background: white;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 3px color-mix(in srgb, var(--color-sand-900) 5%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-sand-200) 70%, transparent);
+}
+
+.panel-header {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-sand-100) 80%, transparent);
+}
+
+/* Frosted glass toolbar */
+.toolbar-glass {
+  background: color-mix(in srgb, var(--color-sand-50) 70%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-sand-200) 40%, transparent);
+}
+
+/* macOS segmented control */
+.segmented-control {
+  background: color-mix(in srgb, var(--color-sand-200) 50%, transparent);
+  border-radius: 8px;
+  padding: 2px;
+}
+.segmented-control button[data-active="true"] {
+  background: white;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--color-sand-900) 6%, transparent),
+    0 0 0 0.5px color-mix(in srgb, var(--color-sand-300) 50%, transparent);
+}
+
+/* Scrollbar styling for macOS feel */
+.main-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.main-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.main-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-sand-400) 40%, transparent);
+  border-radius: 100px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.main-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-sand-400) 60%, transparent);
+  background-clip: padding-box;
+}
+
+/* Subtle content area inset */
+.content-inset {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-sand-200) 30%, transparent) 0px,
+    transparent 40px
+  );
+}
+
+/* Markdown prose — earthy theme overrides */
+.prose-qgrid {
+  --tw-prose-body: var(--color-sand-800);
+  --tw-prose-headings: var(--color-sand-900);
+  --tw-prose-links: var(--color-sienna-500);
+  --tw-prose-bold: var(--color-sand-900);
+  --tw-prose-counters: var(--color-sand-500);
+  --tw-prose-bullets: var(--color-sand-400);
+  --tw-prose-hr: var(--color-sand-200);
+  --tw-prose-quotes: var(--color-sand-700);
+  --tw-prose-quote-borders: var(--color-sienna-300);
+  --tw-prose-code: var(--color-sienna-600);
+  --tw-prose-pre-code: var(--color-sand-800);
+  --tw-prose-pre-bg: var(--color-sand-50);
+  --tw-prose-th-borders: var(--color-sand-200);
+  --tw-prose-td-borders: var(--color-sand-100);
+}
+.prose-qgrid :where(code):not(:where(pre *)) {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--color-sand-100);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.prose-qgrid :where(pre) {
+  border-radius: 8px;
+  border: 1px solid var(--color-sand-200);
+}
+.prose-qgrid :where(blockquote) {
+  border-left-width: 3px;
+  font-style: normal;
+}
+.prose-qgrid :where(h1, h2, h3, h4) {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.prose-qgrid :where(ul, ol) {
+  padding-left: 1.25em;
+}
+.prose-qgrid :where(li)::marker {
+  color: var(--color-sand-400);
 }

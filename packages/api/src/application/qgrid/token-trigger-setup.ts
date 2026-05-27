@@ -37,9 +37,8 @@ const SETUP_SQL = `
   FOR EACH ROW
   WHEN (
     OLD.active IS DISTINCT FROM NEW.active OR
-    OLD.token IS DISTINCT FROM NEW.token OR
-    OLD.refresh_token IS DISTINCT FROM NEW.refresh_token OR
-    OLD.expires_at IS DISTINCT FROM NEW.expires_at OR
+    OLD.credentials IS DISTINCT FROM NEW.credentials OR
+    OLD.provider IS DISTINCT FROM NEW.provider OR
     OLD.name IS DISTINCT FROM NEW.name
   )
   EXECUTE FUNCTION public.tokens_notify();

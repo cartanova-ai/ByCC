@@ -8,11 +8,8 @@ export const Route = createFileRoute("/")({
 
 function Dashboard() {
   return (
-    <div className="space-y-5 max-w-300 mx-auto -translate-x-4">
-      <h1 className="text-xl font-medium text-sand-900 tracking-tight">Dashboard</h1>
-      <div className="pt-12">
-        <UsageCard />
-      </div>
+    <div className="max-w-6xl mx-auto">
+      <UsageCard />
     </div>
   );
 }

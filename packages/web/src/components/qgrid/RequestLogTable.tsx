@@ -50,6 +50,7 @@ const COLUMNS: { label: string; align: "left" | "right"; width?: string }[] = [
   { label: "C.Read", align: "left", width: "w-20" },
   { label: "C.Write", align: "left", width: "w-20" },
   { label: "Hit", align: "left", width: "w-14" },
+  { label: "Tools", align: "left", width: "w-14" },
   { label: "Cost", align: "left", width: "w-20" },
 ];
 
@@ -93,13 +94,13 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
   };
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-10 flex-wrap">
+    <div className="panel overflow-hidden">
+      <div className="panel-header flex items-center gap-3 px-5 py-2.5 flex-wrap">
         {tokenNames.length > 0 && (
           <select
             value={tokenFilter}
             onChange={(e) => updateFilter({ token: e.target.value || undefined })}
-            className="border border-sand-200 rounded-md px-2 py-1 text-xs text-sand-700 bg-white focus:outline-none focus:border-sienna-300"
+            className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300"
           >
             <option value="">All Tokens</option>
             {tokenNames.map((name) => (
@@ -112,7 +113,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
         <select
           value={projectFilter}
           onChange={(e) => updateFilter({ project: e.target.value || undefined })}
-          className="border border-sand-200 rounded-md px-2 py-1 text-xs text-sand-700 bg-white focus:outline-none focus:border-sienna-300"
+          className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300"
         >
           <option value="">All Projects</option>
           <option value={UNASSIGNED}>(unassigned)</option>
@@ -122,6 +123,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
             </option>
           ))}
         </select>
+        <div className="flex-1" />
         <span className="text-[11px] text-sand-400">{total} results</span>
         <span className="text-[11px] tabular-nums font-medium text-sienna-600">
           {formatUsd(costData?.usd ?? 0)}
@@ -138,10 +140,10 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
         <div className="text-sand-400 text-center py-12 text-sm">No requests yet.</div>
       ) : (
         <>
-          <div className="rounded-lg bg-sand-50 overflow-hidden w-fit mx-auto px-10 py-4">
-            <table className="text-sm">
+          <div className="overflow-x-auto px-5 py-3">
+            <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-b border-sand-200">
+                <tr className="border-b border-sand-100/60">
                   {COLUMNS.map((col) => {
                     const padX =
                       col.label === "Duration" ? "pl-5 pr-3" : col.width ? "px-4" : "px-3";
@@ -157,7 +159,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                   <th className="w-8" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-sand-200/60">
+              <tbody className="divide-y divide-sand-100/60">
                 {rows.map((row) => (
                   <tr
                     key={row.id}
@@ -212,6 +214,9 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
                       {calcCacheHitRate(row)}
                     </td>
+                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-500">
+                      {row.tool_call_count > 0 ? row.tool_call_count : "—"}
+                    </td>
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
                       {row.cost_usd !== null ? formatMicroUsd(row.cost_usd) : "—"}
                     </td>
@@ -225,7 +230,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
           </div>
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-3 mt-3">
+            <div className="flex items-center justify-center gap-3 px-5 py-2.5 border-t border-sand-100/60">
               <button
                 type="button"
                 className="p-1 rounded text-sand-400 hover:text-sand-600 disabled:opacity-30 transition-colors"

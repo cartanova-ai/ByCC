@@ -1,3 +1,4 @@
+import assert from "node:assert";
 /**
  * QgridDispatcher — OAuth 토큰 선택 + claude CLI fresh spawn 디스패처 싱글턴.
  *
@@ -15,10 +16,20 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
+import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
+import {
+  getAccessToken,
+  getExpiresAt,
+  getRefreshToken,
+} from "../../utils/providers/common/credentials";
+import { calculateCostUsd } from "../../utils/providers/common/model-cost";
+import { strictify } from "../../utils/providers/common/strictifier";
+import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
-import { type CliResult, type QueryInput, type TokenStats } from "./qgrid.types";
+import { type QueryInput, type QueryOutput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
 import { type TokenSubscriber } from "./token-subscriber";
+import { applyToolCallEmulation, buildToolCallSchema } from "./tool-emulation";
 
 const logger = getLogger(["qgrid"]);
 
@@ -52,6 +63,7 @@ export class QgridDispatcherClass {
 
   // sonamu.config onStart 에서 처리하는 변수
   subscriber: TokenSubscriber | null = null;
+  openaiDispatcher: OpenAIDispatcher | null = null;
 
   constructor() {
     const settingsJson = JSON.stringify(QGRID_CLAUDE_SETTINGS, null, 2);
@@ -83,14 +95,15 @@ export class QgridDispatcherClass {
 
   getStats(): TokenStats[] {
     return [...this.tokens.values()].map((r) => ({
-      token: r.token,
+      token: maskToken(getAccessToken(r.credentials)),
       name: r.name,
+      provider: r.provider,
       requests: this.countOf(r.name),
     }));
   }
 
-  selectToken(): TokenSubsetA | null {
-    const rows = [...this.tokens.values()];
+  selectToken(provider = "anthropic"): TokenSubsetA | null {
+    const rows = [...this.tokens.values()].filter((r) => r.provider === provider);
     if (rows.length === 0) return null;
 
     const minCount = Math.min(...rows.map((r) => this.countOf(r.name)));
@@ -100,39 +113,167 @@ export class QgridDispatcherClass {
     return picked;
   }
 
-  async query(input: QueryInput, timeoutMs?: number): Promise<CliResult> {
+  async query(input: QueryInput, timeoutMs?: number): Promise<QueryOutput> {
+    if (input.tools?.length && input.jsonSchema) {
+      throw new ProcessError("tools and jsonSchema cannot be used together");
+    }
+
+    const outputSchema = input.tools?.length
+      ? buildToolCallSchema(input.tools)
+      : input.jsonSchema
+        ? (JSON.parse(input.jsonSchema) as JsonValue)
+        : undefined;
+
+    // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
+    if (input.model?.includes("/")) {
+      const [provider, model] = input.model.split("/", 2);
+      assert(model, "unknown model");
+      if (provider === "openai") {
+        if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+        const result = await this.openaiDispatcher.generate({
+          model: model,
+          input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
+          systemPrompt: input.system,
+          outputSchema: outputSchema
+            ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
+            : undefined,
+          effort: input.effort,
+          verbosity: input.verbosity,
+          reasoningSummary: input.reasoningSummary,
+          serviceTier: input.serviceTier,
+          history: input.history ? JSON.parse(input.history) : undefined,
+        });
+
+        return applyToolCallEmulation(
+          {
+            text: result.text,
+            tokenName: result.tokenName,
+            model: result.model,
+            usage: {
+              input_tokens: result.usage.inputTokens,
+              output_tokens: result.usage.outputTokens,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: result.usage.cachedInputTokens,
+            },
+            durationMs: result.durationMs,
+            costUsd: calculateCostUsd(result.model, {
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              cachedInputTokens: result.usage.cachedInputTokens,
+            }),
+          },
+          input.tools,
+        );
+      }
+    }
+
+    const executionInput =
+      outputSchema && input.tools?.length
+        ? { ...input, jsonSchema: JSON.stringify(outputSchema) }
+        : input;
+
+    // Anthropic (기존 claude -p 경로)
     const electedToken = this.selectToken();
     if (!electedToken) throw new QuotaError("No tokens available");
 
     // await 전에 count 선반영. 병렬 요청이 동시에 도착해도 각자 다른 토큰을 고르도록.
     this.requestCounts.set(electedToken.name, this.countOf(electedToken.name) + 1);
 
-    let token = electedToken.token;
-    // expires_at 임박이면 refresh.
-    // refresh 후 DB save → trigger NOTIFY → subscriber 가 받아 캐시 갱신 (다른 dispatcher 도 동기화)
+    let token = getAccessToken(electedToken.credentials);
+    // expires_at 임박이면 preemptive refresh
+    const expiresAt = getExpiresAt(electedToken.credentials);
     if (
-      electedToken.expires_at &&
-      Number(electedToken.expires_at) - Date.now() < REFRESH_SAFETY_MS &&
-      electedToken.refresh_token
+      expiresAt &&
+      expiresAt - Date.now() < REFRESH_SAFETY_MS &&
+      getRefreshToken(electedToken.credentials)
     ) {
       try {
         const { QgridFrame } = await import("./qgrid.frame");
-        token = await QgridFrame.refreshToken({
-          id: electedToken.id,
-          token: electedToken.token,
-          name: electedToken.name,
-          refresh_token: electedToken.refresh_token,
-        });
+        token = await QgridFrame.refreshToken(electedToken);
       } catch (e) {
         logger.warn(`refresh failed for ${electedToken.name}: ${(e as Error).message}`);
-        // refresh 실패 시 기존 token 으로 진행. executeClaude 가 401 받으면 caller 처리.
       }
     }
 
     logger.info(`→ ${electedToken.name} (model: ${input.model ?? DEFAULT_MODEL})`);
 
-    const result = await executeClaude(input, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    return { ...result, tokenName: electedToken.name, model: input.model ?? DEFAULT_MODEL };
+    const result = await executeClaude(executionInput, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    return applyToolCallEmulation(
+      { ...result, tokenName: electedToken.name, model: input.model ?? DEFAULT_MODEL },
+      input.tools,
+    );
+  }
+
+  async queryStream(
+    input: QueryInput,
+    cb: {
+      onDelta: (text: string) => void;
+      onComplete: (result: QueryOutput) => void;
+      onError: (error: Error) => void;
+      onThreadId?: (threadId: string) => void;
+      onTurnId?: (turnId: string) => void;
+    },
+  ): Promise<void> {
+    if (!input.model?.startsWith("openai/")) {
+      const result = await this.query(input);
+      cb.onComplete(result);
+      return;
+    }
+
+    const [, model] = input.model.split("/", 2);
+    if (!model) throw new ProcessError("unknown model");
+    if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+
+    const outputSchema = input.tools?.length
+      ? buildToolCallSchema(input.tools)
+      : input.jsonSchema
+        ? (JSON.parse(input.jsonSchema) as JsonValue)
+        : undefined;
+
+    await this.openaiDispatcher.generateStream(
+      {
+        model,
+        input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
+        systemPrompt: input.system,
+        outputSchema: outputSchema
+          ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
+          : undefined,
+        effort: input.effort,
+        verbosity: input.verbosity,
+        reasoningSummary: input.reasoningSummary,
+        serviceTier: input.serviceTier,
+        history: input.history ? JSON.parse(input.history) : undefined,
+      },
+      {
+        onDelta: cb.onDelta,
+        onThreadId: cb.onThreadId,
+        onTurnId: cb.onTurnId,
+        onComplete: (turnResult) => {
+          const applied = applyToolCallEmulation(
+            {
+              text: turnResult.text,
+              tokenName: (turnResult as unknown as { tokenName?: string }).tokenName,
+              model: turnResult.model,
+              usage: {
+                input_tokens: turnResult.usage.inputTokens,
+                output_tokens: turnResult.usage.outputTokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: turnResult.usage.cachedInputTokens,
+              },
+              durationMs: turnResult.durationMs,
+              costUsd: calculateCostUsd(turnResult.model, {
+                inputTokens: turnResult.usage.inputTokens,
+                outputTokens: turnResult.usage.outputTokens,
+                cachedInputTokens: turnResult.usage.cachedInputTokens,
+              }),
+            },
+            input.tools,
+          );
+          cb.onComplete(applied);
+        },
+        onError: cb.onError,
+      },
+    );
   }
 }
 
@@ -140,8 +281,9 @@ async function executeClaude(
   input: QueryInput,
   token: string,
   timeoutMs: number,
-): Promise<CliResult> {
-  const model = input.model ?? DEFAULT_MODEL;
+): Promise<Omit<QueryOutput, "content" | "finishReason">> {
+  const rawModel = input.model ?? DEFAULT_MODEL;
+  const model = rawModel.includes("/") ? rawModel.split("/").pop()! : rawModel;
   const timeout = input.timeout ?? timeoutMs;
   const useStructuredOutput = input.jsonSchema && input.jsonSchema.length > 0;
 
@@ -198,7 +340,7 @@ async function executeClaude(
     CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
   };
 
-  return new Promise<CliResult>((resolve, reject) => {
+  return new Promise<Omit<QueryOutput, "content" | "finishReason">>((resolve, reject) => {
     const child = spawn("claude", args, {
       stdio: ["ignore", "pipe", "ignore"],
       env,

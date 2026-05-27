@@ -59,10 +59,6 @@ class TokenModelClass extends BaseModelClass<
       qb.whereIn("tokens.id", asArray(params.id));
     }
 
-    if (params.token) {
-      qb.where("tokens.token", params.token);
-    }
-
     if (params.search && params.keyword && params.keyword.length > 0) {
       if (params.search === "id") {
         qb.where("tokens.id", Number(params.keyword));
@@ -91,29 +87,33 @@ class TokenModelClass extends BaseModelClass<
     return this.executeSubsetQuery({ subset, qb, params, enhancers, debug: false });
   }
 
-  async findByToken<T extends TokenSubsetKey>(
+  async findByAccountIdentifier<T extends TokenSubsetKey>(
     subset: T,
-    token: string,
-  ): Promise<TokenSubsetMapping[T] | null> {
+    provider: string,
+    accountId: string,
+  ): Promise<TokenSubsetMapping[T][]> {
     const { qb } = this.getSubsetQueries(subset);
-    qb.where("tokens.token", token);
+    qb.where("tokens.provider", provider);
+    const jsonKey = provider === "anthropic" ? "accountUuid" : "accountId";
+    qb.whereRaw(`tokens.credentials->>'${jsonKey}' = ?`, [accountId]);
     const enhancers = this.createEnhancers({ A: (row) => ({ ...row }) });
     const result = await this.executeSubsetQuery({
       subset,
       qb,
-      params: { num: 1, page: 1 },
+      params: { num: 100, page: 1 },
       enhancers,
       debug: false,
     });
-    return result.rows[0] ?? null;
+    return result.rows;
   }
 
-  async findByAccountUuid<T extends TokenSubsetKey>(
+  async findActiveByProvider<T extends TokenSubsetKey>(
     subset: T,
-    accountUuid: string,
+    provider: string,
   ): Promise<TokenSubsetMapping[T][]> {
     const { qb } = this.getSubsetQueries(subset);
-    qb.where("tokens.account_uuid", accountUuid);
+    qb.where("tokens.active", true);
+    qb.where("tokens.provider", provider);
     const enhancers = this.createEnhancers({ A: (row) => ({ ...row }) });
     const result = await this.executeSubsetQuery({
       subset,

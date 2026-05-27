@@ -9,6 +9,7 @@ import {
 } from "sonamu";
 
 import { SD } from "../../i18n/sd.generated";
+import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogSubsetKey, type RequestLogSubsetMapping } from "../sonamu.generated";
 import { requestLogLoaderQueries, requestLogSubsetQueries } from "../sonamu.generated.sso";
 import { type RequestLogListParams, type RequestLogSaveParams } from "./request-log.types";
@@ -149,6 +150,181 @@ class RequestLogModelClass extends BaseModelClass<
     });
   }
 
+  // ── Run Lifecycle ──────────────────────────────────────────────
+
+  async createRun(params: {
+    user_prompt: string;
+    system_prompt?: string | null;
+    model_name?: string | null;
+    effort?: string | null;
+    project_name?: string | null;
+  }): Promise<number> {
+    const wdb = this.getPuri("w");
+    wdb.ubRegister("request_logs", {
+      user_prompt: params.user_prompt,
+      system_prompt: params.system_prompt ?? null,
+      model_name: params.model_name ?? null,
+      effort: params.effort ?? null,
+      project_name: params.project_name ?? null,
+      status: "running",
+      response: "",
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      duration_ms: 0,
+      tool_call_count: 0,
+    });
+    return wdb.transaction(async (trx) => {
+      const ids = await trx.ubUpsert("request_logs");
+      return ids[0]!;
+    });
+  }
+
+  async appendStep(requestLogId: number, step: Record<string, unknown>): Promise<number> {
+    const wdb = this.getPuri("w");
+    wdb.ubRegister("request_log_steps", { request_log_id: requestLogId, ...step });
+    return wdb.transaction(async (trx) => {
+      const ids = await trx.ubUpsert("request_log_steps");
+      if (step.type === "tool_call") {
+        await trx.from("request_logs").where("id", requestLogId).increment("tool_call_count", 1);
+      }
+      return ids[0]!;
+    });
+  }
+
+  async finishRun(
+    requestLogId: number,
+    params: {
+      status: string;
+      response?: string;
+      token_name?: string;
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_tokens?: number;
+      cache_creation_tokens?: number;
+      duration_ms?: number;
+      history?: unknown;
+      error_message?: string;
+      tool_call_count?: number;
+    },
+  ): Promise<void> {
+    if (params.status === "succeeded" && !params.token_name) {
+      throw new Error("tokenName is required for succeeded runs");
+    }
+    const update: Record<string, unknown> = { id: requestLogId, status: params.status };
+    const fields = [
+      "response",
+      "token_name",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_creation_tokens",
+      "duration_ms",
+      "error_message",
+      "tool_call_count",
+    ] as const;
+    for (const key of fields) {
+      if (params[key] !== undefined) update[key] = params[key];
+    }
+    if (params.history !== undefined) update.history = params.history;
+
+    if (params.input_tokens !== undefined && params.output_tokens !== undefined) {
+      const db = this.getDB("r");
+      const [row] = await db("request_logs")
+        .select("model_name")
+        .where("id", requestLogId)
+        .limit(1);
+      if (row?.model_name) {
+        const model = row.model_name.includes("/")
+          ? row.model_name.split("/").pop()!
+          : row.model_name;
+        update.cost_usd = Math.round(
+          calculateCostUsd(model, {
+            inputTokens: params.input_tokens,
+            outputTokens: params.output_tokens,
+            cachedInputTokens: params.cache_read_tokens ?? 0,
+          }) * 1_000_000,
+        );
+      }
+    }
+
+    const wdb = this.getPuri("w");
+    wdb.ubRegister("request_logs", update);
+    await wdb.transaction(async (trx) => {
+      await trx.ubUpsert("request_logs");
+    });
+  }
+
+  async aggregateStepUsage(requestLogId: number): Promise<{
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    duration_ms: number;
+  }> {
+    const db = this.getDB("r");
+    const [row] = await db("request_log_steps")
+      .where("request_log_id", requestLogId)
+      .where("type", "generate")
+      .sum({
+        input_tokens: "input_tokens",
+        output_tokens: "output_tokens",
+        cache_read_tokens: "cache_read_tokens",
+        cache_creation_tokens: "cache_creation_tokens",
+        duration_ms: "duration_ms",
+      });
+    return {
+      input_tokens: Number(row?.input_tokens ?? 0),
+      output_tokens: Number(row?.output_tokens ?? 0),
+      cache_read_tokens: Number(row?.cache_read_tokens ?? 0),
+      cache_creation_tokens: Number(row?.cache_creation_tokens ?? 0),
+      duration_ms: Number(row?.duration_ms ?? 0),
+    };
+  }
+
+  async findStaleRunningIds(thresholdMs: number, limit: number = 10): Promise<number[]> {
+    const db = this.getDB("r");
+    const threshold = new Date(Date.now() - thresholdMs);
+    const rows = await db("request_logs")
+      .select("id")
+      .where("status", "running")
+      .where("created_at", "<", threshold)
+      .limit(limit);
+    return rows.map((r: { id: number }) => r.id);
+  }
+
+  async getNextStepIndex(requestLogId: number): Promise<number> {
+    const db = this.getDB("r");
+    const [row] = await db("request_log_steps")
+      .where("request_log_id", requestLogId)
+      .max("step_index as maxStep");
+    return ((row as { maxStep: number | null })?.maxStep ?? -1) + 1;
+  }
+
+  async completeToolCall(
+    requestLogId: number,
+    toolCallId: string,
+    params: { tool_result?: string; tool_duration_ms?: number; error?: string },
+  ): Promise<number> {
+    const wdb = this.getPuri("w");
+    return wdb.transaction(async (trx) => {
+      const updated = await trx
+        .from("request_log_steps")
+        .where("request_log_id", requestLogId)
+        .where("tool_call_id", toolCallId)
+        .where("type", "tool_call")
+        .update({
+          ...(params.tool_result !== undefined ? { tool_result: params.tool_result } : {}),
+          ...(params.tool_duration_ms !== undefined
+            ? { tool_duration_ms: params.tool_duration_ms }
+            : {}),
+          ...(params.error !== undefined ? { error: params.error } : {}),
+        });
+      return updated;
+    });
+  }
+
   // Sonamu findMany는 subset 전체 컬럼(text 포함)을 페치해서 aggregate엔 너무 무거움 → raw sum 사용.
   async totalCost(params: { token_name?: string } = {}): Promise<number> {
     const qb = this.getDB("r")("request_logs");
@@ -178,6 +354,10 @@ class RequestLogModelClass extends BaseModelClass<
 
     // transaction
     await wdb.transaction(async (trx) => {
+      await trx
+        .table("request_log_steps")
+        .whereIn("request_log_steps.request_log_id", ids)
+        .delete();
       return trx.table("request_logs").whereIn("request_logs.id", ids).delete();
     });
 

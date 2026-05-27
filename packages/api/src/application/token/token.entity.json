@@ -5,32 +5,20 @@
   "props": [
     { "name": "id", "type": "integer", "desc": "ID" },
     { "name": "created_at", "type": "date", "desc": "등록일시", "dbDefault": "CURRENT_TIMESTAMP" },
-    { "name": "token", "toFilter": true, "desc": "access_token", "type": "string" },
-    { "name": "name", "desc": "토큰 이름", "type": "string" },
-    { "name": "refresh_token", "type": "string", "nullable": true, "desc": "refresh_token" },
+    { "name": "provider", "desc": "프로바이더", "type": "string", "length": 20 },
     {
-      "name": "expires_at",
-      "type": "bigInteger",
-      "nullable": true,
-      "desc": "만료 시각 (epoch ms)"
+      "name": "credentials",
+      "id": "TokenCredentials",
+      "desc": "인증 정보 (JSONB)",
+      "type": "json"
     },
-    { "name": "account_uuid", "type": "string", "nullable": true, "desc": "Anthropic 계정 UUID" },
+    { "name": "name", "desc": "토큰 이름", "type": "string" },
     { "name": "active", "type": "boolean", "desc": "활성 여부", "dbDefault": "true" },
     { "name": "ord", "type": "integer", "desc": "정렬 순서", "dbDefault": "0" }
   ],
   "indexes": [],
   "subsets": {
-    "A": [
-      "id",
-      "created_at",
-      "token",
-      "name",
-      "refresh_token",
-      "expires_at",
-      "account_uuid",
-      "active",
-      "ord"
-    ]
+    "A": ["id", "created_at", "provider", "credentials", "name", "active", "ord"]
   },
   "enums": {
     "TokenOrderBy": { "id-desc": "ID최신순", "ord-asc": "순서순" },

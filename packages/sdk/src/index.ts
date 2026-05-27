@@ -2,12 +2,25 @@ import { type generateText as _aiGenerateText } from "ai";
 import { z } from "zod";
 
 import { type OutputDefinition } from "./output";
-import { type QgridResponse, type QgridTypedResponse, type QgridUsage } from "./types";
+import {
+  type QgridContent,
+  type QgridResponse,
+  type QgridTool,
+  type QgridTypedResponse,
+  type QgridUsage,
+} from "./types";
 
 type AiGenerateTextParams = Parameters<typeof _aiGenerateText>[0];
 type AiGenerateTextResult = Awaited<ReturnType<typeof _aiGenerateText>>;
 
 export type QgridModel =
+  // OpenAI (codex app-server 실측 2026-05-18)
+  | "openai/gpt-5.5"
+  | "openai/gpt-5.4"
+  | "openai/gpt-5.4-mini"
+  | "openai/gpt-5.3-codex"
+  | "openai/gpt-5.2"
+  // Anthropic
   | "anthropic/claude-haiku-4.5"
   | "anthropic/claude-sonnet-4"
   | "anthropic/claude-sonnet-4.5"
@@ -17,11 +30,12 @@ export type QgridModel =
   | "anthropic/claude-opus-4.1"
   | "anthropic/claude-opus-4.5"
   | "anthropic/claude-opus-4.6"
-  | "anthropic/claude-opus-4.7";
+  | "anthropic/claude-opus-4.7"
+  | (string & {});
 
-// "anthropic/claude-sonnet-4.6" → "claude-sonnet-4-6"
-function toCliModel(model: QgridModel): string {
-  return model.replace(/^anthropic\//, "").replace(/\./g, "-");
+function toServerModel(model: QgridModel): string {
+  if (model.includes("/")) return model;
+  return `anthropic/${model}`;
 }
 
 export class QgridError extends Error {
@@ -71,12 +85,17 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
   model?: QgridModel;
   projectName?: string;
   returnType?: T;
+  tools?: QgridTool[];
   effort?: QgridEffort;
   abortSignal?: AbortSignal;
   serverUrl?: string;
 }): Promise<T extends z.ZodType ? QgridTypedResponse<z.infer<T>> : QgridResponse> {
-  const { prompt, system, model, projectName, returnType, effort } = params;
-  const cliModel = model ? toCliModel(model) : undefined;
+  const { prompt, system, model, projectName, returnType, tools, effort } = params;
+  if (returnType && tools?.length) {
+    throw new QgridError("INVALID_REQUEST", 400, "returnType and tools cannot be used together");
+  }
+
+  const serverModel = model ? toServerModel(model) : undefined;
   const url = params.serverUrl ?? process.env.QGRID_URL ?? "http://localhost:44900";
   const signal = params.abortSignal ?? AbortSignal.timeout(300_000);
 
@@ -88,12 +107,15 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt,
-      system,
-      model: cliModel,
-      projectName: projectName ?? process.env.QGRID_PROJECT_NAME,
-      jsonSchema: schemaEntry?.json,
-      effort,
+      args: {
+        prompt,
+        system,
+        model: serverModel,
+        projectName: projectName ?? process.env.QGRID_PROJECT_NAME,
+        jsonSchema: schemaEntry?.json,
+        tools,
+        effort,
+      },
     }),
     signal,
   });
@@ -105,7 +127,16 @@ export async function queryQgrid<T extends z.ZodType | undefined = undefined>(pa
     throw new QgridError("REQUEST_FAILED", res.status, message);
   }
 
-  const { text, ...rest } = await res.json();
+  const raw = await res.json();
+  const text = raw.text as string;
+  const content = (raw.content ?? [{ type: "text", text }]) as QgridContent[];
+  const rest = {
+    ...raw,
+    text,
+    content,
+    finishReason: raw.finishReason ?? "stop",
+  };
+
   if (!returnType || !schemaEntry) {
     return { ...rest, data: text };
   }
@@ -214,5 +245,12 @@ export async function generateText(
 
 export { Output } from "./output";
 export type { OutputDefinition } from "./output";
-export type { QgridBase, QgridResponse, QgridTypedResponse, QgridUsage } from "./types";
+export type {
+  QgridBase,
+  QgridContent,
+  QgridResponse,
+  QgridTool,
+  QgridTypedResponse,
+  QgridUsage,
+} from "./types";
 export type { FinishReason, GenerateTextResult, LanguageModelUsage } from "ai";

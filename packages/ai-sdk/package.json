@@ -1,0 +1,31 @@
+{
+  "name": "@cartanova/qgrid-ai-sdk",
+  "version": "0.1.0",
+  "description": "AI SDK LanguageModelV3 provider for qgrid",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown && mv dist/index-*.d.ts dist/index.d.ts",
+    "test": "vitest run",
+    "e2e": "tsx e2e/e2e.ts",
+    "e2e:logger": "tsx e2e/e2e-logger.ts"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "catalog:",
+    "ai": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@ai-sdk/provider": "^3.0.0",
+    "ai": "^6.0.0"
+  }
+}

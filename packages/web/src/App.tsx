@@ -2,6 +2,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { type ReactNode, Suspense, useEffect } from "react";
 
 import Sidebar from "./components/Sidebar";
+import { Toolbar } from "./components/Toolbar";
 import { SUPPORTED_LOCALES, setLocale } from "./i18n/sd.generated";
 
 interface AppProps {
@@ -22,15 +23,20 @@ function App({ children }: AppProps) {
   const showSidebar = !hideSidebarPaths.includes(pathname);
 
   return (
-    <div className="flex h-screen w-full bg-white overflow-hidden">
+    <div className="flex h-screen w-full bg-sand-100 overflow-hidden font-sans">
       {showSidebar && <Sidebar />}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-        <Suspense
-          fallback={<div className="text-sand-400 text-center py-8 text-sm">로딩 중...</div>}
-        >
-          {children}
-        </Suspense>
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {showSidebar && <Toolbar />}
+        <main className="flex-1 overflow-y-auto main-scroll content-inset">
+          <div className="px-6 py-5 md:px-8">
+            <Suspense
+              fallback={<div className="text-sand-400 text-center py-8 text-sm">로딩 중...</div>}
+            >
+              {children}
+            </Suspense>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
