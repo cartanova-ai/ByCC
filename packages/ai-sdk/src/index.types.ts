@@ -96,7 +96,8 @@ export type AppendStepInput = {
 };
 
 export type QgridLoggerConfig = {
-  serverUrl: string;
+  /** qgrid 서버 주소. 기본값: QGRID_URL 환경변수 또는 http://localhost:44900 */
+  serverUrl?: string;
   projectName?: string;
   tokenName?: string;
   /**

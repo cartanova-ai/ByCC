@@ -62,7 +62,10 @@ function timedKeySet() {
   };
 }
 
-export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings {
+export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySettings {
+  const DEFAULT_SERVER_URL = "http://localhost:44900";
+  const serverUrl = config.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
+  const onLogError = config.onLogError ?? ((e: Error) => console.warn(`[qgrid-logger] ${e.message}`));
   const runs = new Map<string, RunState>();
   const keyTtl =
     typeof config.staleRunTimeoutMs === "number" && config.staleRunTimeoutMs > 0
@@ -94,7 +97,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
 
     for (const pending of run.pendingToolCalls) {
       run.pendingSteps.push(
-        appendStep(config.serverUrl, {
+        appendStep(serverUrl, {
           requestLogId: run.requestLogId,
           stepIndex: pending.stepIndex,
           type: "tool_call",
@@ -103,13 +106,13 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
           toolName: pending.toolName,
           toolArgs: pending.toolArgs,
           toolDurationMs: run.toolDurations.get(pending.toolCallId),
-        }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
+        }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e)))),
       );
     }
     run.pendingToolCalls = [];
 
     await Promise.allSettled(run.pendingSteps);
-    await finishRun(config.serverUrl, {
+    await finishRun(serverUrl, {
       requestLogId: run.requestLogId,
       status: result.status,
       response: result.response,
@@ -121,7 +124,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
       totalDurationMs: Date.now() - run.startTime,
       history: run.history,
       ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-    }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e))));
+    }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e))));
   };
 
   let autoRunIdCounter = 0;
@@ -146,7 +149,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
       }
       const runKey = resolveRunKey(event);
       if (quarantined.has(runKey)) {
-        config.onLogError?.(
+        onLogError(
           new Error("createQgridLogger: telemetry key is quarantined after overlap"),
         );
         return;
@@ -162,13 +165,13 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
           "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
         await finalizeRun(runKey, { status: "error", errorMessage: msg });
         quarantined.add(runKey, keyTtl);
-        config.onLogError?.(new Error(msg));
+        onLogError(new Error(msg));
         return;
       }
 
       try {
         const messages = event.messages ?? (Array.isArray(event.prompt) ? event.prompt : undefined);
-        const result = await createRun(config.serverUrl, {
+        const result = await createRun(serverUrl, {
           userPrompt: extractUserPrompt(event.prompt, messages),
           systemPrompt: extractSystemPrompt(event.system),
           modelName: event.model.modelId,
@@ -228,7 +231,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
           finishing: false,
         });
       } catch (e) {
-        config.onLogError?.(e instanceof Error ? e : new Error(String(e)));
+        onLogError(e instanceof Error ? e : new Error(String(e)));
       }
     },
 
@@ -260,7 +263,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
         // tool call 에러도 step으로 간주
         if (tr || te) {
           run.pendingSteps.push(
-            appendStep(config.serverUrl, {
+            appendStep(serverUrl, {
               requestLogId: run.requestLogId,
               stepIndex: pending.stepIndex,
               type: "tool_call",
@@ -271,7 +274,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
               toolResult: tr && "output" in tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(pending.toolCallId),
               error: te && "error" in te ? safeStringify(te.error) : undefined,
-            }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
+            }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e)))),
           );
           run.toolDurations.delete(pending.toolCallId);
         } else {
@@ -282,7 +285,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
 
       // generate step
       run.pendingSteps.push(
-        appendStep(config.serverUrl, {
+        appendStep(serverUrl, {
           requestLogId: run.requestLogId,
           stepIndex: stepNumber,
           type: "generate",
@@ -296,7 +299,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
               ? reasoningText
               : undefined,
           reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
-        }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
+        }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e)))),
       );
 
       // 이번 step의 새 tool-call
@@ -309,7 +312,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
         const te = content.find((p) => p.type === "tool-error" && p.toolCallId === tc.toolCallId);
         if (tr || te) {
           run.pendingSteps.push(
-            appendStep(config.serverUrl, {
+            appendStep(serverUrl, {
               requestLogId: run.requestLogId,
               stepIndex: stepNumber,
               type: "tool_call",
@@ -320,7 +323,7 @@ export function createQgridLogger(config: QgridLoggerConfig): TelemetrySettings 
               toolResult: tr && "output" in tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(tc.toolCallId),
               error: te && "error" in te ? safeStringify(te.error) : undefined,
-            }).catch((e) => config.onLogError?.(e instanceof Error ? e : new Error(String(e)))),
+            }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e)))),
           );
           run.toolDurations.delete(tc.toolCallId);
         } else {
