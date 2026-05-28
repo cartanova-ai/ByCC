@@ -20,20 +20,15 @@ const host = process.env.HOST ?? "localhost";
 const port = Number(process.env.PORT ?? 44900);
 
 const connConfig = {
-  // host: process.env.QGRID_DB_HOST ?? "localhost",
-  // port: Number(process.env.QGRID_DB_PORT ?? 5432),
-  // user: process.env.QGRID_DB_USER ?? "postgres",
-  // password: process.env.QGRID_DB_PASSWORD ?? "postgres",
-  // database: process.env.QGRID_DB_NAME ?? "qgrid",
-  host: "localhost",
-  port: 5432,
-  user: "postgres",
-  password: "postgres",
-  database: "qgrid",
+  host: process.env.QGRID_DB_HOST ?? "localhost",
+  port: Number(process.env.QGRID_DB_PORT ?? 5432),
+  user: process.env.QGRID_DB_USER ?? "postgres",
+  password: process.env.QGRID_DB_PASSWORD ?? "postgres",
+  database: process.env.QGRID_DB_NAME ?? "qgrid",
 };
 
 export default defineConfig({
-  projectName: process.env.PROJECT_NAME ?? "SonamuProject",
+  projectName: process.env.PROJECT_NAME ?? "Qgrid",
   database: {
     name: "qgrid",
     defaultOptions: {
@@ -66,14 +61,6 @@ export default defineConfig({
   sync: {
     targets: ["web"],
   },
-  slackConfirm:
-    process.env.SLACK_BOT_TOKEN && process.env.SLACK_CHANNEL_ID
-      ? {
-          targets: ["development_master", "production_master"],
-          botToken: process.env.SLACK_BOT_TOKEN ?? "",
-          channelId: process.env.SLACK_CHANNEL_ID ?? "",
-        }
-      : undefined,
   test: {
     parallel: true,
     maxWorkers: 4,
