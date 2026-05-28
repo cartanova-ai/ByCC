@@ -72,6 +72,7 @@ export type CreateRunInput = {
   modelName?: string;
   effort?: string;
   projectName?: string;
+  history?: string;
 };
 
 export type AppendStepInput = {
@@ -96,9 +97,15 @@ export type AppendStepInput = {
 };
 
 export type QgridLoggerConfig = {
-  /** qgrid 서버 주소. 기본값: QGRID_URL 환경변수 또는 http://localhost:44900 */
+  /** qgrid 서버 주소. default: process.env.QGRID_URL, 없으면 기본값은 "http://localhost:44900" */
   serverUrl?: string;
+  /**
+   * 프로젝트 이름. default: process.env.QGRID_PROJECT_NAME, 없으면 기본값은 ""
+   */
   projectName?: string;
+  /**
+   * 토큰 이름. 외부에서 호출할경우 기본값은 "external"
+   */
   tokenName?: string;
   /**
    * Fallback timeout for runs that receive onStart but never receive onFinish.
