@@ -64,6 +64,8 @@ function timedKeySet() {
 export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySettings {
   const DEFAULT_SERVER_URL = "http://localhost:44900";
   const serverUrl = config.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
+  const projectName = config.projectName ?? process.env.QGRID_PROJECT_NAME;
+  const tokenName = config.tokenName ?? process.env.QGRID_TOKEN_NAME ?? "external";
   const onLogError = config.onLogError ?? ((e: Error) => console.warn(`[qgrid-logger] ${e.message}`));
   const runs = new Map<string, RunState>();
   const keyTtl =
@@ -174,7 +176,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
           userPrompt: extractUserPrompt(event.prompt, messages),
           systemPrompt: extractSystemPrompt(event.system),
           modelName: event.model.modelId,
-          projectName: config.projectName,
+          projectName,
+          history,
         });
 
         // watchdog timeout
