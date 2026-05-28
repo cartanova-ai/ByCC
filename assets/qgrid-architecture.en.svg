@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1280" viewBox="0 0 1600 1280" role="img" aria-labelledby="title desc">
+  <title id="title">Qgrid architecture diagram</title>
+  <desc id="desc">Qgrid architecture diagram with separated lanes for request routing, OpenAI codex app-server worker execution, Anthropic execution, token synchronization, and request logging.</desc>
+  <defs>
+    <marker id="blueArrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M 0 0 L 7 3.5 L 0 7 z" fill="#2563eb"/>
+    </marker>
+    <marker id="tealArrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M 0 0 L 7 3.5 L 0 7 z" fill="#0f766e"/>
+    </marker>
+    <marker id="purpleArrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M 0 0 L 7 3.5 L 0 7 z" fill="#7c3aed"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .laneTitle { font: 700 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.4; filter: url(#shadow); }
+      .server { fill: #eef6ff; stroke: #bfdbfe; stroke-width: 1.5; filter: url(#shadow); }
+      .openai { fill: #ecfeff; stroke: #99f6e4; stroke-width: 1.5; filter: url(#shadow); }
+      .anthropic { fill: #fff1f2; stroke: #fecdd3; stroke-width: 1.5; filter: url(#shadow); }
+      .db { fill: #f5f3ff; stroke: #ddd6fe; stroke-width: 1.5; filter: url(#shadow); }
+      .queue { fill: #fff7ed; stroke: #fed7aa; stroke-width: 1.3; }
+      .box { fill: #f8fafc; stroke: #dbe4ee; stroke-width: 1.2; }
+      .white { fill: #ffffff; stroke: #dbe4ee; stroke-width: 1.1; }
+      .title { font: 700 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .subtitle { font: 500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .h { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .h2 { font: 700 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1e293b; }
+      .body { font: 500 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .small { font: 500 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .mono { font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #334155; }
+      .chip { fill: #e2e8f0; }
+      .chipText { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .request { stroke: #2563eb; stroke-width: 2.1; fill: none; marker-end: url(#blueArrow); stroke-linecap: round; stroke-linejoin: round; }
+      .sync { stroke: #0f766e; stroke-width: 2; stroke-dasharray: 7 7; fill: none; marker-end: url(#tealArrow); stroke-linecap: round; stroke-linejoin: round; }
+      .log { stroke: #7c3aed; stroke-width: 1.9; stroke-dasharray: 5 6; fill: none; marker-end: url(#purpleArrow); stroke-linecap: round; stroke-linejoin: round; }
+      .label { fill: #ffffff; stroke: #dbe4ee; stroke-width: 1; }
+      .labelText { font: 700 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="1280"/>
+
+  <text class="title" x="64" y="64">Qgrid Architecture</text>
+  <text class="subtitle" x="64" y="94">AI SDK compatible proxy for subscription tokens, codex app-server workers, token sync, and request logging</text>
+
+  <g transform="translate(64 126)">
+    <rect class="chip" x="0" y="0" width="166" height="30" rx="15"/>
+    <text class="chipText" x="20" y="20">blue: request</text>
+    <path d="M 112 15 H 146" class="request"/>
+
+    <rect class="chip" x="192" y="0" width="172" height="30" rx="15"/>
+    <text class="chipText" x="212" y="20">teal: token sync</text>
+    <path d="M 316 15 H 350" class="sync"/>
+
+    <rect class="chip" x="390" y="0" width="178" height="30" rx="15"/>
+    <text class="chipText" x="410" y="20">purple: logs</text>
+    <path d="M 500 15 H 540" class="log"/>
+  </g>
+
+  <text class="laneTitle" x="64" y="198">1. Request routing</text>
+
+  <g>
+    <rect class="panel" x="64" y="222" width="230" height="176" rx="16"/>
+    <text class="h" x="92" y="260">User project</text>
+    <rect class="box" x="92" y="286" width="174" height="36" rx="9"/>
+    <text class="mono" x="110" y="310">generateText()</text>
+    <rect class="box" x="92" y="336" width="174" height="36" rx="9"/>
+    <text class="mono" x="110" y="360">streamText()</text>
+  </g>
+
+  <g>
+    <rect class="panel" x="354" y="222" width="260" height="176" rx="16"/>
+    <text class="h" x="382" y="260">Qgrid AI SDK</text>
+    <text class="mono" x="382" y="292">qgrid("openai/...")</text>
+    <text class="mono" x="382" y="318">serverUrl / QGRID_URL</text>
+    <text class="body" x="382" y="352">POST body: { args }</text>
+  </g>
+
+  <g>
+    <rect class="server" x="674" y="222" width="280" height="176" rx="16"/>
+    <text class="h" x="702" y="260">Qgrid API</text>
+    <text class="mono" x="702" y="292">/api/qgrid/query</text>
+    <text class="mono" x="702" y="318">/prepareStream</text>
+    <text class="mono" x="702" y="344">/queryStream</text>
+    <text class="small" x="702" y="374">QgridFrame: lifecycle + SSE</text>
+  </g>
+
+  <g>
+    <rect class="server" x="1014" y="222" width="300" height="176" rx="16"/>
+    <text class="h" x="1042" y="260">QgridDispatcher</text>
+    <text class="body" x="1042" y="292">Routes by provider prefix</text>
+    <text class="mono" x="1042" y="318">openai/* -> OpenAI</text>
+    <text class="mono" x="1042" y="344">other -> Anthropic</text>
+    <text class="small" x="1042" y="374">Normalizes content, usage, cost</text>
+  </g>
+
+  <g>
+    <rect class="panel" x="1374" y="222" width="162" height="176" rx="16"/>
+    <text class="h" x="1402" y="260">Return</text>
+    <text class="mono" x="1402" y="292">QueryOutput</text>
+    <text class="mono" x="1402" y="318">SSE done</text>
+    <text class="small" x="1402" y="352">AI SDK maps</text>
+    <text class="small" x="1402" y="374">metadata back</text>
+  </g>
+
+  <path class="request" d="M 294 310 H 354"/>
+  <path class="request" d="M 614 310 H 674"/>
+  <path class="request" d="M 954 310 H 1014"/>
+  <path class="request" d="M 1314 310 H 1374"/>
+
+  <text class="laneTitle" x="64" y="472">2. OpenAI execution path</text>
+
+  <g>
+    <rect class="openai" x="64" y="496" width="1472" height="334" rx="18"/>
+    <text class="h" x="94" y="538">OpenAI path: token-based codex app-server worker pool</text>
+
+    <rect class="queue" x="94" y="564" width="410" height="102" rx="12"/>
+    <text class="h2" x="122" y="594">OpenAIDispatcher</text>
+    <text class="body" x="122" y="620">Chooses ready + active + not busy worker.</text>
+    <text class="body" x="122" y="644">Round-robin; otherwise waits in queue.</text>
+
+    <rect class="white" x="544" y="564" width="320" height="102" rx="12"/>
+    <text class="h2" x="572" y="594">Backpressure</text>
+    <text class="body" x="572" y="620">Queue limit: 50</text>
+    <text class="body" x="572" y="644">Queue timeout: 60 seconds</text>
+
+    <rect class="white" x="94" y="702" width="390" height="92" rx="12"/>
+    <text class="h2" x="122" y="732">OpenAI token A</text>
+    <text class="mono" x="122" y="764">codex[0]</text>
+    <text class="mono" x="232" y="764">codex[1]</text>
+    <text class="mono" x="342" y="764">codex[2]</text>
+
+    <rect class="white" x="524" y="702" width="390" height="92" rx="12"/>
+    <text class="h2" x="552" y="732">OpenAI token B</text>
+    <text class="mono" x="552" y="764">codex[0]</text>
+    <text class="mono" x="662" y="764">codex[1]</text>
+    <text class="mono" x="772" y="764">codex[2]</text>
+
+    <rect class="white" x="954" y="564" width="520" height="230" rx="12"/>
+    <text class="h2" x="982" y="594">CodexAppServerWorker</text>
+    <rect class="box" x="982" y="616" width="300" height="38" rx="9"/>
+    <text class="mono" x="1002" y="641">codex app-server</text>
+    <text class="mono" x="982" y="682">stdio JSON-RPC</text>
+    <text class="mono" x="982" y="708">initialize</text>
+    <text class="mono" x="982" y="734">login: chatgptAuthTokens</text>
+    <text class="mono" x="982" y="760">thread/start -> turn/start</text>
+    <text class="mono" x="982" y="786">notifications -> completed</text>
+  </g>
+
+  <path class="request" d="M 1164 398 V 450 H 300 V 496"/>
+  <rect class="label" x="318" y="434" width="96" height="26" rx="7"/>
+  <text class="labelText" x="332" y="452">openai/*</text>
+  <path class="request" d="M 914 748 H 954"/>
+  <rect class="label" x="836" y="720" width="118" height="26" rx="7"/>
+  <text class="labelText" x="848" y="738">executeTurn</text>
+
+  <text class="laneTitle" x="64" y="886">3. Anthropic execution path</text>
+
+  <g>
+    <rect class="anthropic" x="64" y="910" width="1472" height="126" rx="18"/>
+    <text class="h" x="94" y="952">Anthropic path</text>
+    <text class="body" x="94" y="982">QgridDispatcher keeps active Anthropic tokens in memory.</text>
+    <text class="body" x="94" y="1008">selectToken() picks the least-used token, breaks ties by round-robin, then calls claude -p.</text>
+    <rect class="box" x="1308" y="948" width="166" height="48" rx="10"/>
+    <text class="mono" x="1342" y="978">claude -p</text>
+  </g>
+
+  <text class="laneTitle" x="64" y="1092">4. Persistence, token sync, and logs</text>
+
+  <g>
+    <rect class="panel" x="64" y="1116" width="230" height="116" rx="16"/>
+    <text class="h2" x="92" y="1152">Dashboard / OAuth</text>
+    <text class="body" x="92" y="1180">Register, update,</text>
+    <text class="body" x="92" y="1204">toggle tokens</text>
+  </g>
+
+  <g>
+    <rect class="db" x="354" y="1116" width="280" height="116" rx="16"/>
+    <text class="h2" x="382" y="1152">PostgreSQL</text>
+    <text class="mono" x="382" y="1180">tokens</text>
+    <text class="mono" x="482" y="1180">request_logs</text>
+    <text class="mono" x="382" y="1208">request_log_steps</text>
+  </g>
+
+  <g>
+    <rect class="panel" x="694" y="1116" width="280" height="116" rx="16"/>
+    <text class="h2" x="722" y="1152">TokenSubscriber</text>
+    <text class="body" x="722" y="1180">LISTEN tokens_changed</text>
+    <text class="body" x="722" y="1204">Reconcile on reconnect</text>
+  </g>
+
+  <g>
+    <rect class="panel" x="1034" y="1116" width="240" height="116" rx="16"/>
+    <text class="h2" x="1062" y="1152">Dispatcher cache</text>
+    <text class="body" x="1062" y="1180">Upsert/remove tokens</text>
+    <text class="body" x="1062" y="1204">Update worker pool</text>
+  </g>
+
+  <g>
+    <rect class="panel" x="1334" y="1116" width="202" height="116" rx="16"/>
+    <text class="h2" x="1362" y="1152">Startup</text>
+    <text class="body" x="1362" y="1180">Migrate, trigger</text>
+    <text class="body" x="1362" y="1204">Spawn workers</text>
+  </g>
+
+  <path class="sync" d="M 294 1174 H 354"/>
+  <rect class="label" x="300" y="1146" width="102" height="26" rx="7"/>
+  <text class="labelText" x="312" y="1164">save token</text>
+
+  <path class="sync" d="M 634 1174 H 694"/>
+  <rect class="label" x="642" y="1146" width="82" height="26" rx="7"/>
+  <text class="labelText" x="654" y="1164">NOTIFY</text>
+
+  <path class="sync" d="M 974 1174 H 1034"/>
+  <rect class="label" x="982" y="1146" width="72" height="26" rx="7"/>
+  <text class="labelText" x="996" y="1164">sync</text>
+
+  <path class="sync" d="M 1274 1174 H 1334"/>
+  <rect class="label" x="1280" y="1146" width="96" height="26" rx="7"/>
+  <text class="labelText" x="1292" y="1164">startup</text>
+
+  <path class="log" d="M 680 1092 V 1116"/>
+  <rect class="label" x="556" y="1064" width="118" height="26" rx="7"/>
+  <text class="labelText" x="568" y="1082">write logs</text>
+</svg>

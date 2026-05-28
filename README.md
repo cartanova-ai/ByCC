@@ -101,28 +101,7 @@ pnpm add @cartanova/qgrid-ai-sdk
 
 ## 아키텍처
 
-```
-사용자 프로젝트                         Qgrid 서버 (:44900)
-┌──────────────────┐                  ┌────────────────────────────────────┐
-│ AI SDK           │                  │ QgridDispatcher                    │
-│  generateText()  │── /query ──────→ │  ├─ OpenAI worker pool (codex)     │
-│  streamText()    │← JSON/SSE ─────  │  │   ├─ worker[0] ── codex proc   │
-│                  │                  │  │   ├─ worker[1] ── codex proc   │
-│ model:           │                  │  │   └─ worker[2] ── codex proc   │
-│  qgrid("openai/  │                  │  ├─ Anthropic dispatcher           │
-│   gpt-5.4-mini") │                  │  └─ Request Log (PostgreSQL)       │
-└──────────────────┘                  │                                    │
-                                      │ 대시보드 웹 UI                      │
-                                      │  ├─ 토큰 관리 (OAuth 로그인)        │
-                                      │  ├─ Request Log 뷰어               │
-                                      │  └─ Usage / Rate Limit 모니터      │
-                                      └────────────────────────────────────┘
-                                                     │
-                                              ┌──────┴──────┐
-                                              │ PostgreSQL   │
-                                              │ (토큰/로그)   │
-                                              └─────────────┘
-```
+![Qgrid architecture](./assets/qgrid-architecture.ko.svg)
 
 - **OpenAI** — codex app-server 프로세스를 토큰당 N개 spawn. JSON-RPC로 통신. 병렬 요청 처리 + 요청 큐잉.
 - **Anthropic** — claude CLI를 통한 호출. OAuth 토큰 자동 refresh.
