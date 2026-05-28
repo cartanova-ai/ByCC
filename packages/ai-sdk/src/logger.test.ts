@@ -303,9 +303,8 @@ describe("createQgridLogger", () => {
     const createRunCall = calls.find((c) => c.url.includes("/createRun"));
     expect(createRunCall?.body.input.userPrompt).toBe("second message");
 
-    const finishCall = calls.find((c) => c.url.includes("/finishRun"));
-    // 마지막 user 메시지는 현재 turn이라 history에서 제외됨
-    expect(JSON.parse(String(finishCall?.body.input.history))).toEqual([
+    // history는 createRun에서 전송됨 (onStart 시점)
+    expect(JSON.parse(String(createRunCall?.body.input.history))).toEqual([
       { type: "message", role: "user", content: [{ type: "input_text", text: "first message" }] },
       { type: "message", role: "assistant", content: [{ type: "output_text", text: "response" }] },
     ]);
@@ -339,9 +338,9 @@ describe("createQgridLogger", () => {
       totalUsage: { inputTokens: 10, outputTokens: 5, inputTokenDetails: {} },
     } as never);
 
-    const finishCall = calls.find((c) => c.url.includes("/finishRun"));
-    // 마지막 user 메시지(follow-up)는 현재 turn이라 제외. system/tool/function_call 도 제외.
-    expect(JSON.parse(String(finishCall?.body.input.history))).toEqual([
+    const createRunCall = calls.find((c) => c.url.includes("/createRun"));
+    // history는 createRun에서 전송됨. 마지막 user 메시지(follow-up)는 현재 turn이라 제외. system/tool/function_call 도 제외.
+    expect(JSON.parse(String(createRunCall?.body.input.history))).toEqual([
       { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
       { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer" }] },
     ]);
