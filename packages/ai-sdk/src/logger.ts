@@ -27,7 +27,6 @@ type RunState = {
   pendingToolCalls: PendingToolCall[];
   startTime: number;
   toolDurations: Map<string, number>;
-  history?: string;
   watchdog?: ReturnType<typeof setTimeout>;
   cleanupAbortListener?: () => void;
   finishing: boolean;
@@ -122,7 +121,6 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
       totalCacheReadTokens: result.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
       totalCacheCreationTokens: result.totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
       totalDurationMs: Date.now() - run.startTime,
-      history: run.history,
       ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
     }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e))));
   };
@@ -171,6 +169,7 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
 
       try {
         const messages = event.messages ?? (Array.isArray(event.prompt) ? event.prompt : undefined);
+        const history = serializeHistory(messages);
         const result = await createRun(serverUrl, {
           userPrompt: extractUserPrompt(event.prompt, messages),
           systemPrompt: extractSystemPrompt(event.system),
@@ -225,7 +224,6 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
           pendingToolCalls: [],
           startTime: Date.now(),
           toolDurations: new Map(),
-          history: serializeHistory(messages),
           watchdog,
           cleanupAbortListener,
           finishing: false,

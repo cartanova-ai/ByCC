@@ -158,6 +158,7 @@ class RequestLogModelClass extends BaseModelClass<
     model_name?: string | null;
     effort?: string | null;
     project_name?: string | null;
+    history?: unknown;
   }): Promise<number> {
     const wdb = this.getPuri("w");
     wdb.ubRegister("request_logs", {
@@ -174,6 +175,9 @@ class RequestLogModelClass extends BaseModelClass<
       cache_creation_tokens: 0,
       duration_ms: 0,
       tool_call_count: 0,
+      ...(params.history !== undefined
+        ? { history: params.history as { type: string }[] }
+        : {}),
     });
     return wdb.transaction(async (trx) => {
       const ids = await trx.ubUpsert("request_logs");

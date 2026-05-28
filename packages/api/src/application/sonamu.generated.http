@@ -298,7 +298,8 @@ Content-Type: application/json
     "systemPrompt": "SYSTEMPROMPT",
     "modelName": "MODELNAME",
     "effort": "EFFORT",
-    "projectName": "PROJECTNAME"
+    "projectName": "PROJECTNAME",
+    "history": "HISTORY"
   }
 }
 

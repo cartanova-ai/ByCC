@@ -131,6 +131,7 @@ export const CreateRunInput = z.object({
   modelName: z.string().optional(),
   effort: z.string().optional(),
   projectName: z.string().optional(),
+  history: z.string().optional(),
 });
 export type CreateRunInput = z.infer<typeof CreateRunInput>;
 

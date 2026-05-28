@@ -234,6 +234,7 @@ class QgridFrameClass extends BaseFrameClass {
       effort: input.effort,
       project_name: input.projectName,
       system_prompt: input.systemPrompt,
+      history: input.history ? JSON.parse(input.history) : undefined,
     });
     return { requestLogId };
   }
