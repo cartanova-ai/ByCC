@@ -1,6 +1,6 @@
 {
   "name": "@cartanova/qgrid-cli",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/cartanova-ai/qgrid"
@@ -14,7 +14,7 @@
   ],
   "type": "module",
   "scripts": {
-    "bundle": "cd ../api && pnpm build && cd ../cli && mkdir -p bundle/public && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
+    "bundle": "cd ../api && pnpm build && cd ../cli && rm -rf bundle && mkdir -p bundle/public && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
     "build": "tsdown",
     "prepublishOnly": "pnpm run bundle"
   },

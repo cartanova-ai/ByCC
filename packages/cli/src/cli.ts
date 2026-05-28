@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,23 +9,42 @@ import { Command } from "commander";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
+function hasCommand(command: string): boolean {
+  try {
+    execSync(`${command} --version`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizePort(port: unknown): string {
+  const value = String(port);
+  const numeric = Number(value);
+  if (!/^\d+$/.test(value) || numeric < 1 || numeric > 65_535) {
+    console.error(`Invalid port: ${value}`);
+    process.exit(1);
+  }
+  return value;
+}
+
 const program = new Command();
 program
   .name("qgrid")
   .version(pkg.version)
   .description("Qgrid — LLM subscription token proxy server")
   .option("--db <url>", "PostgreSQL connection URL (e.g. postgres://user:pw@host:port/dbname)")
-  .option("-p, --port <port>", "server port")
+  .option("-p, --port <port>", "server port (default: 44900)")
   .option("--skip-update", "skip auto-update check")
   .action(async (opts) => {
-    const serverPort = opts.port ?? process.env.PORT ?? "44900";
+    const serverPort = normalizePort(opts.port ?? "44900");
 
-    // check if server port is in use, if so, kill the process using it
     try {
       const pid = execSync(`lsof -ti :${serverPort}`, { encoding: "utf-8" }).trim();
       if (pid) {
-        console.log(`⚡ Port ${serverPort} in use (PID ${pid}), killing...`);
-        execSync(`kill -9 ${pid}`, { stdio: "ignore" });
+        console.error(`Error: Port ${serverPort} is already in use (PID ${pid}).`);
+        console.error(`Stop that process or choose a port explicitly with --port.`);
+        process.exit(1);
       }
     } catch {
       // 포트 미사용 — 정상
@@ -36,7 +55,16 @@ program
       const latest = execSync("npm view @cartanova/qgrid-cli version", {
         encoding: "utf-8",
       }).trim();
-      if (latest !== pkg.version) {
+      const currentVersion = pkg.version.match(/^v?(\d+)\.(\d+)(?:\.|$)/);
+      const latestVersion = latest.match(/^v?(\d+)\.(\d+)(?:\.|$)/);
+      const shouldUpdate =
+        currentVersion && latestVersion
+          ? Number(latestVersion[1]) > Number(currentVersion[1]) ||
+            (Number(latestVersion[1]) === Number(currentVersion[1]) &&
+              Number(latestVersion[2]) > Number(currentVersion[2]))
+          : latest !== pkg.version;
+
+      if (shouldUpdate) {
         // pnpm으로 설치됐으면 pnpm, 아니면 npm
         const isPnpm =
           process.env.npm_config_user_agent?.includes("pnpm") ||
@@ -48,8 +76,8 @@ program
         execSync(installCmd, { stdio: "inherit" });
         console.log("Updated. Restarting...\n");
         const args = process.argv.slice(2).concat("--skip-update");
-        execSync(`qgrid ${args.join(" ")}`, { stdio: "inherit" });
-        process.exit(0);
+        const restarted = spawnSync("qgrid", args, { stdio: "inherit" });
+        process.exit(restarted.status ?? 0);
       }
     }
 
@@ -62,25 +90,22 @@ program
       }
       const [, user, password, host, port, dbName] = m;
       process.env.QGRID_DB_HOST = host;
-      process.env.QGRID_DB_PORT = port;
+      process.env.QGRID_DB_PORT = normalizePort(port);
       process.env.QGRID_DB_USER = user;
       process.env.QGRID_DB_PASSWORD = password;
       process.env.QGRID_DB_NAME = dbName;
     }
-    if (opts.port) {
-      process.env.PORT = opts.port;
+    process.env.PORT = serverPort;
+
+    if (!hasCommand("codex")) {
+      console.warn("Warning: codex CLI not found. OpenAI tokens require codex app-server.");
+      console.warn("Install: npm i -g @openai/codex");
+    }
+    if (!hasCommand("claude")) {
+      console.warn("Warning: claude CLI not found. Anthropic tokens require Claude Code.");
+      console.warn("Install: npm i -g @anthropic-ai/claude-code");
     }
 
-    // ClaudeCode pre-check
-    try {
-      execSync("claude --version", { stdio: "ignore" });
-    } catch {
-      console.error("Error: claude CLI not found.");
-      console.error("Install: npm i -g @anthropic-ai/claude-code");
-      process.exit(1);
-    }
-
-    // Sonamu가 bundle/을 프로젝트 루트로 인식하도록 설정
     process.env.LR = "remote";
     const bundlePath = join(__dirname, "..", "bundle");
     const serverEntry = join(bundlePath, "dist", "index.js");
@@ -92,9 +117,9 @@ program
 
     process.env.INIT_CWD = bundlePath;
 
-    // DB 연결 사전 체크
+    // DB connection pre-check
     const dbHost = process.env.QGRID_DB_HOST ?? "localhost";
-    const dbPort = process.env.QGRID_DB_PORT ?? "44901";
+    const dbPort = process.env.QGRID_DB_PORT ?? "5432";
     const dbName = process.env.QGRID_DB_NAME ?? "qgrid";
     try {
       const pg = await import("pg");
