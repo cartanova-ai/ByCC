@@ -55,14 +55,7 @@ program
       const latest = execSync("npm view @cartanova/qgrid-cli version", {
         encoding: "utf-8",
       }).trim();
-      const currentVersion = pkg.version.match(/^v?(\d+)\.(\d+)(?:\.|$)/);
-      const latestVersion = latest.match(/^v?(\d+)\.(\d+)(?:\.|$)/);
-      const shouldUpdate =
-        currentVersion && latestVersion
-          ? Number(latestVersion[1]) > Number(currentVersion[1]) ||
-            (Number(latestVersion[1]) === Number(currentVersion[1]) &&
-              Number(latestVersion[2]) > Number(currentVersion[2]))
-          : latest !== pkg.version;
+      const shouldUpdate = latest !== pkg.version;
 
       if (shouldUpdate) {
         // pnpm으로 설치됐으면 pnpm, 아니면 npm
