@@ -1,5 +1,5 @@
 /**
- * SDK + CLI 패키지를 npm에 퍼블리시하는 스크립트.
+ * AI SDK + CLI 패키지를 npm에 퍼블리시하는 스크립트.
  * 각 패키지의 버전이 npm에 이미 존재하면 스킵.
  */
 import { exec } from "child_process";
@@ -39,7 +39,7 @@ async function publishPackage(pkg: PackageInfo): Promise<void> {
 }
 
 async function main() {
-  const paths = ["./packages/sdk", "./packages/cli"];
+  const paths = ["./packages/ai-sdk", "./packages/cli"];
 
   for (const path of paths) {
     const pkg = await getPackageInfo(path);
