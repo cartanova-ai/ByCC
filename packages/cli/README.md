@@ -8,6 +8,21 @@ Qgrid 서버를 한 줄로 실행. OpenAI/Anthropic 구독 크레딧을 HTTP API
 npm i -g @cartanova/qgrid-cli
 ```
 
+## PostgreSQL 준비
+
+Qgrid는 OAuth 토큰과 request log를 저장하기 위해 PostgreSQL이 필요함.
+이미 접근 가능한 PostgreSQL이 있으면 `--db` 또는 `QGRID_DB_*` 환경변수로 연결하면 됨.
+로컬에 PostgreSQL이 없으면 Docker로 띄울 수 있음:
+
+```bash
+docker run --name qgrid-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=qgrid \
+  -p 5432:5432 \
+  -d postgres:18
+```
+
 ## 사용법
 
 ```bash
@@ -27,6 +42,10 @@ qgrid
 ```
 
 서버가 뜨면 `http://localhost:44900`에서 대시보드 접속 → OAuth 로그인으로 토큰 등록.
+`-p, --port`를 지정하면 해당 포트로 접속.
+
+서버 포트는 기본값 `44900` 또는 `--port`로만 결정됨. `PORT` 환경변수는 CLI 서버 포트 입력으로 사용하지 않음.
+선택한 포트가 이미 사용 중이면 기존 프로세스를 종료하거나 다른 포트로 폴백하지 않고 에러와 함께 종료.
 
 Ctrl+C로 종료.
 
@@ -37,9 +56,13 @@ qgrid [options]
 
   --db <url>         PostgreSQL 연결 URL
   -p, --port <port>  서버 포트 (기본: 44900)
+  --skip-update      자동 업데이트 확인 생략
   -V, --version      버전 출력
   -h, --help         도움말
 ```
+
+CLI는 실행 시 npm의 최신 버전을 확인하고 major/minor 버전이 올라간 경우에만 자동 업데이트함.
+patch 버전 차이는 자동 업데이트 대상으로 보지 않음.
 
 ## 환경변수
 
@@ -58,7 +81,9 @@ qgrid [options]
 
 - Node.js >= 20
 - PostgreSQL
+- Docker (로컬 PostgreSQL을 컨테이너로 실행할 경우)
 - [Codex CLI](https://github.com/openai/codex) (OpenAI 모델 사용 시)
+- [Claude Code](https://www.anthropic.com/claude-code) (Anthropic 모델 사용 시)
 
 ## 동작 방식
 
@@ -71,7 +96,7 @@ CLI는 Sonamu 기반 서버를 내장 번들로 포함. 실행 시:
 5. **Anthropic 토큰**: claude CLI를 통한 호출. OAuth 토큰 자동 refresh.
 6. 요청 도착 → idle worker에 라우팅 (round-robin) → 전부 busy면 큐 대기 (최대 60초)
 
-Docker 불필요. Node.js + PostgreSQL + Codex CLI만 있으면 됨.
+Qgrid 앱 자체는 Docker에 의존하지 않지만 PostgreSQL은 필요함. 로컬 PostgreSQL이 없으면 Docker로 PostgreSQL을 띄우는 구성이 가장 간단함.
 
 ## SDK 연동
 

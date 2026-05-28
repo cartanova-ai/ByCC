@@ -41,8 +41,20 @@ Qgrid는 이 문제를 **codex app-server를 백엔드로 사용**하여 해결�
 
 ```bash
 npm i -g @cartanova/qgrid-cli
+```
 
-qgrid --db postgres://user:password@host:port/dbname
+Qgrid는 OAuth 토큰과 request log를 저장하기 위해 PostgreSQL이 필요합니다.
+이미 접근 가능한 PostgreSQL이 있으면 바로 연결하면 되고, 로컬에 없으면 Docker로 띄울 수 있습니다:
+
+```bash
+docker run --name qgrid-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=qgrid \
+  -p 5432:5432 \
+  -d postgres:18
+
+qgrid --db postgres://postgres:postgres@localhost:5432/qgrid
 ```
 
 `http://localhost:44900`에서 대시보드 접속 → 토큰 등록 (OAuth 로그인).
@@ -255,7 +267,9 @@ packages/
 
 - Node.js >= 20
 - PostgreSQL
+- Docker (로컬 PostgreSQL을 컨테이너로 실행할 경우)
 - [Codex CLI](https://github.com/openai/codex) (OpenAI 모델 사용 시)
+- [Claude Code](https://www.anthropic.com/claude-code) (Anthropic 모델 사용 시)
 
 ---
 
