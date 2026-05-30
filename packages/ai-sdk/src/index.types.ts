@@ -43,7 +43,8 @@ export type QgridSupportedModel =
   | "anthropic/claude-opus-4-1"
   | "anthropic/claude-opus-4-5"
   | "anthropic/claude-opus-4-6"
-  | "anthropic/claude-opus-4-7";
+  | "anthropic/claude-opus-4-7"
+  | "anthropic/claude-opus-4-8";
 
 // 아래 타입들은 Qgrid에서 생성된 type을 그대로 가져와서 사용합니다.
 export type QueryOutput = {

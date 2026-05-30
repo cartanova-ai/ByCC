@@ -43,6 +43,7 @@ const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
   "claude-opus-4-5": { inputTokens: 5, outputTokens: 25, cachedInputTokens: 0.5 },
   "claude-opus-4-6": { inputTokens: 5, outputTokens: 25, cachedInputTokens: 0.5 },
   "claude-opus-4-7": { inputTokens: 5, outputTokens: 25, cachedInputTokens: 0.5 },
+  "claude-opus-4-8": { inputTokens: 5, outputTokens: 25, cachedInputTokens: 0.5 },
 };
 
 const DEFAULT_COSTS: ModelCosts = { inputTokens: 3, outputTokens: 15, cachedInputTokens: 0.3 };
