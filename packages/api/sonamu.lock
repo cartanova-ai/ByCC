@@ -29,7 +29,7 @@
   },
   {
     "path": "api/src/application/request-log/request-log.model.ts",
-    "checksum": "60bbf0091526886a3263ca3d92f78e94c3702148"
+    "checksum": "2a175fd5f0fe41754d0952c871950636d762fbe4"
   },
   {
     "path": "api/src/application/request-log/request-log.types.ts",

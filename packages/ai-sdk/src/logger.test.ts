@@ -12,7 +12,7 @@ function getIntegration(config: Parameters<typeof createQgridLogger>[0]): Teleme
     : settings.integrations
       ? [settings.integrations]
       : [];
-  return integrations[0]!;
+  return integrations[0];
 }
 
 type FetchCall = { url: string; body: { input: Record<string, unknown> } };

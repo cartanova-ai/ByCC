@@ -213,6 +213,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       let toolResultsPayload:
         | Array<{ toolCallId: string; output: string; isError?: boolean }>
         | undefined;
+      let logMode: "auto" | "run" | undefined;
 
       if (clientRun) {
         const toolResults = extractToolResultsFromHistory(options.prompt);
@@ -225,6 +226,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           toolResultsPayload = toolResults
             .filter((r) => clientRun!.pendingToolCallIds.has(r.callId))
             .map((r) => ({ toolCallId: r.callId, output: r.result }));
+          logMode = "run";
         } else {
           console.warn(
             "[qgrid] pending tool results not found in prompt, clearing client run state",
@@ -232,6 +234,9 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           clientRun = null;
         }
       }
+
+      // tool이 있을 때만 run lifecycle. tool 없는 단일 stream은 서버가 auto로 처리(step 없이 request_log 1건).
+      if (!logMode && hasTools) logMode = "run";
 
       const prepRes = await fetch(`${serverUrl}/api/qgrid/prepareStream`, {
         method: "POST",
@@ -247,7 +252,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
-            logMode: "run",
+            ...(logMode ? { logMode } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
           },
