@@ -66,7 +66,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
   const serverUrl = config.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
   const projectName = config.projectName ?? process.env.QGRID_PROJECT_NAME;
   const tokenName = config.tokenName ?? process.env.QGRID_TOKEN_NAME ?? "external";
-  const onLogError = config.onLogError ?? ((e: Error) => console.warn(`[qgrid-logger] ${e.message}`));
+  const onLogError =
+    config.onLogError ?? ((e: Error) => console.warn(`[qgrid-logger] ${e.message}`));
   const runs = new Map<string, RunState>();
   const keyTtl =
     typeof config.staleRunTimeoutMs === "number" && config.staleRunTimeoutMs > 0
@@ -149,9 +150,7 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
       }
       const runKey = resolveRunKey(event);
       if (quarantined.has(runKey)) {
-        onLogError(
-          new Error("createQgridLogger: telemetry key is quarantined after overlap"),
-        );
+        onLogError(new Error("createQgridLogger: telemetry key is quarantined after overlap"));
         return;
       }
 
