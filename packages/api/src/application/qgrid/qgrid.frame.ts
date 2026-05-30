@@ -101,35 +101,48 @@ class QgridFrameClass extends BaseFrameClass {
     const result = await QgridDispatcher.query(args, args.timeout);
 
     if (effectiveLogMode === "auto") {
-      const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
-      const responseText = result.content
-        .filter((item) => item.type === "text")
-        .map((item) => item.text)
-        .join("\n");
-
-      RequestLogModel.save([
-        {
-          token_name: result.tokenName,
-          project_name: args.projectName?.length ? args.projectName : null,
-          model_name: result.model ?? null,
-          user_prompt: args.prompt,
-          system_prompt: args.system ?? null,
-          response: responseText,
-          input_tokens: result.usage.input_tokens,
-          output_tokens: result.usage.output_tokens,
-          cache_read_tokens: result.usage.cache_read_input_tokens,
-          cache_creation_tokens: result.usage.cache_creation_input_tokens,
-          duration_ms: result.durationMs,
-          cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
-          effort: args.effort ?? null,
-          history: args.history ? JSON.parse(args.history) : null,
-          status: "succeeded",
-          tool_call_count: toolCallCount,
-        },
-      ]).catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
+      this.saveAutoRequestLog(args, result);
     }
 
     return result;
+  }
+
+  // logMode "auto" 단일 요청 로깅: run lifecycle(step 분해) 없이 request_log 1건만 남긴다.
+  // query와 queryStream 양쪽에서 사용.
+  private saveAutoRequestLog(args: QueryInput, result: QueryOutput): void {
+    const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
+    const responseText = result.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("\n");
+
+    RequestLogModel.save([
+      {
+        token_name: result.tokenName,
+        project_name: args.projectName?.length ? args.projectName : null,
+        model_name: result.model ?? null,
+        user_prompt: args.prompt,
+        system_prompt: args.system ?? null,
+        response: responseText,
+        input_tokens: result.usage.input_tokens,
+        output_tokens: result.usage.output_tokens,
+        cache_read_tokens: result.usage.cache_read_input_tokens,
+        cache_creation_tokens: result.usage.cache_creation_input_tokens,
+        duration_ms: result.durationMs,
+        cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
+        effort: args.effort ?? null,
+        // malformed history가 와도 성공한 턴(특히 stream sse.end())을 깨지 않도록 방어.
+        history: ((): { type: string }[] | null => {
+          try {
+            return args.history ? JSON.parse(args.history) : null;
+          } catch {
+            return null;
+          }
+        })(),
+        status: "succeeded",
+        tool_call_count: toolCallCount,
+      },
+    ]).catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
@@ -214,6 +227,9 @@ class QgridFrameClass extends BaseFrameClass {
         } catch (e) {
           logger.error(`stream afterQuery failed: ${(e as Error).message}`);
         }
+      } else if (effectiveLogMode === "auto") {
+        // run lifecycle을 안 타는 단일 stream 요청도 request_log 1건은 남긴다 (query와 대칭).
+        this.saveAutoRequestLog(args, streamResult);
       }
       if (!sse.closed) sse.publish("done", { ...streamResult, runContext });
     } else if (streamError) {
