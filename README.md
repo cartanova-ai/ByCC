@@ -107,6 +107,8 @@ pnpm add @cartanova/qgrid-ai-sdk
 - **Anthropic** — claude CLI를 통한 호출. OAuth 토큰 자동 refresh.
 - **Request Log** — 매 요청의 generate step, tool-call step, reasoning, 토큰 사용량, 비용을 DB에 기록. 대시보드에서 확인.
 
+> **codex 내장 하네스 제거:** codex app-server는 매 요청마다 내장 tool(shell, web_search, apply_patch 등 14개)과 instruction 블록(permissions, environment_context, skills, ~10KB)을 자동 주입합니다. Qgrid는 worker의 `config.toml`로 이를 전부 비활성화하고 최소 system prompt + no environment로 실행합니다. 덕분에 codex가 **coding agent가 아니라 순수 텍스트 생성 엔드포인트**처럼 동작하며, 불필요한 input token 오버헤드와 엉뚱한 내장 tool 호출이 없습니다. 모델이 보는 tool은 AI SDK로 넘긴 것뿐입니다.
+
 ---
 
 ## SDK 사용법
