@@ -105,6 +105,8 @@ export class CodexAppServerWorker {
   private busy = false;
   active = true;
   onReady?: () => void;
+  // restart 시 rpc 객체가 새로 생성되므로, 핸들러를 보관했다가 매 spawn마다 재바인딩한다.
+  serverRequestHandler?: (method: string, params: unknown) => Promise<unknown>;
 
   constructor(private config: WorkerConfig) {
     const suffix = config.workerIndex !== undefined ? `-${config.workerIndex}` : "";
@@ -140,6 +142,8 @@ export class CodexAppServerWorker {
     });
 
     this.rpc = new CodexRpcClient(this.proc);
+    // restart 후에도 refresh server-request 핸들러를 유지 (없으면 codex 토큰 회전 실패 → session expired)
+    this.bindServerRequestHandler();
 
     await this.rpc.request("initialize", {
       clientInfo: { name: "qgrid", version: "1.0.0" },
@@ -256,6 +260,14 @@ export class CodexAppServerWorker {
   // ── Server-request delegation ───────────────────────────────────
 
   setServerRequestHandler(handler: (method: string, params: unknown) => Promise<unknown>): void {
+    this.serverRequestHandler = handler;
+    this.bindServerRequestHandler();
+  }
+
+  // spawnAndInit에서 rpc 생성 직후 호출. restart로 rpc가 새로 만들어져도 핸들러가 유지된다.
+  bindServerRequestHandler(): void {
+    const handler = this.serverRequestHandler;
+    if (!handler) return;
     this.rpc?.onServerRequest("account/chatgptAuthTokens/refresh", (params) =>
       handler("account/chatgptAuthTokens/refresh", params),
     );
