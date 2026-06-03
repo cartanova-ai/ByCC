@@ -72,6 +72,14 @@ async function deleteOAuthState(state: string): Promise<void> {
   await cache.delete({ key: `${OAUTH_STATE_PREFIX}${state}` });
 }
 
+function getOAuthRedirectUri(): string {
+  const publicBaseUrl = process.env.QGRID_PUBLIC_BASE_URL?.replace(/\/+$/, "");
+  if (publicBaseUrl) return `${publicBaseUrl}/callback`;
+
+  const serverPort = process.env.PORT ?? "44900";
+  return `http://localhost:${serverPort}/callback`;
+}
+
 const logger = getLogger(["qgrid"]);
 const oauthLogger = getLogger(["qgrid", "oauth"]);
 
@@ -376,8 +384,7 @@ class QgridFrameClass extends BaseFrameClass {
   async oauthStart(name: string): Promise<OAuthStartResult> {
     const { codeVerifier, codeChallenge, state } = generatePKCE();
 
-    const serverPort = process.env.PORT ?? "44900";
-    const redirectUri = `http://localhost:${serverPort}/callback`;
+    const redirectUri = getOAuthRedirectUri();
     const authUrl = buildAuthUrl(codeChallenge, state, redirectUri);
 
     await setOAuthState(state, { codeVerifier, name, redirectUri });

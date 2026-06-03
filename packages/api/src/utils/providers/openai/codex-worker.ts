@@ -54,6 +54,9 @@ export interface StreamCallbacks {
   onTurnId?: (turnId: string) => void;
 }
 
+type RefreshableWorkerCredentials = Pick<WorkerConfig, "accessToken" | "accountId" | "planType">;
+type ActiveTurnAbort = (error: Error) => void;
+
 // thread/start 공통 옵션
 const THREAD_DEFAULTS = {
   sandbox: "read-only",
@@ -103,6 +106,7 @@ export class CodexAppServerWorker {
   private ready = false;
   private destroyed = false;
   private busy = false;
+  private activeTurnAbort?: ActiveTurnAbort;
   active = true;
   onReady?: () => void;
   // restart 시 rpc 객체가 새로 생성되므로, 핸들러를 보관했다가 매 spawn마다 재바인딩한다.
@@ -135,6 +139,9 @@ export class CodexAppServerWorker {
 
     this.proc.on("exit", (code) => {
       logger.info(`worker ${this.config.tokenName} exited (code=${code})`);
+      this.failActiveTurn(
+        new Error(`codex worker exited while turn was running (code=${code ?? "unknown"})`),
+      );
       this.ready = false;
       this.rpc = null;
       this.proc = null;
@@ -216,6 +223,7 @@ export class CodexAppServerWorker {
   async kill(): Promise<void> {
     this.destroyed = true;
     this.ready = false;
+    this.failActiveTurn(new Error("codex worker stopped"));
     this.rpc?.destroy();
 
     if (this.proc) {
@@ -248,6 +256,24 @@ export class CodexAppServerWorker {
   }
   get tokenName(): string {
     return this.config.tokenName;
+  }
+
+  canReuseForToken(_tokenName: string, credentials: RefreshableWorkerCredentials): boolean {
+    return (
+      this.config.accountId === credentials.accountId &&
+      (this.config.planType ?? undefined) === (credentials.planType ?? undefined)
+    );
+  }
+
+  updateTokenState(tokenName: string, credentials: RefreshableWorkerCredentials): void {
+    this.config.tokenName = tokenName;
+    this.config.accessToken = credentials.accessToken;
+    this.config.accountId = credentials.accountId;
+    if (credentials.planType) {
+      this.config.planType = credentials.planType;
+    } else {
+      delete this.config.planType;
+    }
   }
 
   // ── Rate limits ─────────────────────────────────────────────────
@@ -350,11 +376,18 @@ export class CodexAppServerWorker {
     } catch {}
   }
 
+  private failActiveTurn(error: Error): void {
+    const abort = this.activeTurnAbort;
+    this.activeTurnAbort = undefined;
+    abort?.(error);
+  }
+
   private consumeTurnNotifications(threadId: string, model: string): Promise<TurnResult> {
     return new Promise<TurnResult>((resolve, reject) => {
+      let settled = false;
+      let abort: ActiveTurnAbort;
       const timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error("turn timeout (600s)"));
+        finishWithError(new Error("turn timeout (600s)"));
       }, 600_000);
 
       let text = "";
@@ -369,6 +402,7 @@ export class CodexAppServerWorker {
 
       const cleanup = () => {
         clearTimeout(timeout);
+        if (this.activeTurnAbort === abort) this.activeTurnAbort = undefined;
         for (const n of [
           "item/completed",
           "item/agentMessage/delta",
@@ -379,6 +413,23 @@ export class CodexAppServerWorker {
           this.rpc?.onNotification(n, () => {});
         }
       };
+
+      const finishWithError = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const finishWithResult = (result: TurnResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
+      abort = finishWithError;
+      this.activeTurnAbort = abort;
 
       this.rpc!.onNotification("item/completed", (p) => {
         if (p.threadId !== threadId) return;
@@ -393,16 +444,14 @@ export class CodexAppServerWorker {
       this.rpc!.onNotification("turn/completed", (p) => {
         if (p.threadId !== threadId) return;
         durationMs = p.turn.durationMs ?? 0;
-        cleanup();
-        if (p.turn.status === "completed") resolve({ text, usage, durationMs, model });
-        else reject(new Error(`turn failed: ${JSON.stringify(p.turn.error)}`));
+        if (p.turn.status === "completed") finishWithResult({ text, usage, durationMs, model });
+        else finishWithError(new Error(`turn failed: ${JSON.stringify(p.turn.error)}`));
       });
 
       this.rpc!.onNotification("error", (p) => {
         if (p.threadId !== threadId) return;
         if (!p.willRetry) {
-          cleanup();
-          reject(new Error(`codex error: ${p.error.message}`));
+          finishWithError(new Error(`codex error: ${p.error.message}`));
         }
       });
     });
@@ -414,10 +463,10 @@ export class CodexAppServerWorker {
     cb: StreamCallbacks,
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let abort: ActiveTurnAbort;
       const timeout = setTimeout(() => {
-        cleanup();
-        cb.onError(new Error("turn timeout (600s)"));
-        reject(new Error("turn timeout (600s)"));
+        finishWithError(new Error("turn timeout (600s)"));
       }, 600_000);
 
       let text = "";
@@ -431,6 +480,7 @@ export class CodexAppServerWorker {
 
       const cleanup = () => {
         clearTimeout(timeout);
+        if (this.activeTurnAbort === abort) this.activeTurnAbort = undefined;
         for (const n of [
           "item/completed",
           "item/agentMessage/delta",
@@ -441,6 +491,25 @@ export class CodexAppServerWorker {
           this.rpc?.onNotification(n, () => {});
         }
       };
+
+      const finishWithError = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        cb.onError(error);
+        reject(error);
+      };
+
+      const finishWithComplete = (result: TurnResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        cb.onComplete(result);
+        resolve();
+      };
+
+      abort = finishWithError;
+      this.activeTurnAbort = abort;
 
       this.rpc!.onNotification("item/agentMessage/delta", (p) => {
         if (p.threadId !== threadId) return;
@@ -460,24 +529,17 @@ export class CodexAppServerWorker {
 
       this.rpc!.onNotification("turn/completed", (p) => {
         if (p.threadId !== threadId) return;
-        cleanup();
         if (p.turn.status === "completed") {
-          cb.onComplete({ text, usage, durationMs: p.turn.durationMs ?? 0, model });
-          resolve();
+          finishWithComplete({ text, usage, durationMs: p.turn.durationMs ?? 0, model });
         } else {
-          const err = new Error(`turn ${p.turn.status}: ${JSON.stringify(p.turn.error)}`);
-          cb.onError(err);
-          reject(err);
+          finishWithError(new Error(`turn ${p.turn.status}: ${JSON.stringify(p.turn.error)}`));
         }
       });
 
       this.rpc!.onNotification("error", (p) => {
         if (p.threadId !== threadId) return;
         if (!p.willRetry) {
-          cleanup();
-          const err = new Error(`codex error: ${p.error.message}`);
-          cb.onError(err);
-          reject(err);
+          finishWithError(new Error(`codex error: ${p.error.message}`));
         }
       });
     });

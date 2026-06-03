@@ -92,6 +92,18 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async onTokenUpdated(id: number, name: string, credentials: OpenAICredentials): Promise<void> {
     const existing = this.workerPool.get(id) ?? [];
+    if (existing.length === 0) {
+      await this.spawnWorkers(id, name, credentials);
+      return;
+    }
+
+    if (existing.every((w) => w.canReuseForToken(name, credentials))) {
+      existing.forEach((w) => w.updateTokenState(name, credentials));
+      logger.info(`workers updated in-place for token ${id} (${name})`);
+      this.drainQueue();
+      return;
+    }
+
     this.workerPool.delete(id);
     await Promise.allSettled(existing.map((w) => w.kill()));
     await this.spawnWorkers(id, name, credentials);
