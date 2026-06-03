@@ -236,7 +236,7 @@ describe("qgrid AI SDK provider", () => {
     expect((queryBody as Record<string, unknown>).args).not.toHaveProperty("logMode");
   });
 
-  it("sends logMode:'run' for all doStream calls", async () => {
+  it("does not send logMode for non-tool doStream (server treats as auto)", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     vi.stubGlobal(
@@ -277,7 +277,8 @@ describe("qgrid AI SDK provider", () => {
     }
 
     const prepareCall = calls.find((c) => c.url.includes("/prepareStream"));
-    expect(prepareCall?.body.args).toMatchObject({ logMode: "run" });
+    // tool이 없으면 logMode를 보내지 않는다 → 서버가 auto로 처리(step 없이 request_log 1건).
+    expect(prepareCall?.body.args).not.toHaveProperty("logMode");
 
     // SDK는 직접 lifecycle 호출 안 함
     expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
