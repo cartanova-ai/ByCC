@@ -62,7 +62,10 @@ export function decideConvRouting(input: QueryInput): ConvDecision {
   const eligible = coord !== undefined && coord.systemHash === sysHash;
 
   return {
-    reuse: eligible && coord ? { workerId: coord.workerId, threadId: coord.threadId, epoch: coord.epoch } : undefined,
+    reuse:
+      eligible && coord
+        ? { workerId: coord.workerId, threadId: coord.threadId, epoch: coord.epoch }
+        : undefined,
     // 재사용 turn 은 delta(마지막 user/tool 결과)만 — thread 가 이미 이전 turn 들을 누적.
     reuseInput: eligible ? buildDeltaInput(input) : undefined,
     // 첫 turn / 폴백: 전체 prompt + history inject.

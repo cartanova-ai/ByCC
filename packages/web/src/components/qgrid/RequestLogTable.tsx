@@ -32,7 +32,6 @@ function formatDuration(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-
 const COLUMNS: { label: string; align: "left" | "right"; width?: string }[] = [
   { label: "ID", align: "left", width: "w-12" },
   { label: "Date", align: "left", width: "w-20" },
