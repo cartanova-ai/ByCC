@@ -10,7 +10,7 @@ import CheckIcon from "~icons/lucide/check";
 import ChevronDownIcon from "~icons/lucide/chevron-down";
 import CopyIcon from "~icons/lucide/copy";
 
-import { formatMicroUsd } from "@/lib/cost";
+import { cacheHitRate, formatMicroUsd } from "@/lib/cost";
 import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
 import {
   type RequestLogStepSubsetMapping,
@@ -217,16 +217,13 @@ function HeaderBar({ data }: { data: RequestLog }) {
 }
 
 function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount: number }) {
-  const denom = data.input_tokens;
-  const cacheHitRate = denom > 0 ? `${Math.round((data.cache_read_tokens / denom) * 100)}%` : "—";
-
   return (
     <div className="panel overflow-hidden px-5 py-3 space-y-3">
       <div className="grid grid-cols-4 gap-x-6">
         <Metric label="Duration" value={`${(data.duration_ms / 1000).toFixed(1)}s`} />
         <Metric label="Cost" value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"} />
         <Metric label="Tool Calls" value={`${toolCallCount}회`} />
-        <Metric label="Cache Hit" value={cacheHitRate} />
+        <Metric label="Cache Hit" value={cacheHitRate(data)} />
       </div>
       <div className="border-t border-sand-100/60 pt-3 grid grid-cols-4 gap-x-6">
         <Metric label="Input" value={formatNum(data.input_tokens)} />

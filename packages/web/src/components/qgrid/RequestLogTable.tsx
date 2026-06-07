@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import ChevronLeftIcon from "~icons/lucide/chevron-left";
 import ChevronRightIcon from "~icons/lucide/chevron-right";
 
-import { formatMicroUsd, formatUsd } from "@/lib/cost";
+import { cacheHitRate, formatMicroUsd, formatUsd } from "@/lib/cost";
 import { type LogsSearch } from "@/routes/logs";
 import { QgridService, RequestLogService, TokenService } from "@/services/services.generated";
 import { type RequestLogSubsetMapping } from "@/services/sonamu.generated";
@@ -32,11 +32,6 @@ function formatDuration(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-function calcCacheHitRate(row: RequestLog): string {
-  const denom = row.input_tokens + row.cache_read_tokens + row.cache_creation_tokens;
-  if (denom === 0) return "—";
-  return `${Math.round((row.cache_read_tokens / denom) * 100)}%`;
-}
 
 const COLUMNS: { label: string; align: "left" | "right"; width?: string }[] = [
   { label: "ID", align: "left", width: "w-12" },
@@ -212,7 +207,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                       {formatNum(row.cache_creation_tokens)}
                     </td>
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
-                      {calcCacheHitRate(row)}
+                      {cacheHitRate(row)}
                     </td>
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-500">
                       {row.tool_call_count > 0 ? row.tool_call_count : "—"}
