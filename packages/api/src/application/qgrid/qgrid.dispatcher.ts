@@ -26,6 +26,7 @@ import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { strictify } from "../../utils/providers/common/strictifier";
 import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
+import { decideConvRouting, issueConvContext } from "./conv-routing";
 import { type QueryInput, type QueryOutput, type TokenStats } from "./qgrid.types";
 import { maskToken, ProcessError, QuotaError, TimeoutError } from "./qgrid.types";
 import { type TokenSubscriber } from "./token-subscriber";
@@ -130,9 +131,9 @@ export class QgridDispatcherClass {
       assert(model, "unknown model");
       if (provider === "openai") {
         if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+        const decision = decideConvRouting(input);
         const result = await this.openaiDispatcher.generate({
           model: model,
-          input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
           systemPrompt: input.system,
           outputSchema: outputSchema
             ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
@@ -141,9 +142,13 @@ export class QgridDispatcherClass {
           verbosity: input.verbosity,
           reasoningSummary: input.reasoningSummary,
           serviceTier: input.serviceTier,
-          history: input.history ? JSON.parse(input.history) : undefined,
+          coldInput: decision.coldInput,
+          coldHistory: decision.coldHistory,
+          reuse: decision.reuse,
+          reuseInput: decision.reuseInput,
         });
 
+        const issuedCoord = issueConvContext(result.threadCoord, decision);
         return applyToolCallEmulation(
           {
             text: result.text,
@@ -163,6 +168,7 @@ export class QgridDispatcherClass {
             }),
           },
           input.tools,
+          issuedCoord,
         );
       }
     }
@@ -230,10 +236,10 @@ export class QgridDispatcherClass {
         ? (JSON.parse(input.jsonSchema) as JsonValue)
         : undefined;
 
+    const decision = decideConvRouting(input);
     await this.openaiDispatcher.generateStream(
       {
         model,
-        input: [{ type: "text" as const, text: input.prompt, text_elements: [] }],
         systemPrompt: input.system,
         outputSchema: outputSchema
           ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
@@ -242,17 +248,21 @@ export class QgridDispatcherClass {
         verbosity: input.verbosity,
         reasoningSummary: input.reasoningSummary,
         serviceTier: input.serviceTier,
-        history: input.history ? JSON.parse(input.history) : undefined,
+        coldInput: decision.coldInput,
+        coldHistory: decision.coldHistory,
+        reuse: decision.reuse,
+        reuseInput: decision.reuseInput,
       },
       {
         onDelta: cb.onDelta,
         onThreadId: cb.onThreadId,
         onTurnId: cb.onTurnId,
         onComplete: (turnResult) => {
+          const issuedCoord = issueConvContext(turnResult.threadCoord, decision);
           const applied = applyToolCallEmulation(
             {
               text: turnResult.text,
-              tokenName: (turnResult as unknown as { tokenName?: string }).tokenName,
+              tokenName: turnResult.tokenName,
               model: turnResult.model,
               usage: {
                 input_tokens: turnResult.usage.inputTokens,
@@ -268,6 +278,7 @@ export class QgridDispatcherClass {
               }),
             },
             input.tools,
+            issuedCoord,
           );
           cb.onComplete(applied);
         },

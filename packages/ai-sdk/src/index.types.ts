@@ -21,10 +21,28 @@ type QgridOpenAIProviderOptions = {
 };
 
 /**
+ * codex thread 좌표
+ * 멀티턴 대화에서 같은 대화를 같은 codex thread 로 라우팅 → conversation_id 고정 → 캐시 적중
+ * provider 내부 threadCoordStore 가 sessionKey 별로 관리
+ */
+export type QgridThreadCoord = {
+  workerId: number;
+  threadId: string;
+  epoch: number;
+  systemHash: string;
+};
+
+/**
  * {@link QgridOpenAIProviderOptions}
  */
 export type QgridProviderOptions = {
   openai?: QgridOpenAIProviderOptions;
+  /**
+   * 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면, provider 가
+   * 같은 sessionKey 의 thread 좌표를 내부에서 회송해 prompt cache 를 적중시킨다.
+   * 좌표는 sessionKey 별로 격리된다.
+   */
+  sessionKey?: string;
 };
 
 export type QgridSupportedModel =
@@ -64,7 +82,7 @@ export type QueryOutput = {
   };
   durationMs: number;
   costUsd: number;
-  runContext?: { requestLogId: number };
+  runContext?: { requestLogId?: number; threadCoord?: QgridThreadCoord };
 };
 
 export type CreateRunInput = {

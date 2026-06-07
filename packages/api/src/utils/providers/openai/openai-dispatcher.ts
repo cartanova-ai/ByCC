@@ -13,13 +13,13 @@ import { type OpenAICredentials } from "../../../application/token/token.types";
 import {
   type GenerateRequest,
   type GenerateResult,
+  type GenerateStreamCallbacks,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
 import {
   CodexAppServerWorker,
   type StreamCallbacks,
   type TurnRequest,
-  type TurnResult,
 } from "./codex-worker";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
 
@@ -34,6 +34,17 @@ const WORKERS_PER_TOKEN = Math.min(
 const QUEUE_TIMEOUT_MS = 60_000;
 const MAX_QUEUE_SIZE = 50;
 const SPAWN_INTERVAL_MS = 500;
+
+// thread 재사용(prompt cache 고정). 끄면 기존 "매 turn 새 thread + history inject" 동작.
+const THREAD_REUSE_ENABLED = process.env.QGRID_OPENAI_THREAD_REUSE !== "false";
+// 좌표 worker 가 busy 일 때 free 를 기다리는 최대 시간. 초과 시 새 thread 로 폴백.
+const REUSE_WORKER_WAIT_MS = 5_000;
+const REUSE_WORKER_POLL_MS = 50;
+
+// workerId 합성: tokenId 와 workerIndex(0..4) 를 하나의 안정 숫자로 인코딩.
+function makeWorkerId(tokenId: number, workerIndex: number): number {
+  return tokenId * 10 + workerIndex;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -130,6 +141,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   // ── Generate ────────────────────────────────────────────────────
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
+    // thread 재사용 경로: 좌표 worker 를 점유해 기존 thread 에 turn 만 실행.
+    const reuseWorker = await this.acquireReuseWorker(req);
+    if (reuseWorker) {
+      logger.info(
+        `↻ ${reuseWorker.tokenName}[${reuseWorker.tokenId}] (reuse thread, ${req.model})`,
+      );
+      return this.executeAndRelease(reuseWorker, (w) =>
+        this.executeTurn(w, req, req.reuse!.threadId),
+      );
+    }
+
     const worker = this.acquireIdleWorker();
     if (worker) {
       logger.info(`→ ${worker.tokenName}[${worker.tokenId}] (model: ${req.model})`);
@@ -141,7 +163,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     });
   }
 
-  async generateStream(req: GenerateRequest, cb: StreamCallbacks): Promise<void> {
+  async generateStream(req: GenerateRequest, cb: GenerateStreamCallbacks): Promise<void> {
+    const reuseWorker = await this.acquireReuseWorker(req);
+    if (reuseWorker) {
+      logger.info(`↻ ${reuseWorker.tokenName}[${reuseWorker.tokenId}] (reuse thread, [stream])`);
+      return this.executeAndRelease(reuseWorker, (w) =>
+        this.executeStreamTurn(w, req, cb, req.reuse!.threadId),
+      );
+    }
+
     const worker = this.acquireIdleWorker();
     if (worker) {
       logger.info(`→ ${worker.tokenName}[${worker.tokenId}] (model: ${req.model}, [stream])`);
@@ -151,6 +181,37 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       logger.info(`→ ${w.tokenName}[${w.tokenId}] (model: ${req.model}, [stream], queued)`);
       return this.executeStreamTurn(w, req, cb);
     });
+  }
+
+  // reuse 좌표가 유효하면 그 worker 를 busy 점유해 반환. 없거나 폴백 대상이면 null.
+  // 폴백 사유: 기능 off / 좌표 없음 / worker 부재·죽음 / epoch 불일치(restart) / thread 소멸 /
+  //            busy 대기 타임아웃. null 반환 시 호출부는 새 thread 경로로 진행.
+  async acquireReuseWorker(req: GenerateRequest): Promise<CodexAppServerWorker | null> {
+    if (!THREAD_REUSE_ENABLED || !req.reuse) return null;
+    const { workerId, threadId, epoch } = req.reuse;
+
+    const worker = this.findWorkerById(workerId);
+    if (!worker || !worker.isReady || !worker.active) return null;
+    if (worker.epoch !== epoch) return null;
+    if (!worker.hasThread(threadId)) return null;
+
+    const deadline = Date.now() + REUSE_WORKER_WAIT_MS;
+    for (;;) {
+      // restart(epoch 변경) / thread 소멸이 대기 중에 발생하면 폴백.
+      if (worker.epoch !== epoch || !worker.hasThread(threadId)) return null;
+      if (worker.tryAcquireTurn()) return worker;
+      if (Date.now() >= deadline) return null;
+      await sleep(REUSE_WORKER_POLL_MS);
+    }
+  }
+
+  findWorkerById(workerId: number): CodexAppServerWorker | null {
+    for (const workers of this.workerPool.values()) {
+      for (const w of workers) {
+        if (makeWorkerId(w.tokenId, w.workerIndex) === workerId) return w;
+      }
+    }
+    return null;
   }
 
   async interruptWorkerTurn(threadId: string, turnId: string): Promise<void> {
@@ -264,53 +325,73 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
   }
 
-  async executeTurn(worker: CodexAppServerWorker, req: GenerateRequest): Promise<GenerateResult> {
-    const turnReq: TurnRequest = {
-      input: req.input,
+  // reuseThreadId 가 있으면 기존 thread 에 delta(reuseInput)만, 없으면 새 thread 에 전체
+  // prompt(coldInput) + history inject. reuse 가 dispatcher 단에서 폴백되면 후자로 떨어진다.
+  private buildTurnRequest(req: GenerateRequest, reuseThreadId?: string): TurnRequest {
+    const reusing = reuseThreadId !== undefined;
+    return {
+      input: reusing && req.reuseInput ? req.reuseInput : req.coldInput,
+      history: reusing ? undefined : req.coldHistory,
       developerInstructions: req.systemPrompt,
       outputSchema: req.outputSchema,
       effort: req.effort ?? DEFAULT_EFFORT,
       model: req.model,
-      history: req.history,
       verbosity: req.verbosity,
       reasoningSummary: req.reasoningSummary,
       serviceTier: req.serviceTier,
     };
-    const result: TurnResult = await worker.executeTurn(turnReq);
+  }
+
+  async executeTurn(
+    worker: CodexAppServerWorker,
+    req: GenerateRequest,
+    reuseThreadId?: string,
+  ): Promise<GenerateResult> {
+    const turnReq = this.buildTurnRequest(req, reuseThreadId);
+    const result = await worker.executeTurn(turnReq, reuseThreadId);
     return {
       text: result.text,
       tokenName: worker.tokenName,
       usage: result.usage,
       durationMs: result.durationMs,
       model: result.model,
+      threadCoord: {
+        workerId: makeWorkerId(worker.tokenId, worker.workerIndex),
+        threadId: result.threadId,
+        epoch: worker.epoch,
+      },
     };
   }
 
   async executeStreamTurn(
     worker: CodexAppServerWorker,
     req: GenerateRequest,
-    cb: StreamCallbacks,
+    cb: GenerateStreamCallbacks,
+    reuseThreadId?: string,
   ): Promise<void> {
-    const turnReq: TurnRequest = {
-      input: req.input,
-      developerInstructions: req.systemPrompt,
-      outputSchema: req.outputSchema,
-      effort: req.effort ?? DEFAULT_EFFORT,
-      model: req.model,
-      history: req.history,
-      verbosity: req.verbosity,
-      reasoningSummary: req.reasoningSummary,
-      serviceTier: req.serviceTier,
-    };
+    const turnReq = this.buildTurnRequest(req, reuseThreadId);
+    // worker 의 TurnResult 에 tokenName/threadCoord 를 붙여 상위(GenerateResult)로 올린다.
+    // threadId 는 새 thread 면 onThreadId 로 확정되므로 미리 보관해 두고 onComplete 때 읽는다.
+    let resolvedThreadId = reuseThreadId ?? "";
     const wrappedCb: StreamCallbacks = {
       ...cb,
+      onThreadId: (threadId) => {
+        resolvedThreadId = threadId;
+        cb.onThreadId?.(threadId);
+      },
       onComplete: (result) => {
-        cb.onComplete({ ...result, tokenName: worker.tokenName } as TurnResult & {
-          tokenName: string;
+        cb.onComplete({
+          ...result,
+          tokenName: worker.tokenName,
+          threadCoord: {
+            workerId: makeWorkerId(worker.tokenId, worker.workerIndex),
+            threadId: resolvedThreadId,
+            epoch: worker.epoch,
+          },
         });
       },
     };
-    await worker.executeTurnStream(turnReq, wrappedCb);
+    await worker.executeTurnStream(turnReq, wrappedCb, reuseThreadId);
   }
 
   // ── Spawn ───────────────────────────────────────────────────────

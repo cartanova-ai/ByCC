@@ -66,10 +66,8 @@ const THREAD_DEFAULTS = {
   },
 } satisfies Partial<ThreadStartParams>;
 
-const BASE_INSTRUCTIONS = {
-  text: "You are a helpful assistant. Do not use any tools such as shell, file operations, or web search. Respond with text only.",
-  withSchema: "You are a helpful assistant. Respond using the provided output schema.",
-} as const;
+const BASE_INSTRUCTIONS =
+  "You are a helpful assistant. Do not use any tools such as shell, file operations, or web search. Respond with text only.";
 
 // codex가 매 요청에 자동 주입하는 내장 tool(shell/web_search/spawn_agent 등 14개)과
 // instruction 블록(permissions/environment_context/skills, ~10KB)을 비활성화
@@ -112,6 +110,14 @@ export class CodexAppServerWorker {
   // restart 시 rpc 객체가 새로 생성되므로, 핸들러를 보관했다가 매 spawn마다 재바인딩한다.
   serverRequestHandler?: (method: string, params: unknown) => Promise<unknown>;
 
+  // thread 재사용(prompt cache): worker 가 생성한 thread 들의 메타.
+  // ephemeral thread 는 이 프로세스 메모리에만 존재하므로 restart 시 전부 무효.
+  private threadMeta = new Map<string, { lastUsedAt: number }>();
+  // spawn 카운터. restart 마다 증가 → conv 핸들의 epoch 와 대조해 stale thread 감지.
+  private epochCounter = 0;
+  private static readonly THREAD_IDLE_TTL_MS = 10 * 60_000;
+  private static readonly MAX_THREADS_PER_WORKER = 16;
+
   constructor(private config: WorkerConfig) {
     const suffix = config.workerIndex !== undefined ? `-${config.workerIndex}` : "";
     this.codexHome = `/tmp/qgrid-codex/${config.tokenId}${suffix}`;
@@ -120,6 +126,9 @@ export class CodexAppServerWorker {
   // ── Lifecycle ───────────────────────────────────────────────────
 
   private async spawnAndInit(): Promise<void> {
+    // 새 codex 프로세스 → 기존 ephemeral thread 전부 무효. epoch 증가로 stale 감지.
+    this.epochCounter++;
+    this.threadMeta.clear();
     const cwd = `${this.codexHome}/cwd`;
     mkdirSync(cwd, { recursive: true });
     // codex 내장 tool/web_search/instruction 블록 비활성화
@@ -254,6 +263,9 @@ export class CodexAppServerWorker {
   get tokenId(): number {
     return this.config.tokenId;
   }
+  get workerIndex(): number {
+    return this.config.workerIndex ?? 0;
+  }
   get tokenName(): string {
     return this.config.tokenName;
   }
@@ -313,10 +325,12 @@ export class CodexAppServerWorker {
     return !this.busy;
   }
 
-  async startThread(
-    req: TurnRequest,
-  ): Promise<{ threadId: string; turnId: string; model: string }> {
+  // 새 thread 생성 (thread/start + 필요 시 history inject). 첫 turn / 폴백 경로용.
+  // 후속 turn 은 createThread 없이 startTurnOnThread 만 호출해 conversation_id 를 고정한다.
+  // thread 의 기본 model 도 반환 (req.model 미지정 시 fallback).
+  async createThread(req: TurnRequest): Promise<{ threadId: string; model: string }> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
+    this.sweepIdleThreads();
 
     const threadConfig: ThreadStartParams["config"] = {
       ...THREAD_DEFAULTS.config,
@@ -327,7 +341,7 @@ export class CodexAppServerWorker {
       {
         ephemeral: true,
         cwd: `${this.codexHome}/cwd`,
-        baseInstructions: req.outputSchema ? BASE_INSTRUCTIONS.withSchema : BASE_INSTRUCTIONS.text,
+        baseInstructions: BASE_INSTRUCTIONS,
         developerInstructions: req.developerInstructions ?? "",
         sandbox: THREAD_DEFAULTS.sandbox,
         approvalPolicy: THREAD_DEFAULTS.approvalPolicy,
@@ -336,13 +350,20 @@ export class CodexAppServerWorker {
     );
 
     const threadId = thread.id;
-    const model = req.model ?? threadModel;
     if (req.history?.length) {
       await this.rpc.request("thread/inject_items", {
         threadId,
         items: req.history,
       } satisfies ThreadInjectItemsParams);
     }
+    this.threadMeta.set(threadId, { lastUsedAt: Date.now() });
+
+    return { threadId, model: req.model ?? threadModel };
+  }
+
+  // 기존 thread 에 turn 만 실행 (inject 없음). conversation_id 유지 → prompt cache 적중.
+  private async startTurnOnThread(threadId: string, req: TurnRequest): Promise<{ turnId: string }> {
+    if (!this.rpc || !this.ready) throw new Error("worker not ready");
 
     const { turn } = await this.rpc.request<TurnStartResponse>("turn/start", {
       threadId,
@@ -353,20 +374,79 @@ export class CodexAppServerWorker {
       ...(req.reasoningSummary ? { summary: req.reasoningSummary } : {}),
       ...(req.serviceTier ? { serviceTier: req.serviceTier } : {}),
     });
-
-    return { threadId, turnId: turn.id, model };
+    const meta = this.threadMeta.get(threadId);
+    if (meta) meta.lastUsedAt = Date.now();
+    return { turnId: turn.id };
   }
 
-  async executeTurn(req: TurnRequest): Promise<TurnResult> {
-    const { threadId, model } = await this.startThread(req);
-    return this.consumeTurnNotifications(threadId, model);
+  // existingThreadId 있으면 그 thread 재사용(후속 turn), 없으면 새 thread 생성(첫 turn).
+  // 호출 후 사용한 threadId 를 반환해 dispatcher 가 conv 핸들을 발급한다.
+  async executeTurn(
+    req: TurnRequest,
+    existingThreadId?: string,
+  ): Promise<TurnResult & { threadId: string }> {
+    let threadId: string;
+    let model: string;
+    if (existingThreadId) {
+      threadId = existingThreadId;
+      model = req.model ?? "";
+    } else {
+      ({ threadId, model } = await this.createThread(req));
+    }
+    await this.startTurnOnThread(threadId, req);
+    const result = await this.consumeTurnNotifications(threadId, model);
+    return { ...result, threadId };
   }
 
-  async executeTurnStream(req: TurnRequest, cb: StreamCallbacks): Promise<void> {
-    const { threadId, turnId, model } = await this.startThread(req);
+  async executeTurnStream(
+    req: TurnRequest,
+    cb: StreamCallbacks,
+    existingThreadId?: string,
+  ): Promise<{ threadId: string }> {
+    let threadId: string;
+    let model: string;
+    if (existingThreadId) {
+      threadId = existingThreadId;
+      model = req.model ?? "";
+    } else {
+      ({ threadId, model } = await this.createThread(req));
+    }
+    const { turnId } = await this.startTurnOnThread(threadId, req);
     cb.onThreadId?.(threadId);
     cb.onTurnId?.(turnId);
-    return this.consumeStreamNotifications(threadId, model, cb);
+    await this.consumeStreamNotifications(threadId, model, cb);
+    return { threadId };
+  }
+
+  // ── thread 재사용 지원 ───────────────────────────────────────────
+
+  get epoch(): number {
+    return this.epochCounter;
+  }
+
+  hasThread(threadId: string): boolean {
+    return this.threadMeta.has(threadId);
+  }
+
+  // idle TTL 초과 / 개수 상한 초과 thread 를 정리. createThread 직전 lazy 호출.
+  // codex ephemeral thread 는 명시적 close RPC 없이 맵에서 제거 → 더 이상 turn 안 보냄.
+  sweepIdleThreads(): void {
+    const now = Date.now();
+    for (const [id, meta] of this.threadMeta) {
+      if (now - meta.lastUsedAt > CodexAppServerWorker.THREAD_IDLE_TTL_MS) {
+        this.threadMeta.delete(id);
+      }
+    }
+    // createThread 직전 호출 → 새 thread 1 개가 곧 추가된다. 추가 후에도 MAX 를 넘지 않도록
+    // MAX-1 이하로 줄여 둔다(그래야 생성 직후 정확히 MAX). LRU: lastUsedAt 오름차순으로 제거.
+    const limit = CodexAppServerWorker.MAX_THREADS_PER_WORKER - 1;
+    if (this.threadMeta.size > limit) {
+      const sorted = [...this.threadMeta.entries()].toSorted(
+        (a, b) => a[1].lastUsedAt - b[1].lastUsedAt,
+      );
+      const over = this.threadMeta.size - limit;
+      for (let i = 0; i < over; i++) this.threadMeta.delete(sorted[i]![0]);
+    }
   }
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {
@@ -438,7 +518,10 @@ export class CodexAppServerWorker {
 
       this.rpc!.onNotification("thread/tokenUsage/updated", (p) => {
         if (p.threadId !== threadId) return;
-        usage = p.tokenUsage.total;
+        // thread 재사용 시 .total 은 대화 전체 누적이라, cold 였던 이전 turn 까지 섞여
+        // 이 요청 자체의 cache 적중률이 희석된다(예: turn1 cold 0% + turn2 90% → 48% 로 기록).
+        // .last 는 이번 turn 만의 usage 라 request_log 가 그 요청의 실제 토큰을 정확히 반영한다.
+        usage = p.tokenUsage.last;
       });
 
       this.rpc!.onNotification("turn/completed", (p) => {
@@ -524,7 +607,10 @@ export class CodexAppServerWorker {
 
       this.rpc!.onNotification("thread/tokenUsage/updated", (p) => {
         if (p.threadId !== threadId) return;
-        usage = p.tokenUsage.total;
+        // thread 재사용 시 .total 은 대화 전체 누적이라, cold 였던 이전 turn 까지 섞여
+        // 이 요청 자체의 cache 적중률이 희석된다(예: turn1 cold 0% + turn2 90% → 48% 로 기록).
+        // .last 는 이번 turn 만의 usage 라 request_log 가 그 요청의 실제 토큰을 정확히 반영한다.
+        usage = p.tokenUsage.last;
       });
 
       this.rpc!.onNotification("turn/completed", (p) => {

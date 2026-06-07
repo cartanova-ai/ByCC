@@ -514,7 +514,13 @@ export namespace QgridService {
                 input: string;
               }[];
           runContext?: {
-            requestLogId: number;
+            requestLogId?: number;
+            threadCoord?: {
+              workerId: number;
+              threadId: string;
+              epoch: number;
+              systemHash: string;
+            };
           };
         };
         error: {
@@ -558,7 +564,13 @@ export namespace QgridService {
               input: string;
             }[];
         runContext?: {
-          requestLogId: number;
+          requestLogId?: number;
+          threadCoord?: {
+            workerId: number;
+            threadId: string;
+            epoch: number;
+            systemHash: string;
+          };
         };
       };
       error: {

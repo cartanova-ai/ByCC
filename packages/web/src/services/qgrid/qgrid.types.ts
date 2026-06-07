@@ -48,8 +48,21 @@ export type ServiceTier = z.infer<typeof ServiceTier>;
 export const QgridLogMode = z.enum(["auto", "run", "none"]);
 export type QgridLogMode = z.infer<typeof QgridLogMode>;
 
+// codex thread 좌표. thread 재사용으로 conversation_id(=prompt_cache_key)를 고정해
+// OpenAI prompt caching 을 살리기 위한 핸들. 서버가 발급하고 클라가 다음 요청에 그대로 회송한다.
+// 핸들 미전송 시 기존 "매 turn 새 thread + history inject" 동작으로 폴백(QgridRunContext 참조).
+export const QgridThreadCoord = z.object({
+  workerId: z.number(), // 고정 라우팅 (thread 는 worker 프로세스 메모리에만 존재)
+  threadId: z.string(), // codex conversation_id = prompt_cache_key
+  epoch: z.number(), // worker spawn 카운터. restart 로 thread 증발 감지
+  systemHash: z.string(), // system_prompt 해시. 다른 대화 오접속 방지
+});
+export type QgridThreadCoord = z.infer<typeof QgridThreadCoord>;
+
 export const QgridRunContext = z.object({
-  requestLogId: z.number(),
+  // run lifecycle(logMode="run") 에서만 발급. auto 모드(예: IF)는 threadCoord 만 왕복.
+  requestLogId: z.number().optional(),
+  threadCoord: QgridThreadCoord.optional(),
 });
 export type QgridRunContext = z.infer<typeof QgridRunContext>;
 

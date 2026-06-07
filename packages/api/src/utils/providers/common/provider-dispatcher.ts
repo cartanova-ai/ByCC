@@ -8,17 +8,32 @@ import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 
+// thread 재사용 라우팅 좌표. 상위(qgrid.dispatcher)에서 conv 핸들 검증을 통과한 경우에만 전달.
+// dispatcher 는 이 좌표가 가리키는 worker 의 기존 thread 에 turn 만 실행한다.
+export interface ReuseThreadCoord {
+  workerId: number;
+  threadId: string;
+  epoch: number;
+}
+
 export interface GenerateRequest {
   model: string;
-  input: Array<UserInput>;
   systemPrompt?: string;
   outputSchema?: JsonValue;
   effort?: string;
   verbosity?: string;
   reasoningSummary?: string;
   serviceTier?: string;
-  history?: Array<JsonValue>;
   abortSignal?: AbortSignal;
+  // 첫 turn / 재사용 폴백 시 보낼 input — 전체 prompt. 항상 설정.
+  coldInput: Array<UserInput>;
+  // 첫 turn / 폴백 시 inject 할 전체 history.
+  coldHistory?: Array<JsonValue>;
+  // 재사용 좌표 + delta input. 둘은 한 쌍 — 검증 통과 시에만 설정한다.
+  // dispatcher 가 worker/thread 생존을 재검증해 성공하면 reuseInput(delta)을, 실패하면
+  // coldInput + coldHistory 로 폴백한다(전체 history 로 문맥 복구).
+  reuse?: ReuseThreadCoord;
+  reuseInput?: Array<UserInput>;
 }
 
 export interface GenerateResult {
@@ -27,6 +42,18 @@ export interface GenerateResult {
   usage: TokenUsageBreakdown;
   durationMs: number;
   model: string;
+  // 이번 turn 이 사용한 thread 좌표. 상위가 conv 핸들을 발급/갱신하는 데 쓴다.
+  threadCoord: ReuseThreadCoord;
+}
+
+// 상위(qgrid.dispatcher)로 가는 스트림 콜백. onComplete 는 non-stream 의 GenerateResult 와
+// 동일 shape(tokenName/threadCoord 포함)를 받아, 두 경로가 같은 일급 타입을 공유한다.
+export interface GenerateStreamCallbacks {
+  onDelta: (text: string) => void;
+  onComplete: (result: GenerateResult) => void;
+  onError: (error: Error) => void;
+  onThreadId?: (threadId: string) => void;
+  onTurnId?: (turnId: string) => void;
 }
 
 export interface ProviderDispatcher {

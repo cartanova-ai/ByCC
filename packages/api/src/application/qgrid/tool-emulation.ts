@@ -1,7 +1,12 @@
 import { getLogger } from "@logtape/logtape";
 
 import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
-import { type QgridContent, type QgridTool, type QueryOutput } from "./qgrid.types";
+import {
+  type QgridContent,
+  type QgridThreadCoord,
+  type QgridTool,
+  type QueryOutput,
+} from "./qgrid.types";
 
 const logger = getLogger(["qgrid", "tool-emulation"]);
 
@@ -52,12 +57,16 @@ export function buildToolCallSchema(tools: QgridTool[]): JsonValue {
 }
 
 export function applyToolCallEmulation(
-  result: Omit<QueryOutput, "content" | "finishReason">,
+  result: Omit<QueryOutput, "content" | "finishReason" | "runContext">,
   tools?: QgridTool[],
+  threadCoord?: QgridThreadCoord,
 ): QueryOutput {
+  // thread 재사용 좌표를 runContext 로 실어 올린다 (auto 모드는 requestLogId 없이 threadCoord 만).
+  const runContext = threadCoord ? { threadCoord } : undefined;
+
   if (!tools?.length) {
     const content: QgridContent[] = [{ type: "text", text: result.text }];
-    return { ...result, content, finishReason: "stop" };
+    return { ...result, content, finishReason: "stop", runContext };
   }
 
   let parsed: ToolCallResponse;
@@ -65,7 +74,12 @@ export function applyToolCallEmulation(
     parsed = JSON.parse(result.text) as ToolCallResponse;
   } catch (e) {
     logger.warn(`tool-call emulation parse failed, falling back to text: ${(e as Error).message}`);
-    return { ...result, content: [{ type: "text", text: result.text }], finishReason: "stop" };
+    return {
+      ...result,
+      content: [{ type: "text", text: result.text }],
+      finishReason: "stop",
+      runContext,
+    };
   }
 
   if (parsed.action === "tool_call") {
@@ -82,7 +96,7 @@ export function applyToolCallEmulation(
         input: toolCall.args,
       };
     });
-    return { ...result, content, finishReason: "tool-calls" };
+    return { ...result, content, finishReason: "tool-calls", runContext };
   }
 
   const text = parsed.answer ?? result.text;
@@ -91,5 +105,6 @@ export function applyToolCallEmulation(
     text,
     content: [{ type: "text", text }],
     finishReason: "stop",
+    runContext,
   };
 }

@@ -13,6 +13,7 @@ import {
   type QgridSupportedModel,
   type QueryOutput,
   type QgridProviderConfig,
+  type QgridThreadCoord,
 } from "./index.types";
 import {
   extractPromptAndHistory,
@@ -24,12 +25,33 @@ import {
 const DEFAULT_SERVER_URL = "http://localhost:44900";
 const DEFAULT_EFFORT = "low";
 
+// sessionKey → threadCoord(thread 좌표)
+// 클라이언트가 전달한 providerOptions.qgrid.sessionKey의 좌표 발급/보관/회송을 여기서 처리한다
+// 모듈 레벨이라 qgrid() 인스턴스를 매 호출 새로 만들어도 공유
+// TTL 은 서버 codex-worker 의 thread idle TTL(10분)과 맞춤 — 만료 엔트리는 조회 시 lazy 폐기
+const THREAD_COORD_TTL_MS = 10 * 60_000;
+const threadCoordStore = new Map<string, { coord: QgridThreadCoord; expiresAt: number }>();
+
+function getThreadCoord(sessionKey: string): QgridThreadCoord | undefined {
+  const entry = threadCoordStore.get(sessionKey);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    threadCoordStore.delete(sessionKey);
+    return undefined;
+  }
+  return entry.coord;
+}
+
+function setThreadCoord(sessionKey: string, coord: QgridThreadCoord): void {
+  threadCoordStore.set(sessionKey, { coord, expiresAt: Date.now() + THREAD_COORD_TTL_MS });
+}
+
 export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig): LanguageModelV3 {
   const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
   const effort = config?.defaultEffort ?? DEFAULT_EFFORT;
 
   type ClientRunState = {
-    runContext: { requestLogId: number };
+    runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord };
     pendingToolCallIds: Set<string>;
   };
 
@@ -52,6 +74,10 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
       const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
       const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
+      // 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID)만 넘기면,
+      // thread 좌표 보관/회송은 threadCoordStore 가 내부에서 처리한다 → 클라이언트 무부담.
+      const sessionKey = (options.providerOptions?.qgrid as { sessionKey?: string } | undefined)
+        ?.sessionKey;
 
       // top-level이 object인지 검사, 아니면 무시 (SDK 방어로직)
       const rawSchema =
@@ -66,7 +92,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         !hasTools && rawSchema && schemaType === "object" ? JSON.stringify(rawSchema) : undefined;
 
       // follow-up 판단 + toolResults 구성
-      let runContext: { requestLogId: number } | undefined;
+      let runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord } | undefined;
       let toolResultsPayload:
         | Array<{ toolCallId: string; output: string; isError?: boolean }>
         | undefined;
@@ -79,7 +105,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           clientRun.pendingToolCallIds.size > 0 &&
           [...clientRun.pendingToolCallIds].every((id) => resultIds.has(id))
         ) {
-          // follow-up
+          // follow-up (tool-call 루프)
           runContext = clientRun.runContext;
           toolResultsPayload = toolResults
             .filter((r) => clientRun!.pendingToolCallIds.has(r.callId))
@@ -91,6 +117,13 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           );
           clientRun = null;
         }
+      }
+
+      // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송.
+      // clientRun(tool 루프) 과 동시 활성되지 않게, runContext 미설정 시에만 적용.
+      const storedCoord = sessionKey ? getThreadCoord(sessionKey) : undefined;
+      if (!runContext && storedCoord) {
+        runContext = { threadCoord: storedCoord };
       }
 
       if (!logMode && hasTools) logMode = "run";
@@ -160,6 +193,11 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         clientRun = null;
       }
 
+      // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
+      if (sessionKey && data.runContext?.threadCoord) {
+        setThreadCoord(sessionKey, data.runContext.threadCoord);
+      }
+
       return {
         content,
         finishReason,
@@ -200,6 +238,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
       const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
       const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
+      const sessionKey = (options.providerOptions?.qgrid as { sessionKey?: string } | undefined)
+        ?.sessionKey;
 
       const rawSchema =
         options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
@@ -209,7 +249,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           : undefined;
 
       // follow-up 판단
-      let runContext: { requestLogId: number } | undefined;
+      let runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord } | undefined;
       let toolResultsPayload:
         | Array<{ toolCallId: string; output: string; isError?: boolean }>
         | undefined;
@@ -233,6 +273,12 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           );
           clientRun = null;
         }
+      }
+
+      // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송 (clientRun 미설정 시에만).
+      const storedCoord = sessionKey ? getThreadCoord(sessionKey) : undefined;
+      if (!runContext && storedCoord) {
+        runContext = { threadCoord: storedCoord };
       }
 
       // tool이 있을 때만 run lifecycle. tool 없는 단일 stream은 서버가 auto로 처리(step 없이 request_log 1건).
@@ -321,6 +367,11 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                   };
                 } else {
                   clientRun = null;
+                }
+
+                // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
+                if (sessionKey && done.runContext?.threadCoord) {
+                  setThreadCoord(sessionKey, done.runContext.threadCoord);
                 }
 
                 // AI SDK stream parts

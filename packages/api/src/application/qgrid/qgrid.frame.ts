@@ -37,6 +37,7 @@ import {
   type HealthResponse,
   type OAuthStartResult,
   type QueryOutput,
+  type QgridRunContext,
   StreamEvents,
   type TokenStats,
   type UsageResponse,
@@ -98,7 +99,11 @@ class QgridFrameClass extends BaseFrameClass {
       try {
         const result = await QgridDispatcher.query(args, args.timeout);
         const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
-        return { ...result, runContext: lifecycle.runContext };
+        // lifecycle.runContext(requestLogId) 와 dispatcher 가 실은 threadCoord 를 병합.
+        return {
+          ...result,
+          runContext: { ...lifecycle.runContext, threadCoord: result.runContext?.threadCoord },
+        };
       } catch (e) {
         await finishRunWithError(requestLogId, (e as Error).message, args);
         throw e;
@@ -222,7 +227,10 @@ class QgridFrameClass extends BaseFrameClass {
 
     // dispatcher 완료 후 lifecycle 처리 (await 안전)
     if (streamResult) {
-      let runContext: { requestLogId: number } | undefined;
+      // dispatcher 가 실은 thread 재사용 좌표 (auto/run 공통으로 클라에 회송해야 함).
+      const threadCoord = streamResult.runContext?.threadCoord;
+      let runContext: QgridRunContext | undefined =
+        threadCoord !== undefined ? { threadCoord } : undefined;
       if (runInfo) {
         try {
           const lifecycle = await afterQuery(
@@ -231,7 +239,7 @@ class QgridFrameClass extends BaseFrameClass {
             args,
             streamResult,
           );
-          runContext = lifecycle.runContext;
+          runContext = { ...lifecycle.runContext, threadCoord };
         } catch (e) {
           logger.error(`stream afterQuery failed: ${(e as Error).message}`);
         }

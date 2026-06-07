@@ -227,7 +227,13 @@ Content-Type: application/json
     "isStep": false,
     "logMode": "auto",
     "runContext": {
-      "requestLogId": 0
+      "requestLogId": 0,
+      "threadCoord": {
+        "workerId": 0,
+        "threadId": "THREADID",
+        "epoch": 0,
+        "systemHash": "SYSTEMHASH"
+      }
     },
     "toolResults": [
       {
@@ -268,7 +274,13 @@ Content-Type: application/json
     "isStep": false,
     "logMode": "auto",
     "runContext": {
-      "requestLogId": 0
+      "requestLogId": 0,
+      "threadCoord": {
+        "workerId": 0,
+        "threadId": "THREADID",
+        "epoch": 0,
+        "systemHash": "SYSTEMHASH"
+      }
     },
     "toolResults": [
       {

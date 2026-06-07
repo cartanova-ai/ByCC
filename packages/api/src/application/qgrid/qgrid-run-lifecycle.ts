@@ -48,7 +48,8 @@ export async function beforeQuery(args: QueryInput): Promise<{
   let requestLogId: number;
   let stepIndex = 0;
 
-  if (args.runContext) {
+  // requestLogId 가 있을 때만 기존 run 연장. threadCoord 만 있는 conv 는 새 run 으로 시작.
+  if (args.runContext?.requestLogId !== undefined) {
     requestLogId = args.runContext.requestLogId;
 
     if (args.toolResults && args.toolResults.length > 0) {
