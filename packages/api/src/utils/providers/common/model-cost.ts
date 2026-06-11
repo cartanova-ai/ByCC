@@ -14,16 +14,53 @@ export interface ModelCosts {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  /**
+   * long-context 할증. 전체 입력 토큰(input_tokens, cache_read 포함)이 threshold 초과 시
+   * 초과분만이 아니라 요청 전체(full session)에 배율 적용.
+   */
+  longContext?: {
+    threshold: number;
+    inputMultiplier: number;
+    cachedInputMultiplier: number;
+    outputMultiplier: number;
+  };
 }
 
 // ── OpenAI — codex app-server 에서 사용 가능한 모델 ─────────────────
+//
+// 가격 출처: https://openai.com/api/pricing (2026-06-11 확인)
+// 신모델 출시마다 단가가 바뀌므로(5.2→5.4→5.5) 모델 추가 시 반드시 공식 페이지 재확인해야함
+
+// GPT-5.4에서 처음 도입된 long-context 할증 (5.2/5.3-codex는 해당 없음, 5.4-mini는 미확인)
+// 272K 초과 시 input 2x / cached 2x / output 1.5x — 초과분만이 아닌 세션 전체에 적용됨
+// @see https://developers.openai.com/api/docs/models/gpt-5.5 ("prompts with >272K input tokens")
+const LONG_CONTEXT_272K: NonNullable<ModelCosts["longContext"]> = {
+  threshold: 272_000,
+  inputMultiplier: 2,
+  cachedInputMultiplier: 2,
+  outputMultiplier: 1.5,
+};
 
 const OPENAI_COSTS: Record<string, ModelCosts> = {
-  "gpt-5.5": { inputTokens: 2, outputTokens: 8, cachedInputTokens: 0.5 },
-  "gpt-5.4": { inputTokens: 2, outputTokens: 8, cachedInputTokens: 0.5 },
-  "gpt-5.4-mini": { inputTokens: 0.4, outputTokens: 1.6, cachedInputTokens: 0.1 },
-  "gpt-5.3-codex": { inputTokens: 2, outputTokens: 8, cachedInputTokens: 0.5 },
-  "gpt-5.2": { inputTokens: 2, outputTokens: 8, cachedInputTokens: 0.5 },
+  // https://openai.com/index/introducing-gpt-5-5/ (2026-04 출시)
+  "gpt-5.5": {
+    inputTokens: 5,
+    outputTokens: 30,
+    cachedInputTokens: 0.5,
+    longContext: LONG_CONTEXT_272K,
+  },
+  // https://openai.com/index/introducing-gpt-5-4/ (2026-03 출시)
+  "gpt-5.4": {
+    inputTokens: 2.5,
+    outputTokens: 15,
+    cachedInputTokens: 0.25,
+    longContext: LONG_CONTEXT_272K,
+  },
+  "gpt-5.4-mini": { inputTokens: 0.75, outputTokens: 4.5, cachedInputTokens: 0.075 },
+  // gpt-5.2와 동일 단가 (cached = input의 10%)
+  "gpt-5.3-codex": { inputTokens: 1.75, outputTokens: 14, cachedInputTokens: 0.175 },
+  // https://openai.com/index/introducing-gpt-5-2/ (cached input 90% 할인 명시)
+  "gpt-5.2": { inputTokens: 1.75, outputTokens: 14, cachedInputTokens: 0.175 },
 };
 
 // ── Anthropic ───────────────────────────────────────────────────────
@@ -57,10 +94,19 @@ export function calculateCostUsd(
   usage: { inputTokens: number; outputTokens: number; cachedInputTokens?: number },
 ): number {
   const costs = getModelCosts(model);
-  const nonCachedInput = usage.inputTokens - (usage.cachedInputTokens ?? 0);
+  const cachedInput = usage.cachedInputTokens ?? 0;
+  const nonCachedInput = usage.inputTokens - cachedInput;
+
+  // long-context 할증: 전체 입력(input_tokens, cache 포함)이 threshold 초과 시 요청 전체에 배율 적용
+  const lc = costs.longContext;
+  const isLongContext = lc !== undefined && usage.inputTokens > lc.threshold;
+  const inputRate = costs.inputTokens * (isLongContext ? lc.inputMultiplier : 1);
+  const cachedRate = costs.cachedInputTokens * (isLongContext ? lc.cachedInputMultiplier : 1);
+  const outputRate = costs.outputTokens * (isLongContext ? lc.outputMultiplier : 1);
+
   return (
-    (nonCachedInput / 1_000_000) * costs.inputTokens +
-    (usage.outputTokens / 1_000_000) * costs.outputTokens +
-    ((usage.cachedInputTokens ?? 0) / 1_000_000) * costs.cachedInputTokens
+    (nonCachedInput / 1_000_000) * inputRate +
+    (usage.outputTokens / 1_000_000) * outputRate +
+    (cachedInput / 1_000_000) * cachedRate
   );
 }
