@@ -27,5 +27,12 @@ export const ANTHROPIC_CLAUDE_CWD = "/tmp/qgrid-anthropic";
 // per-token CLAUDE_CONFIG_DIR 의 베이스. 실제 경로는 `${BASE}/${tokenId}` (R10 격리).
 export const ANTHROPIC_CONFIG_DIR_BASE = "/tmp/qgrid-anthropic-config";
 
+// 토큰별 CLAUDE_CONFIG_DIR 경로 규칙(R10 격리 계약). tokenId 별로 분리되어, 같은 claude session-id
+// 라도 다른 토큰이면 다른 config dir → transcript 가 섞이지 않는다. 부수효과 없는 순수 함수라
+// 격리 계약을 단위 테스트로 고정할 수 있다(U6 R10 구조 검증). 실제 dir 생성은 ensureConfigDir 가 한다.
+export function anthropicConfigDir(tokenId: number): string {
+  return `${ANTHROPIC_CONFIG_DIR_BASE}/${tokenId}`;
+}
+
 // CC 가 자동 활성화하는 deferred 도구 — 토큰 최적화 위해 차단(기존 executeClaude 와 동일).
 export const ANTHROPIC_DISALLOWED_TOOLS = ["Monitor", "PushNotification", "RemoteTrigger"] as const;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ANTHROPIC_CONFIG_DIR_BASE, anthropicConfigDir } from "./anthropic-constants";
 import {
   buildClaudeArgs,
   compatibilityKey,
@@ -60,6 +61,26 @@ describe("makeAnthropicWorkerId (coord 매핑 P0-2)", () => {
   it("tokenId 기반 안정 합성", () => {
     expect(makeAnthropicWorkerId(7)).toBe(7);
     expect(makeAnthropicWorkerId(42)).toBe(42);
+  });
+});
+
+describe("anthropicConfigDir (R10 토큰 격리 계약 — U6 구조 검증)", () => {
+  it("tokenId 별로 다른 config dir", () => {
+    expect(anthropicConfigDir(1)).not.toBe(anthropicConfigDir(2));
+  });
+
+  it("격리 단위는 tokenId — session-id 와 무관하게 토큰별로 config dir 이 갈린다 (transcript 안 섞임)", () => {
+    // CLAUDE_CONFIG_DIR 은 session-id 가 아니라 tokenId 로만 결정된다(이 함수는 session-id 를 입력으로
+    // 받지도 않는다). 따라서 두 토큰이 우연히 같은 claude session-id 를 쓰더라도 transcript 저장
+    // 위치(config dir)가 토큰별로 분리되어 오염되지 않는다 — tokenId 가 격리 단위.
+    const dirForToken1 = anthropicConfigDir(1);
+    const dirForToken2 = anthropicConfigDir(2);
+    expect(dirForToken1).not.toBe(dirForToken2);
+  });
+
+  it("base 하위 경로 + tokenId 안정", () => {
+    expect(anthropicConfigDir(7)).toBe(`${ANTHROPIC_CONFIG_DIR_BASE}/7`);
+    expect(anthropicConfigDir(7)).toBe(anthropicConfigDir(7)); // 결정적
   });
 });
 
