@@ -25,6 +25,7 @@
  */
 
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
+import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 
 // ── 입력 어댑터 ────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ function textBlock(text: string): Array<{ type: "text"; text: string }> {
 //   { type:"function_call_output", call_id, output }
 type ResponseItem = { [key: string]: JsonValue | undefined };
 
-function asObject(v: JsonValue): ResponseItem | null {
+function asObject(v: JsonValue | undefined): ResponseItem | null {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as ResponseItem) : null;
 }
 
@@ -104,7 +105,8 @@ function flattenColdHistory(coldHistory: Array<JsonValue>): string {
         typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {});
       parts.push(`Tool call: ${name}(${args})`);
     } else if (item.type === "function_call_output") {
-      const output = typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
+      const output =
+        typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
       parts.push(`Tool result: ${output}`);
     }
   }
@@ -159,4 +161,150 @@ export function buildStreamJsonInput(opts: {
 // JSONL 문자열(claude stdin 으로 흘릴 형태)로 직렬화.
 export function serializeStreamJsonInput(lines: Array<ClaudeStreamJsonLine>): string {
   return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+}
+
+// ── 출력 어댑터 ────────────────────────────────────────────────────
+//
+// claude -p --output-format stream-json --verbose 의 stdout(JSONL)을
+// qgrid 서버 delta(onDelta) + 최종 result 로 변환한다.
+//
+// 계약 (codex 리뷰 P1-4 확정):
+//  - 이 어댑터는 qgrid **서버** 계층이다. AI SDK stream part(text-delta 등)는
+//    packages/ai-sdk(client provider)가 만든다 — 여기서 만들지 않는다.
+//  - text_delta → onDelta(text). structured output 일 때 input_json_delta.partial_json
+//    조각도 onDelta(text) 로 흘린다(client provider 가 partialObjectStream 으로 누적).
+//  - 최종 result → structured_output(우선) 또는 result(폴백, 자연어 가능) + usage + 종료.
+//  - usage 는 input/cache_creation/cache_read/output 4 카테고리를 받아 TokenUsageBreakdown 으로.
+//    payload 크기 비교는 3 카테고리 합으로(과거 학습 — input 단독 비교 무의미).
+
+// claude stream-json 출력에서 우리가 보는 usage shape(부분). Anthropic 네이티브 필드.
+interface ClaudeUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+// 최종 result 파싱 산출물. dispatcher(U1)가 GenerateResult 조립에 쓴다.
+export interface ClaudeStreamResult {
+  text: string;
+  usage: TokenUsageBreakdown;
+  durationMs: number;
+  costUsd: number;
+  // quota 소진("You've hit ...") 감지. dispatcher 가 QuotaError 로 변환.
+  quotaExhausted: boolean;
+  // result.is_error / terminal model_error 등. dispatcher 가 에러로 변환.
+  isError: boolean;
+}
+
+// Anthropic usage 4 카테고리 → TokenUsageBreakdown.
+// totalTokens = 3 카테고리 합(non-cache input + cache write + cache read) — payload 크기 기준.
+// cachedInputTokens = cache_read (적중분). reasoningOutputTokens 는 claude usage 에 별도 없음 → 0.
+function toUsageBreakdown(u: ClaudeUsage): TokenUsageBreakdown {
+  const input = u.input_tokens ?? 0;
+  const cacheCreate = u.cache_creation_input_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  return {
+    totalTokens: input + cacheCreate + cacheRead + output,
+    inputTokens: input,
+    cachedInputTokens: cacheRead,
+    outputTokens: output,
+    reasoningOutputTokens: 0,
+  };
+}
+
+// result.result 의 코드펜스(```json ... ```) 제거. structured_output 이 없을 때만 쓴다.
+// 앞뒤 공백/개행을 먼저 trim 해 `\n```json\n...\n```\n` 같은 형태도 깨끗이 제거(P2).
+function stripCodeFence(s: string): string {
+  return s
+    .trim()
+    .replace(/^```(?:json)?\s*\n?/i, "")
+    .replace(/\n?```\s*$/i, "");
+}
+
+/**
+ * stream-json 출력 라인 하나를 처리한다. 순수 함수 — side effect 는 onDelta 콜백뿐.
+ *
+ * @param opts.structuredOutput  structured output(jsonSchema) 모드 여부.
+ *   structured 모드에서 Claude 는 자연어 text_delta 와 input_json_delta.partial_json 을
+ *   **함께** 흘릴 수 있다(PoC 확인). 이때 text_delta 를 그대로 onDelta 로 보내면 client 의
+ *   streamObject 파서가 prose 를 JSON 앞에서 만나 깨진다. 그래서:
+ *     - structured 모드: text_delta 무시, partial_json 만 onDelta.
+ *     - text 모드: text_delta 만 onDelta (partial_json 은 안 옴).
+ *   (codex U3 리뷰 P0)
+ *
+ * @returns result 이벤트면 ClaudeStreamResult, 그 외(delta/system 등)면 null.
+ *          호출부(U4/U1)는 라인 스트림을 돌며 이 함수를 호출하고, non-null 이 나오면 종료.
+ */
+export function handleStreamJsonLine(
+  line: string,
+  onDelta: (text: string) => void,
+  opts?: { structuredOutput?: boolean },
+): ClaudeStreamResult | null {
+  const structuredOutput = opts?.structuredOutput ?? false;
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+
+  let j: { [key: string]: JsonValue | undefined };
+  try {
+    j = JSON.parse(trimmed) as { [key: string]: JsonValue | undefined };
+  } catch {
+    // 깨진 JSON 라인은 graceful skip (codex 테스트 시나리오).
+    return null;
+  }
+
+  // 점진 delta: stream_event > content_block_delta > {text_delta | input_json_delta}.
+  if (j.type === "stream_event") {
+    const event = asObject(j.event);
+    if (event && event.type === "content_block_delta") {
+      const delta = asObject(event.delta);
+      if (delta) {
+        if (structuredOutput) {
+          // structured: JSON 조각만. 자연어 text_delta 는 버린다(streamObject 파서 보호).
+          if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
+            onDelta(delta.partial_json);
+          }
+        } else {
+          // text: 자연어 delta 만.
+          if (delta.type === "text_delta" && typeof delta.text === "string") {
+            onDelta(delta.text);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // 최종 result.
+  if (j.type === "result") {
+    let text: string;
+    if (j.structured_output !== undefined) {
+      text = JSON.stringify(j.structured_output);
+    } else {
+      text = stripCodeFence(typeof j.result === "string" ? j.result : "");
+    }
+
+    const usage = toUsageBreakdown((asObject(j.usage) ?? {}) as ClaudeUsage);
+    const quotaExhausted = text.startsWith("You've hit");
+    // 에러 판정(P1): is_error true, terminal model_error,
+    // 또는 subtype 이 있고 "success" 가 아니면(error_during_execution / error_max_turns /
+    // error_max_budget_usd / error_max_structured_output_retries 등) 에러로 본다.
+    const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
+    const isError =
+      j.is_error === true ||
+      j.terminal_reason === "model_error" ||
+      (subtype !== undefined && subtype !== "success");
+
+    return {
+      text,
+      usage,
+      durationMs: typeof j.duration_ms === "number" ? j.duration_ms : 0,
+      costUsd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : 0,
+      quotaExhausted,
+      isError,
+    };
+  }
+
+  return null;
 }
