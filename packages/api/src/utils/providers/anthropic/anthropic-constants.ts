@@ -13,6 +13,14 @@
 export const ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-6";
 export const ANTHROPIC_DEFAULT_EFFORT = "high";
 
+// model id 를 canonical(provider prefix 없는 CLI/cost 키) 로 정규화한다.
+// ai-sdk 는 'anthropic/claude-*' 형태로 보내는데, prefix 가 compatibilityKey/calculateCostUsd 에
+// 새면 호환키가 갈리거나 cost 가 default 단가로 오계산된다(codex U5 P2). 미지정이면 default.
+export function canonicalAnthropicModel(model?: string): string {
+  const raw = model || ANTHROPIC_DEFAULT_MODEL;
+  return raw.includes("/") ? raw.split("/").pop()! : raw;
+}
+
 // project scope cwd (settings.json 격리). 토큰별 격리는 CLAUDE_CONFIG_DIR 로 한다.
 export const ANTHROPIC_CLAUDE_CWD = "/tmp/qgrid-anthropic";
 

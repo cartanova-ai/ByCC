@@ -24,6 +24,8 @@ import {
 } from "../../utils/providers/common/credentials";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { strictify } from "../../utils/providers/common/strictifier";
+import { canonicalAnthropicModel } from "../../utils/providers/anthropic/anthropic-constants";
+import { type AnthropicDispatcher } from "../../utils/providers/anthropic/anthropic-dispatcher";
 import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { decideConvRouting, issueConvContext } from "./conv-routing";
@@ -65,6 +67,7 @@ export class QgridDispatcherClass {
   // sonamu.config onStart 에서 처리하는 변수
   subscriber: TokenSubscriber | null = null;
   openaiDispatcher: OpenAIDispatcher | null = null;
+  anthropicDispatcher: AnthropicDispatcher | null = null;
 
   constructor() {
     const settingsJson = JSON.stringify(QGRID_CLAUDE_SETTINGS, null, 2);
@@ -173,12 +176,55 @@ export class QgridDispatcherClass {
       }
     }
 
+    // Anthropic — AnthropicDispatcher(멀티턴 session resume) 경로.
+    // OpenAI 경로와 동일하게 decideConvRouting → generate → issueConvContext → applyToolCallEmulation.
+    if (this.anthropicDispatcher) {
+      const decision = decideConvRouting(input);
+      const result = await this.anthropicDispatcher.generate({
+        // model 미지정이면 AnthropicDispatcher 가 ANTHROPIC_DEFAULT_MODEL 적용 — "sonnet" 별칭을
+        // 강제로 끼워 U1 default 를 죽이지 않는다(codex P3). prefix 정규화도 dispatcher 내부에서.
+        model: input.model,
+        systemPrompt: input.system,
+        outputSchema: outputSchema
+          ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
+          : undefined,
+        effort: input.effort,
+        coldInput: decision.coldInput,
+        coldHistory: decision.coldHistory,
+        reuse: decision.reuse,
+        reuseInput: decision.reuseInput,
+      });
+
+      const issuedCoord = issueConvContext(result.threadCoord, decision);
+      return applyToolCallEmulation(
+        {
+          text: result.text,
+          tokenName: result.tokenName,
+          model: result.model,
+          usage: {
+            input_tokens: result.usage.inputTokens,
+            output_tokens: result.usage.outputTokens,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: result.usage.cachedInputTokens,
+          },
+          durationMs: result.durationMs,
+          costUsd: calculateCostUsd(result.model, {
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            cachedInputTokens: result.usage.cachedInputTokens,
+          }),
+        },
+        input.tools,
+        issuedCoord,
+      );
+    }
+
+    // 폴백: AnthropicDispatcher 미초기화 시 기존 stateless claude -p 경로(멀티턴 없음).
     const executionInput =
       outputSchema && input.tools?.length
         ? { ...input, jsonSchema: JSON.stringify(outputSchema) }
         : input;
 
-    // Anthropic (기존 claude -p 경로)
     const electedToken = this.selectToken();
     if (!electedToken) throw new QuotaError("No tokens available");
 
@@ -205,7 +251,8 @@ export class QgridDispatcherClass {
 
     const result = await executeClaude(executionInput, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
     return applyToolCallEmulation(
-      { ...result, tokenName: electedToken.name, model: input.model ?? DEFAULT_MODEL },
+      // model 도 canonical 로 — fallback 도 cost/표기가 main 경로와 일치하게(codex U5 P2).
+      { ...result, tokenName: electedToken.name, model: canonicalAnthropicModel(input.model) },
       input.tools,
     );
   }
@@ -220,7 +267,63 @@ export class QgridDispatcherClass {
       onTurnId?: (turnId: string) => void;
     },
   ): Promise<void> {
+    // Anthropic 스트리밍: openai/ prefix 가 아니면 anthropic 경로.
     if (!input.model?.startsWith("openai/")) {
+      // AnthropicDispatcher 가 있으면 실제 delta 스트리밍. 없으면 기존 query() 폴백(delta 없음).
+      if (this.anthropicDispatcher) {
+        const outputSchema = input.tools?.length
+          ? buildToolCallSchema(input.tools)
+          : input.jsonSchema
+            ? (JSON.parse(input.jsonSchema) as JsonValue)
+            : undefined;
+        const decision = decideConvRouting(input);
+        await this.anthropicDispatcher.generateStream(
+          {
+            // model 미지정 시 dispatcher 가 ANTHROPIC_DEFAULT_MODEL 적용(codex P3). prefix 정규화도 내부에서.
+            model: input.model,
+            systemPrompt: input.system,
+            outputSchema: outputSchema
+              ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
+              : undefined,
+            effort: input.effort,
+            coldInput: decision.coldInput,
+            coldHistory: decision.coldHistory,
+            reuse: decision.reuse,
+            reuseInput: decision.reuseInput,
+          },
+          {
+            onDelta: cb.onDelta,
+            onThreadId: cb.onThreadId,
+            onComplete: (turnResult) => {
+              const issuedCoord = issueConvContext(turnResult.threadCoord, decision);
+              const applied = applyToolCallEmulation(
+                {
+                  text: turnResult.text,
+                  tokenName: turnResult.tokenName,
+                  model: turnResult.model,
+                  usage: {
+                    input_tokens: turnResult.usage.inputTokens,
+                    output_tokens: turnResult.usage.outputTokens,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: turnResult.usage.cachedInputTokens,
+                  },
+                  durationMs: turnResult.durationMs,
+                  costUsd: calculateCostUsd(turnResult.model, {
+                    inputTokens: turnResult.usage.inputTokens,
+                    outputTokens: turnResult.usage.outputTokens,
+                    cachedInputTokens: turnResult.usage.cachedInputTokens,
+                  }),
+                },
+                input.tools,
+                issuedCoord,
+              );
+              cb.onComplete(applied);
+            },
+            onError: cb.onError,
+          },
+        );
+        return;
+      }
       const result = await this.query(input);
       cb.onComplete(result);
       return;

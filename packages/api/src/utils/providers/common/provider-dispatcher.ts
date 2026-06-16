@@ -17,7 +17,9 @@ export interface ReuseThreadCoord {
 }
 
 export interface GenerateRequest {
-  model: string;
+  // 미지정이면 dispatcher 가 provider 별 default 를 적용한다(Anthropic: ANTHROPIC_DEFAULT_MODEL).
+  // OpenAI 경로는 항상 prefix split 후 canonical model 을 넘기므로 영향 없음.
+  model?: string;
   systemPrompt?: string;
   outputSchema?: JsonValue;
   effort?: string;

@@ -21,6 +21,7 @@
 
 import { getLogger } from "@logtape/logtape";
 
+import { TokenModel } from "../../../application/token/token.model";
 import { type AnthropicCredentials } from "../../../application/token/token.types";
 import { getExpiresAt, getRefreshToken } from "../common/credentials";
 import {
@@ -29,13 +30,8 @@ import {
   type GenerateStreamCallbacks,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
-import { ANTHROPIC_DEFAULT_MODEL } from "./anthropic-constants";
-import {
-  compatibilityKey,
-  makeAnthropicWorkerId,
-  runClaudeSession,
-  withSessionLock,
-} from "./claude-session";
+import { canonicalAnthropicModel } from "./anthropic-constants";
+import { compatibilityKey, makeAnthropicWorkerId, runClaudeSession } from "./claude-session";
 
 const logger = getLogger(["qgrid", "anthropic-dispatcher"]);
 
@@ -77,7 +73,18 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   // ── lifecycle ──────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    // 토큰은 token-subscriber(U5)가 onTokenAdded 로 채운다. 여기선 검증만.
+    // OpenAIDispatcher.start() 와 동일하게 DB 에서 기존 anthropic 토큰을 self-bootstrap 한다.
+    // (서버 재시작 시 NOTIFY 가 안 오므로 부트스트랩이 없으면 풀이 빈 채로 남는다.)
+    // 이후 변경분은 token-subscriber 가 onTokenAdded/Updated/Removed 로 전달한다.
+    // findActiveByProvider 가 active=true + provider 필터를 DB 에서 처리 → inactive 는 애초에 안 온다.
+    const tokens = await TokenModel.findActiveByProvider("A", "anthropic");
+    for (const t of tokens) {
+      this.tokenPool.set(t.id, {
+        id: t.id,
+        name: t.name,
+        credentials: t.credentials as AnthropicCredentials,
+      });
+    }
     logger.info(`anthropic dispatcher started (${this.tokenPool.size} tokens)`);
   }
 
@@ -87,6 +94,29 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     // lifecycle 정합: RR 카운터/인덱스도 비워 stop→start 재등록 시 이전 카운트가 안 남게 한다(codex P2).
     this.requestCounts.clear();
     this.rrIndex = 0;
+  }
+
+  // 현재 풀의 토큰 수(startup 로그/health 용).
+  get tokenCount(): number {
+    return this.tokenPool.size;
+  }
+
+  // DB active anthropic 토큰 목록으로 풀을 재동기화한다(codex P1 — periodic reconcile/재연결용).
+  // LISTEN/NOTIFY 가 끊긴 동안 유실된 추가/삭제/비활성화를 DB 기준으로 다시 맞춘다.
+  // 이벤트 핸들러를 재사용해 identity-change / sessionCompat 정리가 일관되게 적용되도록 한다:
+  //  - DB 에 없는데 풀에 있는 토큰 → onTokenRemoved (compat 정리 포함)
+  //  - DB 에 있는 토큰 → 신규면 onTokenAdded, 기존이면 onTokenUpdated(identity 변경 감지)
+  replaceTokens(rows: Array<{ id: number; name: string; credentials: AnthropicCredentials }>): void {
+    const next = new Set(rows.map((r) => r.id));
+    // onTokenRemoved 가 tokenPool 을 delete 하므로 순회 중 수정을 피하려 키를 먼저 스냅샷한다.
+    const currentIds = Array.from(this.tokenPool.keys());
+    for (const id of currentIds) {
+      if (!next.has(id)) this.onTokenRemoved(id);
+    }
+    for (const r of rows) {
+      if (this.tokenPool.has(r.id)) this.onTokenUpdated(r.id, r.name, r.credentials);
+      else this.onTokenAdded(r.id, r.name, r.credentials);
+    }
   }
 
   // ── token events (token-subscriber 가 호출) ──────────────────────
@@ -179,7 +209,10 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   private async run(req: GenerateRequest, onDelta: (t: string) => void): Promise<GenerateResult> {
     this.sweepSessionCompat();
 
-    const model = req.model || ANTHROPIC_DEFAULT_MODEL;
+    // model 정규화를 dispatcher 진입점에서 한 번 한다(codex P2): compat / result.model / runClaudeSession
+    // 전부 canonical(prefix 없는 cost 키) 을 쓰게 통일. 미지정이면 ANTHROPIC_DEFAULT_MODEL — qgrid.dispatcher
+    // 의 "sonnet" 별칭 우회 차단(codex P3). 정규화 규칙은 fallback 경로와 공유(canonicalAnthropicModel).
+    const model = canonicalAnthropicModel(req.model);
     const jsonSchema =
       req.outputSchema !== undefined ? JSON.stringify(req.outputSchema) : undefined;
     const compat = compatibilityKey({ system: req.systemPrompt, model, outputSchema: jsonSchema });
@@ -205,17 +238,15 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     const token = resumeToken ?? this.selectToken();
     if (!token) throw new Error("No anthropic tokens available");
 
-    // 락 적용 범위 (codex U1 P0 반박 — 범위를 명시적으로 좁혀 둔다):
-    //  (1) 구현 불가능: sessionKey 는 서버(GenerateRequest)로 오지 않는다. ai-sdk 클라이언트 store 가
-    //      관리하고 서버엔 threadCoord 좌표만 회송하므로, "cold 별 sessionKey 단위 락"은 만들 입력 자체가
-    //      없다. → U1 에서 강제할 수 없다.
-    //  (2) 현재 scope 에서 불필요: 2026-06-06 sessionKey-conv 결정 문서(L21/L248)상 현재 IF/owner 사용은
-    //      LLM 호출을 전부 순차(`await` 하나씩)로 돌려 같은 대화의 "동시 첫 호출"이 나지 않는다.
-    //      ※ 이건 qgrid provider 일반 사용자가 같은 sessionKey 로 Promise.all 을 안 친다는 서버 계약은
-    //        아니다 — 어디까지나 현재 IF/owner scope 의 호출 패턴 전제다. 향후 IF 가 LLM 호출을 병렬화하거나
-    //        sessionKey 가 서버로 전달되도록 바뀌면 cold 첫-호출 락을 재검토해야 한다(2026-06-06 L248).
-    //  → 따라서 락은 **resume 시 같은 claude session-id 동시 turn** 직렬화만 담당한다(transcript 오염 방지,
-    //    U4 withSessionLock). cold 는 새 random session-id 라 충돌 불가하므로 락을 걸지 않는다.
+    // 락 소유권 (codex U5 P0 — deadlock 수정):
+    //  session-id 단위 직렬화 락은 **U4 runClaudeSession 이 단독 소유**한다. dispatcher 가 여기서
+    //  withSessionLock(resumeSessionId) 으로 한 번 더 감싸면, exec() 안의 runClaudeSession 이 같은
+    //  session-id 로 락에 재진입하는데 withSessionLock 은 reentrant 가 아니라 자기 자신을 기다리는
+    //  deadlock 이 난다(첫 resume 호출이 영구 정지). U1/U5 dispatcher 는 token ownership / compat 만
+    //  판정하고, transcript 직렬화는 U4 락에 위임한다.
+    //  cold 첫-호출 동시성을 dispatcher 가 따로 막지 않는 근거: sessionKey 는 서버로 오지 않아(클라
+    //  store 관리, 좌표만 회송) cold 별 락의 입력 자체가 없고, 현재 IF/owner 는 LLM 호출을 전부 순차로
+    //  돌려 동시 첫 호출이 나지 않는다(2026-06-06 L21/L248). 병렬화/서버전달로 바뀌면 재검토.
     const exec = async (): Promise<GenerateResult> => {
       // 만료 임박 토큰 preemptive refresh(codex P1 — 기존 standalone 경로와 동일). 실패해도 진행.
       let accessToken = token.credentials.accessToken;
@@ -286,7 +317,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
       };
     };
 
-    // resume 만 같은 session-id 단위로 직렬화. cold 는 락 없이 바로 실행.
-    return resumeSessionId ? withSessionLock(resumeSessionId, exec) : exec();
+    // 직렬화 락은 runClaudeSession(U4) 안에서만 잡는다 — 여기서 또 감싸면 deadlock(codex U5 P0).
+    return exec();
   }
 }

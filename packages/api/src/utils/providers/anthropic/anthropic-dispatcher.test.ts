@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type AnthropicCredentials } from "../../../application/token/token.types";
 import { type GenerateRequest } from "../common/provider-dispatcher";
+import { ANTHROPIC_DEFAULT_MODEL } from "./anthropic-constants";
 import { AnthropicDispatcher } from "./anthropic-dispatcher";
+import { withSessionLock } from "./claude-session";
 
 // runClaudeSession 은 실제 claude 프로세스를 spawn 하므로 모킹.
 // compatibilityKey / makeAnthropicWorkerId / withSessionLock 은 순수 함수라 실제 구현 사용.
@@ -299,6 +301,91 @@ describe("AnthropicDispatcher", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("model prefix 정규화: 'anthropic/claude-opus-4-8' → canonical 로 세션/result.model (codex P2)", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    const result = await d.generate(baseReq({ model: "anthropic/claude-opus-4-8" }));
+    // runClaudeSession 과 GenerateResult 둘 다 prefix 없는 canonical id 를 써야 cost/compat 정합.
+    const call = runClaudeSessionMock.mock.calls[0]![0];
+    expect(call.model).toBe("claude-opus-4-8");
+    expect(result.model).toBe("claude-opus-4-8");
+  });
+
+  it("model prefix 유무가 같은 호환키 → resume 유지 (codex P2: prefix 가 compat 오염 안 함)", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    // 1st: prefix 있는 model 로 S1 발급
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S1", workerId: 1 }));
+    await d.generate(baseReq({ model: "anthropic/claude-sonnet-4-6" }));
+
+    // 2nd: prefix 없는 동일 모델로 reuse → canonical 이 같으니 compat 일치 → resume
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S1", workerId: 1 }));
+    await d.generate(
+      baseReq({
+        model: "claude-sonnet-4-6",
+        reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+        reuseInput: [{ type: "text", text: "x", text_elements: [] }],
+      }),
+    );
+    const call2 = runClaudeSessionMock.mock.calls[1]![0];
+    expect(call2.resumeSessionId).toBe("S1");
+  });
+
+  it("model 미지정 → ANTHROPIC_DEFAULT_MODEL 적용 (codex P3: sonnet 별칭 우회 차단)", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    const result = await d.generate(baseReq({ model: undefined }));
+    const call = runClaudeSessionMock.mock.calls[0]![0];
+    expect(call.model).toBe(ANTHROPIC_DEFAULT_MODEL);
+    expect(result.model).toBe(ANTHROPIC_DEFAULT_MODEL);
+  });
+
+  it("replaceTokens: DB 기준 풀 재동기화 — 없는 토큰 제거(+compat 정리), 새 토큰 추가 (codex P1)", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S1", workerId: 1 }));
+    await d.generate(baseReq()); // tok-A(1) 가 S1 소유 + compat 저장
+
+    // reconcile: DB 에는 tok-B(2)만 active. tok-A(1) 는 사라짐 → 제거 + S1 compat 정리.
+    d.replaceTokens([{ id: 2, name: "tok-B", credentials: creds() }]);
+
+    // 이제 tok-A(1) 미선택 + S1 resume 시도해도 compat 없어서 cold.
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S2", workerId: 2 }));
+    const r = await d.generate(
+      baseReq({
+        reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+        reuseInput: [{ type: "text", text: "x", text_elements: [] }],
+      }),
+    );
+    expect(r.tokenName).toBe("tok-B"); // tok-A 제거됨 → tok-B 만 남음
+    const call2 = runClaudeSessionMock.mock.calls[1]![0];
+    expect(call2.resumeSessionId).toBeUndefined(); // S1 compat 정리됨 → cold
+  });
+
+  it("resume deadlock 회귀: runClaudeSession 이 내부 락을 잡아도 dispatcher 가 중첩 락을 안 건다 (codex U5 P0)", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    // 1st cold → S1 발급 (mock 도 실제 runClaudeSession 처럼 sessionId 단위 락을 잡게 한다)
+    runClaudeSessionMock.mockImplementationOnce(async (req: { resumeSessionId?: string }) =>
+      withSessionLock(req.resumeSessionId ?? "S1", async () => sessionResult({ sessionId: "S1", workerId: 1 })),
+    );
+    await d.generate(baseReq());
+
+    // 2nd resume(S1): mock 이 실제 withSessionLock("S1") 재진입. dispatcher 가 outer withSessionLock("S1")
+    // 으로 또 감쌌다면 같은 sessionId 비-reentrant 락이 자기 자신을 기다려 deadlock → 이 await 가 영구 정지.
+    // dispatcher 가 락을 안 거므로 정상 완료돼야 한다.
+    runClaudeSessionMock.mockImplementationOnce(async (req: { resumeSessionId?: string }) =>
+      withSessionLock(req.resumeSessionId ?? "S1", async () => sessionResult({ sessionId: "S1", workerId: 1 })),
+    );
+    const second = await d.generate(
+      baseReq({
+        reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+        reuseInput: [{ type: "text", text: "x", text_elements: [] }],
+      }),
+    );
+    expect(second.threadCoord.threadId).toBe("S1"); // deadlock 없이 완료
   });
 
   it("generateStream: onDelta/onComplete 호출", async () => {
