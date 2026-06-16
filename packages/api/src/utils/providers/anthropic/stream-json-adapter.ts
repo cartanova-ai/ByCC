@@ -1,0 +1,162 @@
+/**
+ * stream-json 어댑터 — Anthropic(Claude) provider 의 입력/출력 변환.
+ *
+ * 이 모듈은 부활의 유일한 본질적 신규 코드다. 두 방향을 분리된 순수 함수로 둔다:
+ *  - 입력: 서버 GenerateRequest payload(coldInput/coldHistory/reuseInput)
+ *          → `claude -p --input-format stream-json` 의 JSONL 라인.
+ *  - 출력: `claude -p --output-format stream-json --verbose` 의 JSONL 라인
+ *          → qgrid 서버 delta(onDelta) + 최종 result. (U3, 같은 파일 하단)
+ *
+ * 중요한 계약 (codex 리뷰로 확정):
+ *  - 입력은 AI SDK LanguageModelV3Message[] 가 아니라 **서버측 GenerateRequest** 다.
+ *    ai-sdk 가 이미 QueryInput.history(JsonValue[]) 로 변환했고, decideConvRouting 이
+ *    coldInput/coldHistory/reuseInput 으로 만든 뒤 dispatcher 에 도달한다. (codex P0-1)
+ *  - content 는 user/assistant 모두 block 배열 `[{type:"text",text}]` 로 정규화한다.
+ *    문자열 content 는 일부 user 단발만 통과하고 history replay 에서 깨진다
+ *    (`W is not an Object (evaluating '"tool_use_id" in W')`). (KTD5)
+ *  - stream-json 의 user/assistant 는 비대칭이다: assistant 는 history context 로 push 되고
+ *    **user 는 새 prompt 로 enqueue(=실행)된다.** 따라서 cold 경로에서 과거 대화(user/assistant/
+ *    tool)를 그대로 줄로 늘어놓으면 과거 user/tool-output 이 실행 prompt 로 재실행된다. 이를 피하려
+ *    cold history 는 **단일 assistant context 텍스트로 평탄화**하고, 실행 가능한 `type:"user"` 줄은
+ *    **마지막 input 하나뿐**이 되도록 한다. full-fidelity role replay 가 필요하면 session resume
+ *    (reuseInput) 또는 JSONL backstop 으로 간다. (codex U2 리뷰 P0-1/P0-2)
+ *  - tool 결과는 native Anthropic tool_result 블록을 새로 만들지 않고, 기존 OpenAI 와
+ *    동일하게 평탄화된 text 로 처리한다(emulation 공통 계약). (KTD10)
+ */
+
+import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
+import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+
+// ── 입력 어댑터 ────────────────────────────────────────────────────
+
+// Claude stream-json 입력 한 줄(JSONL). content 는 항상 block 배열.
+//
+// SDK envelope 필드(uuid / session_id / parent_tool_use_id)는 **여기서 만들지 않는다**.
+// 이유: 그 값들은 세션을 발급/소유하는 U4(claude-session)의 책임이다. U2 는 role/content 변환만
+// 하는 순수 함수로 두고, U4 가 직렬화 직전에 envelope 를 decorate 한다(필요 시). 책임 분리.
+// (codex U2 리뷰 P1-#3 — "include these fields or explicitly leave them for U4 to decorate".
+//  후자를 택함. U4 통합 테스트에서 최종 직렬화 shape 를 검증한다.)
+export interface ClaudeStreamJsonLine {
+  type: "user" | "assistant";
+  message: {
+    role: "user" | "assistant";
+    content: Array<{ type: "text"; text: string }>;
+  };
+}
+
+// UserInput[] 에서 text 만 뽑아 하나의 문자열로. (image/skill/mention 등은 현재 범위 밖 — text 위주)
+function userInputToText(input: Array<UserInput>): string {
+  return input
+    .filter((i): i is Extract<UserInput, { type: "text" }> => i.type === "text")
+    .map((i) => i.text)
+    .join("\n");
+}
+
+// content 를 항상 block 배열로 정규화. (KTD5 — 문자열 금지)
+function textBlock(text: string): Array<{ type: "text"; text: string }> {
+  return [{ type: "text", text }];
+}
+
+// codex ResponseItem(coldHistory 의 한 항목) 형태 판별용 최소 shape.
+// extractPromptAndHistory(ai-sdk/utils.ts) 가 만드는 형식:
+//   { type:"message", role:"user", content:[{type:"input_text", text}] }
+//   { type:"message", role:"assistant", content:[{type:"output_text", text}] }
+//   { type:"function_call", name, arguments, call_id }
+//   { type:"function_call_output", call_id, output }
+type ResponseItem = { [key: string]: JsonValue | undefined };
+
+function asObject(v: JsonValue): ResponseItem | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as ResponseItem) : null;
+}
+
+// codex message content([{type:input_text|output_text, text}]) 에서 text 추출.
+// 여러 content 블록은 줄바꿈으로 구분(P2 — token-adjacent 붙음 방지).
+function responseItemText(item: ResponseItem): string {
+  const content = item.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((c) => {
+      const obj = asObject(c);
+      return obj && typeof obj.text === "string" ? obj.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * cold history(codex ResponseItem[])를 **단일 평탄 텍스트**로 변환한다.
+ * user/assistant/tool 모두 라벨 붙은 한 덩어리로 — 실행되지 않는 assistant context 로 들어간다.
+ * (codex U2 리뷰: cold 의 user/tool-output 을 type:"user" 로 내보내면 재실행되므로 금지.)
+ */
+function flattenColdHistory(coldHistory: Array<JsonValue>): string {
+  const parts: Array<string> = [];
+  for (const raw of coldHistory) {
+    const item = asObject(raw);
+    if (!item) continue;
+
+    if (item.type === "message" && item.role === "assistant") {
+      parts.push(`Assistant: ${responseItemText(item)}`);
+    } else if (item.type === "message" && item.role === "user") {
+      parts.push(`User: ${responseItemText(item)}`);
+    } else if (item.type === "function_call") {
+      const name = typeof item.name === "string" ? item.name : "";
+      const args =
+        typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {});
+      parts.push(`Tool call: ${name}(${args})`);
+    } else if (item.type === "function_call_output") {
+      const output = typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
+      parts.push(`Tool result: ${output}`);
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * 서버 GenerateRequest payload 를 Claude stream-json JSONL 라인 배열로 변환한다.
+ *
+ * @param opts.coldHistory  cold 경로의 codex ResponseItem 배열(JsonValue[]). resume 경로면 미사용.
+ * @param opts.input        실행할 input — cold 면 coldInput, resume 면 reuseInput.
+ * @param opts.isResume     resume 경로 여부. true 면 history 재주입 없이 input(delta)만.
+ *
+ * 출력 규칙 (codex U2 리뷰 반영):
+ *  - 실행 가능한 `type:"user"` 줄은 **항상 정확히 1개** — 마지막 input. (P0-1/P0-2)
+ *  - resume: user(delta) 1줄만. thread 가 이전 turn 을 누적하므로 history 미포함.
+ *  - cold: coldHistory 전체를 **단일 assistant context 텍스트**로 평탄화(실행 안 됨) + user(input) 1줄.
+ *          user/assistant/tool 모두 평탄화되므로 과거 user/tool-output 이 재실행되지 않는다.
+ *          full-fidelity role replay 가 필요하면 session resume 또는 JSONL backstop(범위 밖).
+ *  - tool(function_call/output): native 블록 없이 평탄 텍스트로(KTD10).
+ */
+export function buildStreamJsonInput(opts: {
+  coldHistory?: Array<JsonValue>;
+  input: Array<UserInput>;
+  isResume: boolean;
+}): Array<ClaudeStreamJsonLine> {
+  const lines: Array<ClaudeStreamJsonLine> = [];
+
+  // cold 경로: history 를 단일 assistant context 로 평탄화(실행 안 됨).
+  if (!opts.isResume && opts.coldHistory && opts.coldHistory.length > 0) {
+    const flattened = flattenColdHistory(opts.coldHistory);
+    if (flattened) {
+      lines.push({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: textBlock(`Prior conversation context:\n${flattened}`),
+        },
+      });
+    }
+  }
+
+  // 실행할 input — resume/cold 공통, 항상 마지막의 단일 user 줄.
+  lines.push({
+    type: "user",
+    message: { role: "user", content: textBlock(userInputToText(opts.input)) },
+  });
+
+  return lines;
+}
+
+// JSONL 문자열(claude stdin 으로 흘릴 형태)로 직렬화.
+export function serializeStreamJsonInput(lines: Array<ClaudeStreamJsonLine>): string {
+  return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+}
