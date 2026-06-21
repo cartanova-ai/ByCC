@@ -58,6 +58,20 @@ const QGRID_CLAUDE_SETTINGS = {
 // 토큰 만료 임박 임계값 — token.expiredAt이 1분 안에 만료된다면 query 시 체크하고 refresh.
 const REFRESH_SAFETY_MS = 60_000;
 
+export function buildStrictOutputSchema(
+  input: Pick<QueryInput, "tools" | "jsonSchema">,
+): JsonValue | undefined {
+  const outputSchema = input.tools?.length
+    ? buildToolCallSchema(input.tools)
+    : input.jsonSchema
+      ? (JSON.parse(input.jsonSchema) as JsonValue)
+      : undefined;
+
+  return outputSchema
+    ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
+    : undefined;
+}
+
 export class QgridDispatcherClass {
   tokens = new Map<number, TokenSubsetA>();
 
@@ -123,11 +137,7 @@ export class QgridDispatcherClass {
       throw new ProcessError("tools and jsonSchema cannot be used together");
     }
 
-    const outputSchema = input.tools?.length
-      ? buildToolCallSchema(input.tools)
-      : input.jsonSchema
-        ? (JSON.parse(input.jsonSchema) as JsonValue)
-        : undefined;
+    const outputSchema = buildStrictOutputSchema(input);
 
     // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
     if (input.model?.includes("/")) {
@@ -139,9 +149,7 @@ export class QgridDispatcherClass {
         const result = await this.openaiDispatcher.generate({
           model: model,
           systemPrompt: input.system,
-          outputSchema: outputSchema
-            ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
-            : undefined,
+          outputSchema,
           effort: input.effort,
           verbosity: input.verbosity,
           reasoningSummary: input.reasoningSummary,
@@ -165,9 +173,7 @@ export class QgridDispatcherClass {
         // 강제로 끼워 dispatcher default 를 죽이지 않는다. prefix 정규화도 dispatcher 내부에서.
         model: input.model,
         systemPrompt: input.system,
-        outputSchema: outputSchema
-          ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
-          : undefined,
+        outputSchema,
         effort: input.effort,
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
@@ -180,10 +186,9 @@ export class QgridDispatcherClass {
     }
 
     // 폴백: AnthropicDispatcher 미초기화 시 기존 stateless claude -p 경로(멀티턴 없음).
-    const executionInput =
-      outputSchema && input.tools?.length
-        ? { ...input, jsonSchema: JSON.stringify(outputSchema) }
-        : input;
+    const executionInput = outputSchema
+      ? { ...input, jsonSchema: JSON.stringify(outputSchema) }
+      : input;
 
     const electedToken = this.selectToken();
     if (!electedToken) throw new QuotaError("No tokens available");
@@ -231,20 +236,14 @@ export class QgridDispatcherClass {
     if (!input.model?.startsWith("openai/")) {
       // AnthropicDispatcher 가 있으면 실제 delta 스트리밍. 없으면 기존 query() 폴백(delta 없음).
       if (this.anthropicDispatcher) {
-        const outputSchema = input.tools?.length
-          ? buildToolCallSchema(input.tools)
-          : input.jsonSchema
-            ? (JSON.parse(input.jsonSchema) as JsonValue)
-            : undefined;
+        const outputSchema = buildStrictOutputSchema(input);
         const decision = decideConvRouting(input);
         await this.anthropicDispatcher.generateStream(
           {
             // model 미지정 시 dispatcher 가 ANTHROPIC_DEFAULT_MODEL 적용. prefix 정규화도 내부에서.
             model: input.model,
             systemPrompt: input.system,
-            outputSchema: outputSchema
-              ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
-              : undefined,
+            outputSchema,
             effort: input.effort,
             coldInput: decision.coldInput,
             coldHistory: decision.coldHistory,
@@ -274,20 +273,14 @@ export class QgridDispatcherClass {
     if (!model) throw new ProcessError("unknown model");
     if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
 
-    const outputSchema = input.tools?.length
-      ? buildToolCallSchema(input.tools)
-      : input.jsonSchema
-        ? (JSON.parse(input.jsonSchema) as JsonValue)
-        : undefined;
+    const outputSchema = buildStrictOutputSchema(input);
 
     const decision = decideConvRouting(input);
     await this.openaiDispatcher.generateStream(
       {
         model,
         systemPrompt: input.system,
-        outputSchema: outputSchema
-          ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
-          : undefined,
+        outputSchema,
         effort: input.effort,
         verbosity: input.verbosity,
         reasoningSummary: input.reasoningSummary,
