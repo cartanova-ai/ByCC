@@ -86,7 +86,9 @@ describe("AnthropicDispatcher", () => {
   it("cold 호출: resumeSessionId 없음, coldInput/coldHistory 전달", async () => {
     const d = new AnthropicDispatcher();
     d.onTokenAdded(1, "tok-A", creds());
-    await d.generate(baseReq({ coldHistory: [{ type: "message", role: "assistant", content: [] }] }));
+    await d.generate(
+      baseReq({ coldHistory: [{ type: "message", role: "assistant", content: [] }] }),
+    );
     const call = runClaudeSessionMock.mock.calls[0]![0];
     expect(call.resumeSessionId).toBeUndefined();
     expect(call.coldHistory).toBeDefined();
@@ -176,6 +178,118 @@ describe("AnthropicDispatcher", () => {
     );
     const call2 = runClaudeSessionMock.mock.calls[1]![0];
     expect(call2.resumeSessionId).toBeUndefined(); // cold fallback (P1-5 오염 방지)
+  });
+
+  it("resume ineligible: schema 호환키 불일치로 cold fallback 해도 continuation input 을 전달한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S1" }));
+    await d.generate(
+      baseReq({ outputSchema: { type: "object", properties: { a: { type: "string" } } } }),
+    );
+
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S2" }));
+    await d.generate(
+      baseReq({
+        outputSchema: { type: "object", properties: { b: { type: "string" } } },
+        coldHistory: [{ type: "function_call_output", call_id: "call_1", output: "ok" }],
+        coldInput: [
+          {
+            type: "text",
+            text: "Tool result for call call_1: ok\n\nNow continue answering the user's request using these results.",
+            text_elements: [],
+          },
+        ],
+        reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+        reuseInput: [
+          {
+            type: "text",
+            text: "Tool result for call call_1: ok\n\nNow continue answering the user's request using these results.",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+
+    const call2 = runClaudeSessionMock.mock.calls[1]![0];
+    expect(call2.resumeSessionId).toBeUndefined();
+    expect(call2.coldHistory).toBeDefined();
+    expect(call2.input[0]?.text).toContain("Now continue answering");
+    expect(call2.input[0]?.text).not.toBe("");
+  });
+
+  it("resume transcript/session failure: 죽은 compat 삭제 후 cold 로 1회 retry 한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S1", workerId: 1 }));
+    await d.generate(baseReq());
+
+    runClaudeSessionMock
+      .mockRejectedValueOnce(
+        new Error("Claude session closed without result — stderr: failed to resume transcript"),
+      )
+      .mockResolvedValueOnce(sessionResult({ sessionId: "S2", workerId: 1 }));
+
+    const result = await d.generate(
+      baseReq({
+        coldHistory: [{ type: "function_call_output", call_id: "call_1", output: "ok" }],
+        coldInput: [
+          {
+            type: "text",
+            text: "Tool result for call call_1: ok\n\nNow continue answering the user's request using these results.",
+            text_elements: [],
+          },
+        ],
+        reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+        reuseInput: [{ type: "text", text: "delta", text_elements: [] }],
+      }),
+    );
+
+    expect(result.threadCoord.threadId).toBe("S2");
+    const resumeCall = runClaudeSessionMock.mock.calls[1]![0];
+    expect(resumeCall.resumeSessionId).toBe("S1");
+    expect(resumeCall.coldHistory).toBeUndefined();
+    expect(resumeCall.input).toEqual([{ type: "text", text: "delta", text_elements: [] }]);
+
+    const retryCall = runClaudeSessionMock.mock.calls[2]![0];
+    expect(retryCall.resumeSessionId).toBeUndefined();
+    expect(retryCall.coldHistory).toBeDefined();
+    expect(retryCall.input[0]?.text).toContain("Now continue answering");
+
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S3", workerId: 1 }));
+    await d.generate(
+      baseReq({
+        reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+        reuseInput: [{ type: "text", text: "should not resume S1", text_elements: [] }],
+      }),
+    );
+    const postRetryCall = runClaudeSessionMock.mock.calls[3]![0];
+    expect(postRetryCall.resumeSessionId).toBeUndefined();
+  });
+
+  it.each([
+    ["timeout", "Claude session timeout after 120s"],
+    ["abort", "aborted"],
+    ["spawn", "Claude session spawn error: ENOENT"],
+    ["schema", "Claude session closed without result — stderr: schema validation failed"],
+    ["session-only", "Claude session failed before result"],
+  ])("resume %s failure 는 cold retry 하지 않는다", async (_label, message) => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ sessionId: "S1", workerId: 1 }));
+    await d.generate(baseReq());
+
+    runClaudeSessionMock.mockRejectedValueOnce(new Error(message));
+    await expect(
+      d.generate(
+        baseReq({
+          reuse: { workerId: 1, threadId: "S1", epoch: 0 },
+          reuseInput: [{ type: "text", text: "delta", text_elements: [] }],
+        }),
+      ),
+    ).rejects.toThrow(message);
+
+    expect(runClaudeSessionMock).toHaveBeenCalledTimes(2);
   });
 
   it("quota 소진 → 에러", async () => {
@@ -369,7 +483,9 @@ describe("AnthropicDispatcher", () => {
     d.onTokenAdded(1, "tok-A", creds());
     // 1st cold → S1 발급 (mock 도 실제 runClaudeSession 처럼 sessionId 단위 락을 잡게 한다)
     runClaudeSessionMock.mockImplementationOnce(async (req: { resumeSessionId?: string }) =>
-      withSessionLock(req.resumeSessionId ?? "S1", async () => sessionResult({ sessionId: "S1", workerId: 1 })),
+      withSessionLock(req.resumeSessionId ?? "S1", async () =>
+        sessionResult({ sessionId: "S1", workerId: 1 }),
+      ),
     );
     await d.generate(baseReq());
 
@@ -377,7 +493,9 @@ describe("AnthropicDispatcher", () => {
     // 으로 또 감쌌다면 같은 sessionId 비-reentrant 락이 자기 자신을 기다려 deadlock → 이 await 가 영구 정지.
     // dispatcher 가 락을 안 거므로 정상 완료돼야 한다.
     runClaudeSessionMock.mockImplementationOnce(async (req: { resumeSessionId?: string }) =>
-      withSessionLock(req.resumeSessionId ?? "S1", async () => sessionResult({ sessionId: "S1", workerId: 1 })),
+      withSessionLock(req.resumeSessionId ?? "S1", async () =>
+        sessionResult({ sessionId: "S1", workerId: 1 }),
+      ),
     );
     const second = await d.generate(
       baseReq({

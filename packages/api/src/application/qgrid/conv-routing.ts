@@ -68,8 +68,9 @@ export function decideConvRouting(input: QueryInput): ConvDecision {
         : undefined,
     // 재사용 turn 은 delta(마지막 user/tool 결과)만 — thread 가 이미 이전 turn 들을 누적.
     reuseInput: eligible ? buildDeltaInput(input) : undefined,
-    // 첫 turn / 폴백: 전체 prompt + history inject.
-    coldInput: [{ type: "text", text: input.prompt, text_elements: [] }],
+    // 첫 turn / 폴백: 전체 prompt + history inject. tool 결과 follow-up 이 cold 로 떨어져도
+    // 실행 user 줄에는 "이 결과로 계속 답하라"는 continuation 이 들어가야 한다.
+    coldInput: buildDeltaInput(input),
     coldHistory: history,
     systemHash: sysHash,
   };
