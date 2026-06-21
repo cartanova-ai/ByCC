@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { ANTHROPIC_CONFIG_DIR_BASE, anthropicConfigDir } from "./anthropic-constants";
@@ -5,6 +7,7 @@ import {
   buildClaudeArgs,
   compatibilityKey,
   decorateAndSerialize,
+  ensureConfigDir,
   makeAnthropicWorkerId,
   withSessionLock,
 } from "./claude-session";
@@ -81,6 +84,34 @@ describe("anthropicConfigDir (R10 토큰 격리 계약 — U6 구조 검증)", (
   it("base 하위 경로 + tokenId 안정", () => {
     expect(anthropicConfigDir(7)).toBe(`${ANTHROPIC_CONFIG_DIR_BASE}/7`);
     expect(anthropicConfigDir(7)).toBe(anthropicConfigDir(7)); // 결정적
+  });
+});
+
+describe("ensureConfigDir (R10 격리 seed self-healing)", () => {
+  it("이미 ensure 한 tokenId 라도 seed 파일을 매 호출 복구한다", () => {
+    const tokenId = -990001;
+    const dir = anthropicConfigDir(tokenId);
+    rmSync(dir, { recursive: true, force: true });
+
+    try {
+      expect(ensureConfigDir(tokenId)).toBe(dir);
+      expect(readFileSync(`${dir}/.claude.json`, "utf8")).toBe("{}");
+      expect(readFileSync(`${dir}/settings.json`, "utf8")).toBe("{}");
+
+      writeFileSync(`${dir}/.claude.json`, '{"mutated":true}');
+      writeFileSync(`${dir}/settings.json`, '{"hooks":{"UserPromptSubmit":[{}]}}');
+      ensureConfigDir(tokenId);
+      expect(readFileSync(`${dir}/.claude.json`, "utf8")).toBe("{}");
+      expect(readFileSync(`${dir}/settings.json`, "utf8")).toBe("{}");
+
+      rmSync(dir, { recursive: true, force: true });
+      ensureConfigDir(tokenId);
+      expect(existsSync(`${dir}/.claude.json`)).toBe(true);
+      expect(existsSync(`${dir}/settings.json`)).toBe(true);
+      expect(readFileSync(`${dir}/settings.json`, "utf8")).toBe("{}");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

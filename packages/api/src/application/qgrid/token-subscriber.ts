@@ -199,7 +199,7 @@ export class TokenSubscriber {
       } else if (row.active) {
         this.dispatcher.anthropicDispatcher?.onTokenUpdated(payload.id, row.name, creds);
       } else {
-        // inactive 면 INSERT 든 UPDATE 든 풀에 넣지 않는다(codex P2: inactive INSERT 차단).
+        // inactive 면 INSERT 든 UPDATE 든 풀에 넣지 않는다.
         this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       }
     }
@@ -209,7 +209,7 @@ export class TokenSubscriber {
   async reconcile(): Promise<void> {
     const rows = await TokenModel.findActive("A");
     this.dispatcher.replaceCache(rows);
-    // NOTIFY 유실 대비: AnthropicDispatcher 풀도 DB active anthropic 토큰 기준으로 재동기화(codex P1).
+    // NOTIFY 유실 대비: AnthropicDispatcher 풀도 DB active anthropic 토큰 기준으로 재동기화.
     // (rows 는 active 만 — inactive/삭제된 토큰은 여기 없으므로 replaceTokens 가 풀에서 제거한다.)
     const anthropicRows = rows
       .filter((r) => r.provider === "anthropic")
