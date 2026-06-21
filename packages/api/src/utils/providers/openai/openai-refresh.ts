@@ -27,6 +27,7 @@ interface RefreshResult {
 }
 
 export async function handleChatgptAuthTokensRefresh(tokenId: number): Promise<RefreshResult> {
+  logger.info(`refresh requested for token ${tokenId} (pid=${process.pid})`);
   const existing = inflightRefresh.get(tokenId);
   if (existing) {
     logger.info(`refresh dedup for token ${tokenId}`);
@@ -86,6 +87,19 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
+    // 401 본문의 error 코드가 토큰 사망의 결정적 사인이다.
+    //   refresh_token_expired     → refresh_token 자체 만료
+    //   refresh_token_reused      → 이미 사용된(회전 폐기된) refresh_token 재사용 → 패밀리 무효화
+    //   refresh_token_invalidated → 서버측 revoke
+    // 위 3개는 모두 영구 실패. 재등록 외 복구 불가.
+    let errorCode: string | undefined;
+    try {
+      errorCode = (JSON.parse(body) as { error?: string }).error;
+    } catch {}
+    logger.error(
+      `OpenAI refresh FAILED token=${token.name}(id=${tokenId}) status=${resp.status} ` +
+        `code=${errorCode ?? "?"} body=${body}`,
+    );
     throw new Error(`OpenAI refresh failed: ${resp.status} ${body}`);
   }
 
@@ -115,16 +129,27 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
     ...(data.id_token ? { idToken: data.id_token } : {}),
   };
 
-  await TokenModel.save([
-    {
-      id: tokenId,
-      provider: "openai",
-      credentials: updatedCreds,
-      name: token.name,
-    },
-  ]);
+  // 회전(rotated)이 일어났는데 이 save 가 실패하면, OpenAI 쪽 옛 refresh_token 은 이미
+  // 폐기된 상태에서 DB 에는 옛 토큰이 남는다 → 다음 refresh 가 refresh_token_reused 로
+  // 영구 사망. 이 구간 실패는 토큰 사망의 직접 원인이므로 반드시 크게 남긴다.
+  try {
+    await TokenModel.save([
+      {
+        id: tokenId,
+        provider: "openai",
+        credentials: updatedCreds,
+        name: token.name,
+      },
+    ]);
+  } catch (e) {
+    logger.error(
+      `OpenAI refresh: DB save FAILED after rotation(rotated=${rotated}) ` +
+        `token=${token.name}(id=${tokenId}) — 옛 refresh_token 폐기됨, DB 미반영 → 토큰 사망 위험. err=${String(e)}`,
+    );
+    throw e;
+  }
 
-  logger.info(`token ${token.name} refreshed successfully`);
+  logger.info(`token ${token.name} refreshed successfully (rotated=${rotated})`);
 
   return {
     accessToken: data.access_token,

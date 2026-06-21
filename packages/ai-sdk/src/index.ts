@@ -46,6 +46,24 @@ function setThreadCoord(sessionKey: string, coord: QgridThreadCoord): void {
   threadCoordStore.set(sessionKey, { coord, expiresAt: Date.now() + THREAD_COORD_TTL_MS });
 }
 
+function toAiSdkUsage(usage: QueryOutput["usage"]) {
+  const cacheRead = usage.cache_read_input_tokens;
+  const cacheWrite = usage.cache_creation_input_tokens;
+  return {
+    inputTokens: {
+      total: usage.input_tokens,
+      noCache: Math.max(usage.input_tokens - cacheRead - cacheWrite, 0),
+      cacheRead,
+      cacheWrite,
+    },
+    outputTokens: {
+      total: usage.output_tokens,
+      text: usage.output_tokens,
+      reasoning: undefined,
+    },
+  };
+}
+
 export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig): LanguageModelV3 {
   const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
   const effort = config?.defaultEffort ?? DEFAULT_EFFORT;
@@ -201,19 +219,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       return {
         content,
         finishReason,
-        usage: {
-          inputTokens: {
-            total: data.usage.input_tokens,
-            noCache: data.usage.input_tokens - data.usage.cache_read_input_tokens,
-            cacheRead: data.usage.cache_read_input_tokens,
-            cacheWrite: data.usage.cache_creation_input_tokens,
-          },
-          outputTokens: {
-            total: data.usage.output_tokens,
-            text: data.usage.output_tokens,
-            reasoning: undefined,
-          },
-        },
+        usage: toAiSdkUsage(data.usage),
         warnings: [],
         providerMetadata: {
           qgrid: {
@@ -410,19 +416,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                     done.finishReason === "tool-calls"
                       ? { unified: "tool-calls", raw: "tool_call" }
                       : { unified: "stop", raw: "stop" },
-                  usage: {
-                    inputTokens: {
-                      total: done.usage.input_tokens,
-                      noCache: done.usage.input_tokens - done.usage.cache_read_input_tokens,
-                      cacheRead: done.usage.cache_read_input_tokens,
-                      cacheWrite: done.usage.cache_creation_input_tokens,
-                    },
-                    outputTokens: {
-                      total: done.usage.output_tokens,
-                      text: done.usage.output_tokens,
-                      reasoning: undefined,
-                    },
-                  },
+                  usage: toAiSdkUsage(done.usage),
                 });
                 streamCompleted = true;
                 controller.close();
@@ -448,5 +442,5 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 }
 
 export { createQgridLogger } from "./logger";
-export type { QgridLoggerConfig, QgridProviderOptions } from "./index.types";
+export type { QgridLoggerConfig, QgridProviderOptions, QgridSupportedModel } from "./index.types";
 export default qgrid;

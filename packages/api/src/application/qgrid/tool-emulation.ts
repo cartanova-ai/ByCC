@@ -26,10 +26,19 @@ export function buildToolCallSchema(tools: QgridTool[]): JsonValue {
 
   return {
     type: "object",
+    description:
+      "Use this schema only through StructuredOutput. Do not invoke listed client tools as native Claude Code tools. To request client-side tool execution, set action to tool_call and include toolCalls. Use action answer only when no further client tool result is needed.",
     properties: {
-      action: { type: "string", enum: ["answer", "tool_call"] },
+      action: {
+        type: "string",
+        enum: ["answer", "tool_call"],
+        description:
+          "Use tool_call to request client-side tool execution through this structured output. Use answer only for a final answer.",
+      },
       answer: { anyOf: [{ type: "string" }, { type: "null" }] },
       toolCalls: {
+        description:
+          "Client-side tool calls requested through structured output. Do not call these tools as native Claude Code tools.",
         anyOf: [
           {
             type: "array",
@@ -39,9 +48,12 @@ export function buildToolCallSchema(tools: QgridTool[]): JsonValue {
                 toolName: {
                   type: "string",
                   enum: tools.map((tool) => tool.name),
-                  description: toolDescriptions,
+                  description: `Client-side tool name to request through structured output. Do not call this as a native Claude Code tool.\n${toolDescriptions}`,
                 },
-                args: { type: "string", description: "Tool arguments as JSON string" },
+                args: {
+                  type: "string",
+                  description: "Tool arguments as a JSON string for the client-side tool.",
+                },
               },
               required: ["toolName", "args"],
               additionalProperties: false,

@@ -3,7 +3,7 @@ import { getLogger } from "@logtape/logtape";
 import { Client, type ClientConfig } from "pg";
 
 import { TokenModel } from "../token/token.model";
-import { type OpenAICredentials } from "../token/token.types";
+import { type AnthropicCredentials, type OpenAICredentials } from "../token/token.types";
 import { type QgridDispatcherClass } from "./qgrid.dispatcher";
 import { type SubscriberStatus } from "./qgrid.types";
 
@@ -157,6 +157,8 @@ export class TokenSubscriber {
       this.dispatcher.openaiDispatcher
         ?.onTokenRemoved(payload.id)
         .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
+      // anthropic 토큰 이벤트는 동기(void) — provider 를 모르므로 무해하게 항상 제거 시도.
+      this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → removed from cache`);
       return;
     }
@@ -166,6 +168,7 @@ export class TokenSubscriber {
       this.dispatcher.openaiDispatcher
         ?.onTokenRemoved(payload.id)
         .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
+      this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → missing, removed from cache`);
       return;
     }
@@ -186,6 +189,19 @@ export class TokenSubscriber {
       } else {
         this.dispatcher.openaiDispatcher?.onTokenDeactivated(payload.id);
       }
+    } else if (row.provider === "anthropic") {
+      // anthropic 토큰 이벤트는 동기(void). worker 가 없고 풀(Map)만 관리하므로 단순:
+      //  INSERT → 추가, active 면 갱신(onTokenUpdated 가 identity 변경도 처리), inactive 면 풀에서 제거.
+      //  (별도 activate/deactivate 콜백이 없어 active 토글을 add/remove 로 매핑.)
+      const creds = row.credentials as AnthropicCredentials;
+      if (payload.op === "INSERT" && row.active) {
+        this.dispatcher.anthropicDispatcher?.onTokenAdded(payload.id, row.name, creds);
+      } else if (row.active) {
+        this.dispatcher.anthropicDispatcher?.onTokenUpdated(payload.id, row.name, creds);
+      } else {
+        // inactive 면 INSERT 든 UPDATE 든 풀에 넣지 않는다.
+        this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
+      }
     }
     logger.info(`NOTIFY ${payload.op} id=${payload.id} (${row.name}) active=${row.active}`);
   }
@@ -193,6 +209,12 @@ export class TokenSubscriber {
   async reconcile(): Promise<void> {
     const rows = await TokenModel.findActive("A");
     this.dispatcher.replaceCache(rows);
+    // NOTIFY 유실 대비: AnthropicDispatcher 풀도 DB active anthropic 토큰 기준으로 재동기화.
+    // (rows 는 active 만 — inactive/삭제된 토큰은 여기 없으므로 replaceTokens 가 풀에서 제거한다.)
+    const anthropicRows = rows
+      .filter((r) => r.provider === "anthropic")
+      .map((r) => ({ id: r.id, name: r.name, credentials: r.credentials as AnthropicCredentials }));
+    this.dispatcher.anthropicDispatcher?.replaceTokens(anthropicRows);
     this.lastReconcileAt = new Date();
   }
 }

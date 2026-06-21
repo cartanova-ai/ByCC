@@ -12,6 +12,7 @@ import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
 import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import { TokenModel } from "./application/token/token.model";
+import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
 dotenv.config({ path: path.join(import.meta.dirname, "../.env") });
@@ -202,8 +203,15 @@ export default defineConfig({
           log.warn(`openai dispatcher failed: ${(e as Error).message}`);
         }
 
-        const allTokens = [...QgridDispatcher.tokens.values()];
-        const anthropicCount = allTokens.filter((t) => t.provider === "anthropic").length;
+        try {
+          const anthropicDispatcher = new AnthropicDispatcher();
+          await anthropicDispatcher.start();
+          QgridDispatcher.anthropicDispatcher = anthropicDispatcher;
+        } catch (e) {
+          log.warn(`anthropic dispatcher failed: ${(e as Error).message}`);
+        }
+
+        const anthropicCount = QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0;
         const openaiReady = QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0;
         const openaiTotal = QgridDispatcher.openaiDispatcher?.workerCount ?? 0;
 
@@ -218,6 +226,9 @@ export default defineConfig({
         const log = getLogger(["qgrid", "startup"]);
         if (QgridDispatcher.openaiDispatcher) {
           await QgridDispatcher.openaiDispatcher.stop();
+        }
+        if (QgridDispatcher.anthropicDispatcher) {
+          await QgridDispatcher.anthropicDispatcher.stop();
         }
         if (QgridDispatcher.subscriber) {
           await QgridDispatcher.subscriber.stop();
