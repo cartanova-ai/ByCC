@@ -195,6 +195,10 @@ export interface ClaudeStreamResult {
   isError: boolean;
 }
 
+export interface ClaudeStreamJsonState {
+  structuredOutputText?: string;
+}
+
 // Anthropic usage 4 카테고리 → TokenUsageBreakdown.
 // Anthropic native usage 는 input/cache_creation/cache_read 를 서로 배타적인 카테고리로 준다.
 // 반면 qgrid 내부 표준(TokenUsageBreakdown)과 cost 계산은 inputTokens 를 "전체 입력
@@ -225,6 +229,21 @@ function stripCodeFence(s: string): string {
     .replace(/\n?```\s*$/i, "");
 }
 
+function structuredOutputToolUseText(j: ResponseItem): string | undefined {
+  const message = asObject(j.message);
+  const content = message?.content;
+  if (!Array.isArray(content)) return undefined;
+
+  for (const raw of content) {
+    const block = asObject(raw);
+    if (!block) continue;
+    if (block.type === "tool_use" && block.name === "StructuredOutput" && block.input !== undefined) {
+      return JSON.stringify(block.input);
+    }
+  }
+  return undefined;
+}
+
 /**
  * stream-json 출력 라인 하나를 처리한다. 순수 함수 — side effect 는 onDelta 콜백뿐.
  *
@@ -241,9 +260,10 @@ function stripCodeFence(s: string): string {
 export function handleStreamJsonLine(
   line: string,
   onDelta: (text: string) => void,
-  opts?: { structuredOutput?: boolean },
+  opts?: { structuredOutput?: boolean; state?: ClaudeStreamJsonState },
 ): ClaudeStreamResult | null {
   const structuredOutput = opts?.structuredOutput ?? false;
+  const state = opts?.state;
   const trimmed = line.trim();
   if (!trimmed) return null;
 
@@ -277,10 +297,19 @@ export function handleStreamJsonLine(
     return null;
   }
 
+  if (j.type === "assistant" && structuredOutput && state && state.structuredOutputText === undefined) {
+    const text = structuredOutputToolUseText(j);
+    if (text !== undefined) state.structuredOutputText = text;
+    return null;
+  }
+
   // 최종 result.
   if (j.type === "result") {
     let text: string;
-    if (j.structured_output !== undefined) {
+    const preservedStructuredOutput = structuredOutput ? state?.structuredOutputText : undefined;
+    if (preservedStructuredOutput !== undefined) {
+      text = preservedStructuredOutput;
+    } else if (j.structured_output !== undefined) {
       text = JSON.stringify(j.structured_output);
     } else {
       text = stripCodeFence(typeof j.result === "string" ? j.result : "");
@@ -292,10 +321,14 @@ export function handleStreamJsonLine(
     // 또는 subtype 이 있고 "success" 가 아니면(error_during_execution / error_max_turns /
     // error_max_budget_usd / error_max_structured_output_retries 등) 에러로 본다.
     const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
+    const structuredMaxTurnsCompleted =
+      preservedStructuredOutput !== undefined &&
+      (subtype === "error_max_turns" || j.terminal_reason === "max_turns");
     const isError =
-      j.is_error === true ||
-      j.terminal_reason === "model_error" ||
-      (subtype !== undefined && subtype !== "success");
+      !structuredMaxTurnsCompleted &&
+      (j.is_error === true ||
+        j.terminal_reason === "model_error" ||
+        (subtype !== undefined && subtype !== "success"));
 
     return {
       text,

@@ -4,6 +4,7 @@ import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 import {
   buildStreamJsonInput,
+  type ClaudeStreamJsonState,
   type ClaudeStreamJsonLine,
   handleStreamJsonLine,
   serializeStreamJsonInput,
@@ -159,18 +160,20 @@ describe("serializeStreamJsonInput", () => {
 // 출력 어댑터(U3): 라인을 onDelta 와 함께 흘려 delta 수집 + 최종 result 반환.
 function runLines(
   lines: Array<string>,
-  opts?: { structuredOutput?: boolean },
+  opts?: { structuredOutput?: boolean; state?: ClaudeStreamJsonState },
 ): {
   deltas: Array<string>;
   result: ReturnType<typeof handleStreamJsonLine>;
+  state: ClaudeStreamJsonState;
 } {
   const deltas: Array<string> = [];
   let result: ReturnType<typeof handleStreamJsonLine> = null;
+  const state = opts?.state ?? {};
   for (const line of lines) {
-    const r = handleStreamJsonLine(line, (t) => deltas.push(t), opts);
+    const r = handleStreamJsonLine(line, (t) => deltas.push(t), { ...opts, state });
     if (r) result = r;
   }
-  return { deltas, result };
+  return { deltas, result, state };
 }
 
 function streamEvent(deltaType: string, payload: Record<string, unknown>): string {
@@ -225,6 +228,52 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     expect(deltas.join("")).toBe('{"a":1}');
     expect(deltas).not.toContain("Here is the JSON:");
     expect(deltas).not.toContain(" (thinking)");
+  });
+
+  it("structured tool-call: 첫 StructuredOutput을 보존하고 max_turns result를 성공 처리", () => {
+    const first = {
+      action: "tool_call",
+      answer: null,
+      toolCalls: [{ toolName: "getWeather", args: '{"city":"Seoul"}' }],
+    };
+    const later = {
+      action: "answer",
+      answer: "tool unavailable",
+      toolCalls: null,
+    };
+    const { result } = runLines(
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", name: "StructuredOutput", input: first }],
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", name: "StructuredOutput", input: later }],
+          },
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "error_max_turns",
+          terminal_reason: "max_turns",
+          structured_output: later,
+          usage: { input_tokens: 10, cache_creation_input_tokens: 20, output_tokens: 30 },
+          duration_ms: 1234,
+          total_cost_usd: 0.0042,
+        }),
+      ],
+      { structuredOutput: true },
+    );
+
+    expect(JSON.parse(result!.text)).toEqual(first);
+    expect(result!.isError).toBe(false);
+    expect(result!.usage.inputTokens).toBe(30);
+    expect(result!.usage.outputTokens).toBe(30);
+    expect(result!.durationMs).toBe(1234);
+    expect(result!.costUsd).toBe(0.0042);
   });
 
   it("text 모드: partial_json 이 와도 무시, text_delta 만", () => {
