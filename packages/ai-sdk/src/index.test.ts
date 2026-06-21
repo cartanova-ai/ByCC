@@ -236,6 +236,45 @@ describe("qgrid AI SDK provider", () => {
     expect((queryBody as Record<string, unknown>).args).not.toHaveProperty("logMode");
   });
 
+  it("maps usage without negative noCache tokens when cache read is present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/query")) {
+          return new Response(
+            JSON.stringify({
+              text: "cached",
+              content: [{ type: "text", text: "cached" }],
+              finishReason: "stop",
+              model: "claude-sonnet-4-6",
+              usage: {
+                input_tokens: 1081,
+                output_tokens: 5,
+                cache_creation_input_tokens: 10,
+                cache_read_input_tokens: 1068,
+              },
+              durationMs: 50,
+              costUsd: 0.001,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const result = await qgrid("anthropic/claude-sonnet-4-6").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    } as never);
+
+    expect(result.usage.inputTokens).toEqual({
+      total: 1081,
+      noCache: 3,
+      cacheRead: 1068,
+      cacheWrite: 10,
+    });
+  });
+
   it("does not send logMode for non-tool doStream (server treats as auto)", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 

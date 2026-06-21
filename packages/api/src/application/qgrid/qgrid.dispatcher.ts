@@ -17,15 +17,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { getLogger } from "@logtape/logtape";
 
 import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
+import { canonicalAnthropicModel } from "../../utils/providers/anthropic/anthropic-constants";
+import { type AnthropicDispatcher } from "../../utils/providers/anthropic/anthropic-dispatcher";
 import {
   getAccessToken,
   getExpiresAt,
   getRefreshToken,
 } from "../../utils/providers/common/credentials";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
+import { type GenerateResult } from "../../utils/providers/common/provider-dispatcher";
 import { strictify } from "../../utils/providers/common/strictifier";
-import { canonicalAnthropicModel } from "../../utils/providers/anthropic/anthropic-constants";
-import { type AnthropicDispatcher } from "../../utils/providers/anthropic/anthropic-dispatcher";
 import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { decideConvRouting, issueConvContext } from "./conv-routing";
@@ -152,37 +153,16 @@ export class QgridDispatcherClass {
         });
 
         const issuedCoord = issueConvContext(result.threadCoord, decision);
-        return applyToolCallEmulation(
-          {
-            text: result.text,
-            tokenName: result.tokenName,
-            model: result.model,
-            usage: {
-              input_tokens: result.usage.inputTokens,
-              output_tokens: result.usage.outputTokens,
-              cache_creation_input_tokens: 0,
-              cache_read_input_tokens: result.usage.cachedInputTokens,
-            },
-            durationMs: result.durationMs,
-            costUsd: calculateCostUsd(result.model, {
-              inputTokens: result.usage.inputTokens,
-              outputTokens: result.usage.outputTokens,
-              cachedInputTokens: result.usage.cachedInputTokens,
-            }),
-          },
-          input.tools,
-          issuedCoord,
-        );
+        return applyToolCallEmulation(toEmulationResult(result), input.tools, issuedCoord);
       }
     }
 
-    // Anthropic — AnthropicDispatcher(멀티턴 session resume) 경로.
-    // OpenAI 경로와 동일하게 decideConvRouting → generate → issueConvContext → applyToolCallEmulation.
+    // Anthropic — AnthropicDispatcher(멀티턴 session resume) 경로. OpenAI 경로와 동형.
     if (this.anthropicDispatcher) {
       const decision = decideConvRouting(input);
       const result = await this.anthropicDispatcher.generate({
         // model 미지정이면 AnthropicDispatcher 가 ANTHROPIC_DEFAULT_MODEL 적용 — "sonnet" 별칭을
-        // 강제로 끼워 U1 default 를 죽이지 않는다(codex P3). prefix 정규화도 dispatcher 내부에서.
+        // 강제로 끼워 dispatcher default 를 죽이지 않는다. prefix 정규화도 dispatcher 내부에서.
         model: input.model,
         systemPrompt: input.system,
         outputSchema: outputSchema
@@ -196,27 +176,7 @@ export class QgridDispatcherClass {
       });
 
       const issuedCoord = issueConvContext(result.threadCoord, decision);
-      return applyToolCallEmulation(
-        {
-          text: result.text,
-          tokenName: result.tokenName,
-          model: result.model,
-          usage: {
-            input_tokens: result.usage.inputTokens,
-            output_tokens: result.usage.outputTokens,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: result.usage.cachedInputTokens,
-          },
-          durationMs: result.durationMs,
-          costUsd: calculateCostUsd(result.model, {
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            cachedInputTokens: result.usage.cachedInputTokens,
-          }),
-        },
-        input.tools,
-        issuedCoord,
-      );
+      return applyToolCallEmulation(toEmulationResult(result), input.tools, issuedCoord);
     }
 
     // 폴백: AnthropicDispatcher 미초기화 시 기존 stateless claude -p 경로(멀티턴 없음).
@@ -251,7 +211,7 @@ export class QgridDispatcherClass {
 
     const result = await executeClaude(executionInput, token, timeoutMs ?? DEFAULT_TIMEOUT_MS);
     return applyToolCallEmulation(
-      // model 도 canonical 로 — fallback 도 cost/표기가 main 경로와 일치하게(codex U5 P2).
+      // model 도 canonical 로 — fallback 도 cost/표기가 main 경로와 일치하게.
       { ...result, tokenName: electedToken.name, model: canonicalAnthropicModel(input.model) },
       input.tools,
     );
@@ -279,7 +239,7 @@ export class QgridDispatcherClass {
         const decision = decideConvRouting(input);
         await this.anthropicDispatcher.generateStream(
           {
-            // model 미지정 시 dispatcher 가 ANTHROPIC_DEFAULT_MODEL 적용(codex P3). prefix 정규화도 내부에서.
+            // model 미지정 시 dispatcher 가 ANTHROPIC_DEFAULT_MODEL 적용. prefix 정규화도 내부에서.
             model: input.model,
             systemPrompt: input.system,
             outputSchema: outputSchema
@@ -296,28 +256,9 @@ export class QgridDispatcherClass {
             onThreadId: cb.onThreadId,
             onComplete: (turnResult) => {
               const issuedCoord = issueConvContext(turnResult.threadCoord, decision);
-              const applied = applyToolCallEmulation(
-                {
-                  text: turnResult.text,
-                  tokenName: turnResult.tokenName,
-                  model: turnResult.model,
-                  usage: {
-                    input_tokens: turnResult.usage.inputTokens,
-                    output_tokens: turnResult.usage.outputTokens,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: turnResult.usage.cachedInputTokens,
-                  },
-                  durationMs: turnResult.durationMs,
-                  costUsd: calculateCostUsd(turnResult.model, {
-                    inputTokens: turnResult.usage.inputTokens,
-                    outputTokens: turnResult.usage.outputTokens,
-                    cachedInputTokens: turnResult.usage.cachedInputTokens,
-                  }),
-                },
-                input.tools,
-                issuedCoord,
+              cb.onComplete(
+                applyToolCallEmulation(toEmulationResult(turnResult), input.tools, issuedCoord),
               );
-              cb.onComplete(applied);
             },
             onError: cb.onError,
           },
@@ -362,33 +303,44 @@ export class QgridDispatcherClass {
         onTurnId: cb.onTurnId,
         onComplete: (turnResult) => {
           const issuedCoord = issueConvContext(turnResult.threadCoord, decision);
-          const applied = applyToolCallEmulation(
-            {
-              text: turnResult.text,
-              tokenName: turnResult.tokenName,
-              model: turnResult.model,
-              usage: {
-                input_tokens: turnResult.usage.inputTokens,
-                output_tokens: turnResult.usage.outputTokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: turnResult.usage.cachedInputTokens,
-              },
-              durationMs: turnResult.durationMs,
-              costUsd: calculateCostUsd(turnResult.model, {
-                inputTokens: turnResult.usage.inputTokens,
-                outputTokens: turnResult.usage.outputTokens,
-                cachedInputTokens: turnResult.usage.cachedInputTokens,
-              }),
-            },
-            input.tools,
-            issuedCoord,
+          cb.onComplete(
+            applyToolCallEmulation(toEmulationResult(turnResult), input.tools, issuedCoord),
           );
-          cb.onComplete(applied);
         },
         onError: cb.onError,
       },
     );
   }
+}
+
+// GenerateResult(provider dispatcher 응답)를 applyToolCallEmulation 입력 shape 로 매핑한다.
+// OpenAI/Anthropic, query/queryStream 4 경로가 동일하게 쓴다.
+// Anthropic adapter 는 cache creation 을 inputTokens 에 포함해 표준화하고, 별도 필드에도 보존한다.
+// per-request cost 는 Claude Code 가 준 total_cost_usd 를 우선 사용하고 fallback 계산만 공통 cost 함수를 쓴다.
+function toEmulationResult(
+  result: GenerateResult,
+): Omit<QueryOutput, "content" | "finishReason" | "runContext"> {
+  return {
+    text: result.text,
+    tokenName: result.tokenName,
+    model: result.model,
+    usage: {
+      input_tokens: result.usage.inputTokens,
+      output_tokens: result.usage.outputTokens,
+      cache_creation_input_tokens: result.usage.cacheCreationInputTokens ?? 0,
+      cache_read_input_tokens: result.usage.cachedInputTokens,
+    },
+    durationMs: result.durationMs,
+    costUsd:
+      result.costUsd !== undefined && result.costUsd > 0
+        ? result.costUsd
+        : calculateCostUsd(result.model, {
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            cachedInputTokens: result.usage.cachedInputTokens,
+            cacheCreationInputTokens: result.usage.cacheCreationInputTokens ?? 0,
+          }),
+  };
 }
 
 async function executeClaude(

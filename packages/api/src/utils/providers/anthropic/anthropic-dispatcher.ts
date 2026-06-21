@@ -349,6 +349,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         tokenName: token.name,
         usage: session.usage,
         durationMs: session.durationMs,
+        costUsd: session.costUsd,
         model,
         // systemHash 는 상위 issueConvContext 가 채운다(여기선 비운다).
         threadCoord: {

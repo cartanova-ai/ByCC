@@ -17,6 +17,59 @@ import { type RequestLogListParams, type RequestLogSaveParams } from "./request-
 // cost_usd는 정수 micro-USD로 저장. 실제 USD = cost_usd / MICRO_USD.
 export const MICRO_USD = 1_000_000;
 
+type RequestLogUsageRow = {
+  token_name?: string | null;
+  model_name?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd?: number | null;
+};
+
+function isAnthropicUsageRow(row: Pick<RequestLogUsageRow, "token_name" | "model_name">): boolean {
+  return (
+    row.token_name?.startsWith("anthropic/") === true ||
+    row.model_name?.startsWith("claude-") === true ||
+    row.model_name?.startsWith("anthropic/claude-") === true
+  );
+}
+
+function canonicalModelName(modelName: string): string {
+  return modelName.includes("/") ? modelName.split("/").pop()! : modelName;
+}
+
+function normalizedUsageForCost(row: RequestLogUsageRow): {
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationInputTokens: number;
+} {
+  const cacheRead = Number(row.cache_read_tokens ?? 0);
+  const cacheCreation = Number(row.cache_creation_tokens ?? 0);
+  const storedInput = Number(row.input_tokens ?? 0);
+  const legacyAnthropicSplitInput =
+    isAnthropicUsageRow(row) && storedInput < cacheRead + cacheCreation;
+  return {
+    model: row.model_name ? canonicalModelName(row.model_name) : null,
+    inputTokens: legacyAnthropicSplitInput ? storedInput + cacheRead + cacheCreation : storedInput,
+    outputTokens: Number(row.output_tokens ?? 0),
+    cachedInputTokens: cacheRead,
+    cacheCreationInputTokens: cacheCreation,
+  };
+}
+
+function normalizeLegacyAnthropicRow<T extends RequestLogUsageRow>(row: T): T {
+  const usage = normalizedUsageForCost(row);
+  if (usage.inputTokens === Number(row.input_tokens ?? 0)) return row;
+  const normalized = { ...row, input_tokens: usage.inputTokens };
+  if (usage.model) {
+    normalized.cost_usd = Math.round(calculateCostUsd(usage.model, usage) * MICRO_USD);
+  }
+  return normalized;
+}
+
 /*
   RequestLog Model
 */
@@ -118,10 +171,7 @@ class RequestLogModelClass extends BaseModelClass<
     }
 
     const enhancers = this.createEnhancers({
-      A: (row) => ({
-        ...row,
-        // 서브셋별로 virtual 필드 계산로직 추가
-      }),
+      A: (row) => normalizeLegacyAnthropicRow(row),
     });
 
     return this.executeSubsetQuery({
@@ -238,14 +288,21 @@ class RequestLogModelClass extends BaseModelClass<
         .where("id", requestLogId)
         .limit(1);
       if (row?.model_name) {
-        const model = row.model_name.includes("/")
-          ? row.model_name.split("/").pop()!
-          : row.model_name;
+        const model = canonicalModelName(row.model_name);
+        const usage = normalizedUsageForCost({
+          token_name: params.token_name,
+          model_name: row.model_name,
+          input_tokens: params.input_tokens,
+          output_tokens: params.output_tokens,
+          cache_read_tokens: params.cache_read_tokens ?? 0,
+          cache_creation_tokens: params.cache_creation_tokens ?? 0,
+        });
         update.cost_usd = Math.round(
           calculateCostUsd(model, {
-            inputTokens: params.input_tokens,
-            outputTokens: params.output_tokens,
-            cachedInputTokens: params.cache_read_tokens ?? 0,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cachedInputTokens: usage.cachedInputTokens,
+            cacheCreationInputTokens: usage.cacheCreationInputTokens,
           }) * 1_000_000,
         );
       }
@@ -333,9 +390,37 @@ class RequestLogModelClass extends BaseModelClass<
     if (params.token_name) {
       qb.where("token_name", params.token_name);
     }
-    // knex는 pg에서 numeric aggregate를 string으로 반환.
-    const row = (await qb.sum({ sum: "cost_usd" }).first()) as { sum: string | null } | undefined;
-    return Number(row?.sum ?? 0) / MICRO_USD;
+    // 기존 cost_usd 에는 과거 Anthropic cache 계산 버그로 음수가 저장된 row 가 있을 수 있다.
+    // 화면 집계는 저장값 sum 이 아니라 현재 계산식으로 usage 를 재계산해 과거 로그도 즉시 보정한다.
+    const rows = (await qb.select(
+      "model_name",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_creation_tokens",
+      "cost_usd",
+    )) as Array<{
+      model_name: string | null;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+      cost_usd: number | null;
+    }>;
+
+    return rows.reduce((sum, row) => {
+      const usage = normalizedUsageForCost(row);
+      if (!usage.model) return sum + Math.max(Number(row.cost_usd ?? 0), 0) / MICRO_USD;
+      return (
+        sum +
+        calculateCostUsd(usage.model, {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          cacheCreationInputTokens: usage.cacheCreationInputTokens,
+        })
+      );
+    }, 0);
   }
 
   async distinctProjectNames(): Promise<string[]> {

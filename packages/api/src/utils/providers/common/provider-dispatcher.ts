@@ -8,6 +8,12 @@ import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 
+// qgrid provider 내부 표준 usage. codex-protocol 의 TokenUsageBreakdown 은 생성 파일이므로
+// provider 전용 cache write 세부 필드는 여기서 확장해 보존한다.
+export type ProviderTokenUsageBreakdown = TokenUsageBreakdown & {
+  cacheCreationInputTokens?: number;
+};
+
 // thread 재사용 라우팅 좌표. 상위(qgrid.dispatcher)에서 conv 핸들 검증을 통과한 경우에만 전달.
 // dispatcher 는 이 좌표가 가리키는 worker 의 기존 thread 에 turn 만 실행한다.
 export interface ReuseThreadCoord {
@@ -41,8 +47,11 @@ export interface GenerateRequest {
 export interface GenerateResult {
   text: string;
   tokenName: string;
-  usage: TokenUsageBreakdown;
+  usage: ProviderTokenUsageBreakdown;
   durationMs: number;
+  // Provider 가 직접 산출한 비용. Anthropic Claude Code 는 total_cost_usd 를 주므로 이 값을
+  // 우선 사용하고, 없으면 상위가 모델별 가격표로 계산한다.
+  costUsd?: number;
   model: string;
   // 이번 turn 이 사용한 thread 좌표. 상위가 conv 핸들을 발급/갱신하는 데 쓴다.
   threadCoord: ReuseThreadCoord;

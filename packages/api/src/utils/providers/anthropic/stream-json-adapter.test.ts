@@ -238,7 +238,7 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     expect(deltas).toEqual(["hello"]);
   });
 
-  it("usage: 4 카테고리 → TokenUsageBreakdown (cache read 분리, total 은 3카테고리+output 합)", () => {
+  it("usage: 4 카테고리 → TokenUsageBreakdown (inputTokens 는 cache 포함 전체 입력)", () => {
     const { result } = runLines([
       JSON.stringify({
         type: "result",
@@ -253,8 +253,9 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     ]);
     expect(result!.usage).toEqual({
       totalTokens: 10 + 2274 + 14853 + 111,
-      inputTokens: 10,
+      inputTokens: 10 + 2274 + 14853,
       cachedInputTokens: 14853,
+      cacheCreationInputTokens: 2274,
       outputTokens: 111,
       reasoningOutputTokens: 0,
     });
@@ -290,7 +291,9 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
   });
 
   it("success(P1): subtype==='success' 또는 subtype 없음 → isError false", () => {
-    const ok1 = runLines([JSON.stringify({ type: "result", subtype: "success", result: "ok", usage: {} })]);
+    const ok1 = runLines([
+      JSON.stringify({ type: "result", subtype: "success", result: "ok", usage: {} }),
+    ]);
     expect(ok1.result!.isError).toBe(false);
     const ok2 = runLines([JSON.stringify({ type: "result", result: "ok", usage: {} })]);
     expect(ok2.result!.isError).toBe(false);
