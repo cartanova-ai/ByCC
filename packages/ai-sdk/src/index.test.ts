@@ -11,6 +11,7 @@ const usage = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 function tool() {
@@ -66,6 +67,41 @@ function sseDone(data: unknown) {
 }
 
 describe("qgrid AI SDK provider", () => {
+  it("sends QGRID_PROJECT_NAME for provider request logs", async () => {
+    vi.stubEnv("QGRID_PROJECT_NAME", "deti");
+    let queryBody: unknown;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = JSON.parse(String(init?.body));
+          return new Response(
+            JSON.stringify({
+              text: "ok",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 50,
+              costUsd: 0.001,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    } as never);
+
+    expect(queryBody).toMatchObject({
+      args: {
+        projectName: "deti",
+      },
+    });
+  });
+
   it("sends tools and maps tool-call response", async () => {
     let queryBody: unknown;
     vi.stubGlobal(

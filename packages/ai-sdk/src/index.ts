@@ -67,6 +67,7 @@ function toAiSdkUsage(usage: QueryOutput["usage"]) {
 export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig): LanguageModelV3 {
   const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
   const effort = config?.defaultEffort ?? DEFAULT_EFFORT;
+  const projectName = config?.projectName ?? process.env.QGRID_PROJECT_NAME;
 
   type ClientRunState = {
     runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord };
@@ -160,6 +161,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
+            ...(projectName ? { projectName } : {}),
             ...(logMode ? { logMode } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
@@ -304,6 +306,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
+            ...(projectName ? { projectName } : {}),
             ...(logMode ? { logMode } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),

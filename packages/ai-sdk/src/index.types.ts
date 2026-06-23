@@ -1,6 +1,8 @@
 export type QgridProviderConfig = {
   serverUrl?: string;
   defaultEffort?: string;
+  /** request_logs.project_name. default: process.env.QGRID_PROJECT_NAME */
+  projectName?: string;
 };
 
 /**
