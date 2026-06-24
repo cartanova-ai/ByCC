@@ -268,7 +268,7 @@ describe("AnthropicDispatcher", () => {
   });
 
   it.each([
-    ["timeout", "Claude session timeout after 120s"],
+    ["timeout", "Claude session timeout after 240s"],
     ["abort", "aborted"],
     ["spawn", "Claude session spawn error: ENOENT"],
     ["schema", "Claude session closed without result — stderr: schema validation failed"],
@@ -427,6 +427,24 @@ describe("AnthropicDispatcher", () => {
     expect(result.model).toBe("claude-opus-4-8");
   });
 
+  it("[1m] suffix 정규화: compat/result/runClaudeSession 에는 base canonical 만 전달", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    const result = await d.generate(baseReq({ model: "anthropic/claude-sonnet-4-6[1m]" }));
+
+    const call = runClaudeSessionMock.mock.calls[0]![0];
+    expect(call.model).toBe("claude-sonnet-4-6");
+    expect(result.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("unsupported alias + [1m] 은 조용히 다운그레이드하지 않는다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    await expect(d.generate(baseReq({ model: "sonnet[1m]" }))).rejects.toThrow(
+      /Unsupported Anthropic 1M model suffix/,
+    );
+  });
+
   it("model prefix 유무가 같은 호환키 → resume 유지 (codex P2: prefix 가 compat 오염 안 함)", async () => {
     const d = new AnthropicDispatcher();
     d.onTokenAdded(1, "tok-A", creds());
@@ -523,6 +541,42 @@ describe("AnthropicDispatcher", () => {
     });
     expect(deltas).toEqual(["부분"]);
     expect(completed).not.toBeNull();
+    expect(runClaudeSessionMock.mock.calls[0]![0].includePartialMessages).toBe(true);
+  });
+
+  it("generateStream: Claude server error 는 onError 로 전달하고 complete 하지 않는다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    const serverError = new Error(
+      "claude error (anthropic/yds): API Error: 529 Overloaded. This is a server-side issue",
+    );
+    runClaudeSessionMock.mockRejectedValueOnce(serverError);
+
+    const onDelta = vi.fn();
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+    await d.generateStream(baseReq(), { onDelta, onComplete, onError });
+
+    expect(onDelta).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(serverError);
+    expect(runClaudeSessionMock.mock.calls[0]![0].includePartialMessages).toBe(true);
+  });
+
+  it("generateStream: 세션 timeout 도 onError 로 전달한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds());
+    const timeoutError = new Error("Claude session timeout after 240s");
+    runClaudeSessionMock.mockRejectedValueOnce(timeoutError);
+
+    const onError = vi.fn();
+    await d.generateStream(baseReq(), {
+      onDelta: vi.fn(),
+      onComplete: vi.fn(),
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalledWith(timeoutError);
   });
 
   it("refresh: 만료 임박 토큰은 provider 포함해 refreshToken 호출, 새 access token 으로 세션 진행 (codex P1)", async () => {

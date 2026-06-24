@@ -7,6 +7,82 @@ import {
 import { buildStrictOutputSchema, QgridDispatcherClass } from "./qgrid.dispatcher";
 
 describe("QgridDispatcherClass", () => {
+  it("AnthropicDispatcher 미초기화 시 query 는 폴백 없이 실패한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+
+    await expect(
+      dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" }),
+    ).rejects.toThrow(/Anthropic dispatcher not initialized/);
+  });
+
+  it("AnthropicDispatcher 미초기화 시 queryStream 은 delta 없는 query 폴백 없이 실패한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+
+    await expect(
+      dispatcher.queryStream(
+        { prompt: "hi", model: "anthropic/claude-sonnet-4-6" },
+        {
+          onDelta: vi.fn(),
+          onComplete: vi.fn(),
+          onError: vi.fn(),
+        },
+      ),
+    ).rejects.toThrow(/Anthropic dispatcher not initialized/);
+  });
+
+  it("provider prefix 없는 모델은 AnthropicDispatcher 로 암묵 라우팅하지 않는다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn();
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    await expect(dispatcher.query({ prompt: "hi", model: "claude-sonnet-4-6" })).rejects.toThrow(
+      /Direct LLM API fallback not implemented/,
+    );
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("Anthropic queryStream 은 abortSignal 을 provider request 로 전달한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generateStream = vi.fn(async () => {});
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+    const abortSignal = new AbortController().signal;
+
+    await dispatcher.queryStream(
+      { prompt: "hi", model: "anthropic/claude-sonnet-4-6" },
+      {
+        onDelta: vi.fn(),
+        onComplete: vi.fn(),
+        onError: vi.fn(),
+      },
+      abortSignal,
+    );
+
+    expect(generateStream.mock.calls[0]![0].abortSignal).toBe(abortSignal);
+  });
+
+  it("Anthropic queryStream provider error 는 상위 onError 로 전달한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const serverError = new Error(
+      "claude error (anthropic/yds): API Error: 529 Overloaded. This is a server-side issue",
+    );
+    const generateStream = vi.fn(async (_req, cb) => {
+      cb.onError(serverError);
+    });
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    const onDelta = vi.fn();
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+    await dispatcher.queryStream(
+      { prompt: "hi", model: "anthropic/claude-sonnet-4-6" },
+      { onDelta, onComplete, onError },
+    );
+
+    expect(onDelta).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(serverError);
+  });
+
   it("jsonSchema 를 required + additionalProperties:false 로 strictify 한다", () => {
     const schema = buildStrictOutputSchema({
       jsonSchema: JSON.stringify({
@@ -33,11 +109,10 @@ describe("QgridDispatcherClass", () => {
 
     expect(schema.required).toEqual(["contents"]);
     expect(schema.additionalProperties).toBe(false);
-    const contentsArray = (
-      schema.properties?.contents as {
-        anyOf?: Array<{ items?: { required?: string[]; additionalProperties?: boolean } }>;
-      }
-    ).anyOf?.[0];
+    const contents = schema.properties?.contents as
+      | { anyOf?: Array<{ items?: { required?: string[]; additionalProperties?: boolean } }> }
+      | undefined;
+    const contentsArray = contents?.anyOf?.[0];
     expect(contentsArray?.items?.required).toEqual(["text"]);
     expect(contentsArray?.items?.additionalProperties).toBe(false);
   });
@@ -102,7 +177,7 @@ describe("QgridDispatcherClass", () => {
     );
     dispatcher.anthropicDispatcher = { generate } as never;
 
-    const result = await dispatcher.query({ prompt: "hi", model: "claude-sonnet-4-6" });
+    const result = await dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" });
 
     expect(result.costUsd).toBe(0.123456);
     expect(result.usage.cache_creation_input_tokens).toBe(600);

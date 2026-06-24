@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculateCostUsd } from "./model-cost";
+import { calculateCostUsd, getModelCosts } from "./model-cost";
 
 describe("calculateCostUsd", () => {
   it("Anthropic cache read/write 를 전체 입력에서 분리해 각각 단가를 적용한다", () => {
@@ -35,5 +35,23 @@ describe("calculateCostUsd", () => {
 
     expect(cost).toBeGreaterThan(0);
     expect(cost).toBeCloseTo(0.0027222, 10);
+  });
+
+  it("[1m] suffix 는 cost lookup 에서 strip 하고 long-context 할증은 붙이지 않는다", () => {
+    const base = getModelCosts("claude-sonnet-4-6");
+    const suffixed = getModelCosts("claude-sonnet-4-6[1m]");
+    expect(suffixed).toBe(base);
+    expect(suffixed.longContext).toBeUndefined();
+
+    const usage = {
+      inputTokens: 250_000,
+      outputTokens: 1_000,
+      cachedInputTokens: 200_000,
+      cacheCreationInputTokens: 0,
+    };
+    expect(calculateCostUsd("claude-sonnet-4-6[1m]", usage)).toBeCloseTo(
+      calculateCostUsd("claude-sonnet-4-6", usage),
+      10,
+    );
   });
 });

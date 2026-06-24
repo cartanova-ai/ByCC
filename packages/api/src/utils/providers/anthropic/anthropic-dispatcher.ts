@@ -31,12 +31,14 @@ import {
   type GenerateStreamCallbacks,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
-import { canonicalAnthropicModel } from "./anthropic-constants";
+import { assertSupportedOneMillionSuffix, canonicalAnthropicModel } from "./anthropic-constants";
 import { compatibilityKey, makeAnthropicWorkerId, runClaudeSession } from "./claude-session";
 
 const logger = getLogger(["qgrid", "anthropic-dispatcher"]);
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+// 1M context 정상 생성은 실측상 100s+까지 간다. 240s는 완충 장치일 뿐,
+// 거부+거대 system 재생성 지연을 완전히 해결하는 값은 아니다.
+const DEFAULT_TIMEOUT_MS = 240_000;
 // access token 만료 임박 임계 — 기존 standalone 경로(qgrid.dispatcher.ts)와 동일(60s).
 const REFRESH_SAFETY_MS = 60_000;
 
@@ -224,7 +226,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
 
   async generateStream(req: GenerateRequest, cb: GenerateStreamCallbacks): Promise<void> {
     try {
-      const result = await this.run(req, cb.onDelta);
+      const result = await this.run(req, cb.onDelta, { includePartialMessages: true });
       cb.onThreadId?.(result.threadCoord.threadId);
       cb.onComplete(result);
     } catch (e) {
@@ -233,12 +235,17 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   }
 
   // generate/generateStream 공통 실행. onDelta 는 스트림이면 점진 방출, 비스트림이면 no-op.
-  private async run(req: GenerateRequest, onDelta: (t: string) => void): Promise<GenerateResult> {
+  private async run(
+    req: GenerateRequest,
+    onDelta: (t: string) => void,
+    opts?: { includePartialMessages?: boolean },
+  ): Promise<GenerateResult> {
     this.sweepSessionCompat();
 
     // model 정규화를 dispatcher 진입점에서 한 번 한다: compat / result.model / runClaudeSession 전부
     // canonical(prefix 없는 cost 키) 을 쓰게 통일. 미지정이면 ANTHROPIC_DEFAULT_MODEL — qgrid.dispatcher
     // 의 "sonnet" 별칭 우회 차단. 정규화 규칙은 fallback 경로와 공유(canonicalAnthropicModel).
+    assertSupportedOneMillionSuffix(req.model);
     const model = canonicalAnthropicModel(req.model);
     const jsonSchema =
       req.outputSchema !== undefined ? JSON.stringify(req.outputSchema) : undefined;
@@ -313,6 +320,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
             input: resume && req.reuseInput ? req.reuseInput : req.coldInput,
             resumeSessionId: resume ? resumeSessionId : undefined,
             abortSignal: req.abortSignal,
+            includePartialMessages: opts?.includePartialMessages,
           },
           onDelta,
         );

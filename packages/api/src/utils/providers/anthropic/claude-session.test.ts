@@ -4,11 +4,14 @@ import { describe, expect, it } from "vitest";
 
 import { ANTHROPIC_CONFIG_DIR_BASE, anthropicConfigDir } from "./anthropic-constants";
 import {
+  applyOneMillionSuffix,
   buildClaudeArgs,
   compatibilityKey,
   decorateAndSerialize,
   ensureConfigDir,
   makeAnthropicWorkerId,
+  oneMillionEnv,
+  runClaudeSession,
   withSessionLock,
 } from "./claude-session";
 import { buildStreamJsonInput } from "./stream-json-adapter";
@@ -164,11 +167,23 @@ describe("withSessionLock (per-session 락 P0-3)", () => {
 });
 
 describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
+  it("applyOneMillionSuffix: 필요한 모델에만 [1m] suffix 를 단일 부착", () => {
+    expect(applyOneMillionSuffix("claude-sonnet-4-6", true)).toBe("claude-sonnet-4-6[1m]");
+    expect(applyOneMillionSuffix("claude-sonnet-4-6[1m]", true)).toBe("claude-sonnet-4-6[1m]");
+    expect(applyOneMillionSuffix("claude-opus-4-8", false)).toBe("claude-opus-4-8");
+  });
+
+  it("oneMillionEnv: 지원 모델은 DISABLE_1M 을 제거하고 미지원은 유지", () => {
+    expect(oneMillionEnv(true)).toEqual({});
+    expect(oneMillionEnv(false)).toEqual({ CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" });
+  });
+
   it("첫 호출: --session-id, resume 아님", () => {
     const args = buildClaudeArgs({ model: "m", sessionId: "uuid-1", isResume: false });
     expect(args).toContain("--session-id");
     expect(args).toContain("uuid-1");
     expect(args).not.toContain("--resume");
+    expect(args).not.toContain("--include-partial-messages");
     // 멀티턴 필수: --no-session-persistence 없어야 함
     expect(args).not.toContain("--no-session-persistence");
     // 입력 포맷
@@ -183,6 +198,35 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(args).not.toContain("--session-id");
   });
 
+  it("stream 호출: partial message delta 를 포함한다", () => {
+    const args = buildClaudeArgs({
+      model: "m",
+      sessionId: "uuid-1",
+      isResume: false,
+      includePartialMessages: true,
+    });
+    expect(args).toContain("--include-partial-messages");
+  });
+
+  it("runClaudeSession: 이미 abort 된 signal 은 spawn 전에 실패한다", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      runClaudeSession(
+        {
+          tokenId: 999,
+          token: "sk-ant-oat01-test",
+          model: "haiku",
+          timeoutMs: 1_000,
+          input: [{ type: "text", text: "hi", text_elements: [] }],
+          abortSignal: controller.signal,
+        },
+        () => {},
+      ),
+    ).rejects.toThrow("aborted");
+  });
+
   it("structured(jsonSchema 있음): --allowed-tools StructuredOutput + --json-schema (P2-7)", () => {
     const args = buildClaudeArgs({
       model: "m",
@@ -195,6 +239,26 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(args).toContain("--json-schema");
   });
 
+  it("1M suffix 는 CLI --model 인자에만 반영된다", () => {
+    const args = buildClaudeArgs({
+      model: "claude-sonnet-4-6",
+      sessionId: "u",
+      isResume: false,
+      needsOneMillionSuffix: true,
+    });
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-6[1m]");
+  });
+
+  it("1M 기본 지원 모델은 CLI --model 에 suffix 를 붙이지 않는다", () => {
+    const args = buildClaudeArgs({
+      model: "claude-opus-4-8",
+      sessionId: "u",
+      isResume: false,
+      needsOneMillionSuffix: false,
+    });
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-4-8");
+  });
+
   it("non-structured(jsonSchema 없음): --allowed-tools 미부여 (P2-7)", () => {
     const args = buildClaudeArgs({ model: "m", sessionId: "u", isResume: false });
     expect(args).not.toContain("--allowed-tools");
@@ -204,7 +268,12 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
   });
 
   it("inline [System] 금지: --system-prompt 정식 채널 사용 (R7)", () => {
-    const args = buildClaudeArgs({ model: "m", system: "you are X", sessionId: "u", isResume: false });
+    const args = buildClaudeArgs({
+      model: "m",
+      system: "you are X",
+      sessionId: "u",
+      isResume: false,
+    });
     expect(args).toContain("--system-prompt");
     expect(args[args.indexOf("--system-prompt") + 1]).toBe("you are X");
   });

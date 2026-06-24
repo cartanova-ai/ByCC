@@ -164,7 +164,8 @@ const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
 const DEFAULT_COSTS: ModelCosts = { inputTokens: 3, outputTokens: 15, cachedInputTokens: 0.3 };
 
 export function getModelCosts(model: string): ModelCosts {
-  return OPENAI_COSTS[model] ?? ANTHROPIC_COSTS[model] ?? DEFAULT_COSTS;
+  const normalizedModel = model.replace(/\[1m\]$/i, "");
+  return OPENAI_COSTS[normalizedModel] ?? ANTHROPIC_COSTS[normalizedModel] ?? DEFAULT_COSTS;
 }
 
 export function calculateCostUsd(

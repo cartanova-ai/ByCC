@@ -32,7 +32,10 @@ import {
   anthropicConfigDir,
   ANTHROPIC_DEFAULT_EFFORT,
   ANTHROPIC_DISALLOWED_TOOLS,
+  assertSupportedOneMillionSuffix,
   canonicalAnthropicModel,
+  needsCli1mSuffix,
+  supports1MContext,
 } from "./anthropic-constants";
 import {
   buildStreamJsonInput,
@@ -93,7 +96,10 @@ export function makeAnthropicWorkerId(tokenId: number): number {
 // ── envelope decorate ──────────────────────────────────────────────
 
 // stream-json 입력 라인에 SDK envelope 부착 후 직렬화. session 소유자인 여기서 한다.
-export function decorateAndSerialize(lines: Array<ClaudeStreamJsonLine>, sessionId: string): string {
+export function decorateAndSerialize(
+  lines: Array<ClaudeStreamJsonLine>,
+  sessionId: string,
+): string {
   return (
     lines
       .map((line) =>
@@ -124,6 +130,7 @@ export interface ClaudeSessionRequest {
   // resume 경로면 기존 session-id, cold 면 undefined(새로 발급).
   resumeSessionId?: string;
   abortSignal?: AbortSignal;
+  includePartialMessages?: boolean;
 }
 
 export interface ClaudeSessionResult extends ClaudeStreamResult {
@@ -152,6 +159,15 @@ function ensureCwd(): void {
 }
 
 // spawn args 구성. 멀티턴/격리/structured 모드 반영.
+export function applyOneMillionSuffix(model: string, needsSuffix: boolean): string {
+  const base = canonicalAnthropicModel(model);
+  return needsSuffix ? `${base}[1m]` : base;
+}
+
+export function oneMillionEnv(supported: boolean): { CLAUDE_CODE_DISABLE_1M_CONTEXT?: "1" } {
+  return supported ? {} : { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" };
+}
+
 export function buildClaudeArgs(opts: {
   model: string;
   system?: string;
@@ -159,6 +175,8 @@ export function buildClaudeArgs(opts: {
   jsonSchema?: string;
   sessionId: string;
   isResume: boolean;
+  needsOneMillionSuffix?: boolean;
+  includePartialMessages?: boolean;
 }): Array<string> {
   const useStructured = Boolean(opts.jsonSchema && opts.jsonSchema.length > 0);
   // --tools "" 로 전체 차단, structured(jsonSchema 있음) 면 StructuredOutput 만 허용.
@@ -176,6 +194,7 @@ export function buildClaudeArgs(opts: {
     "--output-format",
     "stream-json",
     "--verbose",
+    ...(opts.includePartialMessages ? ["--include-partial-messages"] : []),
     "--max-turns",
     useStructured ? "2" : "1",
     "--permission-mode",
@@ -183,7 +202,7 @@ export function buildClaudeArgs(opts: {
     "--setting-sources",
     "project",
     "--model",
-    opts.model,
+    applyOneMillionSuffix(opts.model, opts.needsOneMillionSuffix ?? false),
     // inline [System] 금지 — 정식 채널만(R7). 생략 시 CC default(23k) 주입되므로 반드시 명시.
     "--system-prompt",
     opts.system ?? "",
@@ -209,7 +228,10 @@ export function runClaudeSession(
 ): Promise<ClaudeSessionResult> {
   // 정규화 규칙은 canonicalAnthropicModel 이 단독 소유 — dispatcher 가 이미 canonical 을 넘기지만,
   // 직접 호출(테스트/미래 caller) 대비 방어적으로 한 번 더 통과시킨다(이미 canonical 이면 no-op).
+  assertSupportedOneMillionSuffix(req.model);
   const model = canonicalAnthropicModel(req.model);
+  const supportsOneMillion = supports1MContext(model);
+  const needsOneMillionSuffix = needsCli1mSuffix(model);
   const isResume = Boolean(req.resumeSessionId);
   const sessionId = req.resumeSessionId ?? randomUUID();
   const useStructured = Boolean(req.jsonSchema && req.jsonSchema.length > 0);
@@ -226,6 +248,8 @@ export function runClaudeSession(
       jsonSchema: req.jsonSchema,
       sessionId,
       isResume,
+      needsOneMillionSuffix,
+      includePartialMessages: req.includePartialMessages,
     });
 
     const inputLines = buildStreamJsonInput({
@@ -236,6 +260,11 @@ export function runClaudeSession(
     const stdinPayload = decorateAndSerialize(inputLines, sessionId);
 
     return new Promise<ClaudeSessionResult>((resolve, reject) => {
+      if (req.abortSignal?.aborted) {
+        reject(new Error("aborted"));
+        return;
+      }
+
       const child = spawn("claude", args, {
         // stderr 도 캡처: invalid OAuth / 잘못된 플래그 / CLI 검증 실패가
         // "closed without result" 로 뭉개지지 않게 close/error 에 stderr 를 실어 보낸다.
@@ -248,7 +277,7 @@ export function runClaudeSession(
           CLAUDE_CONFIG_DIR: configDir,
           CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
           CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
-          CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+          ...oneMillionEnv(supportsOneMillion),
           CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
           CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
         },
@@ -264,9 +293,11 @@ export function runClaudeSession(
         stderrBuf = (stderrBuf + d.toString()).slice(-STDERR_CAP);
       });
       const stderrSuffix = () => (stderrBuf.trim() ? ` — stderr: ${stderrBuf.trim()}` : "");
+      let cleanupAbort: (() => void) | undefined;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        cleanupAbort?.();
         child.kill();
         reject(new Error(`Claude session timeout after ${req.timeoutMs / 1000}s`));
       }, req.timeoutMs);
@@ -275,16 +306,20 @@ export function runClaudeSession(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        cleanupAbort?.();
         resolve({ ...result, sessionId, workerId });
       };
 
-      req.abortSignal?.addEventListener("abort", () => {
+      const onAbort = () => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        cleanupAbort?.();
         child.kill();
         reject(new Error("aborted"));
-      });
+      };
+      cleanupAbort = () => req.abortSignal?.removeEventListener("abort", onAbort);
+      req.abortSignal?.addEventListener("abort", onAbort, { once: true });
 
       child.stdout?.on("data", (d: Buffer) => {
         if (settled) return;
@@ -307,12 +342,14 @@ export function runClaudeSession(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        cleanupAbort?.();
         reject(new Error(`Claude session closed without result${stderrSuffix()}`));
       });
       child.on("error", (err) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        cleanupAbort?.();
         reject(new Error(`Claude session spawn error: ${err.message}`));
       });
 

@@ -13,6 +13,11 @@ codex's cache-affinity key for OpenAI prompt caching, which codex sets equal to 
 ### sessionKey
 The caller-supplied string qgrid uses to decide which prior thread a request belongs to, so thread reuse can route the request onto that thread. Distinct call kinds (different output schemas) must use distinct sessionKeys: the output schema sits in the cacheable prefix, so mixing schemas on one thread breaks the cache for all of them.
 
+## Token pool capability
+
+### 1M context entitlement
+Whether a pooled token's backing account is permitted to run a given model's 1M-token context window. It is not uniform across the pool: the same model can be allowed on one token and refused on another, because the entitlement is evaluated per account at request time. For some models the 1M window is included in the subscription; for others it is gated behind separately-enabled usage credits, so an active token is not by itself proof that a 1M request will succeed. A token-selection policy that treats all tokens as interchangeable for 1M requests fails intermittently whenever it routes to a token whose account lacks the entitlement.
+
 ## Token accounting
 
 ### Per-turn vs cumulative usage
