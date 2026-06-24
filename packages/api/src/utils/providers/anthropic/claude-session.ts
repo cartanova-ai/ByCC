@@ -277,7 +277,11 @@ export function runClaudeSession(
           CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
           ...oneMillionEnv(supportsOneMillion),
           CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+          CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1",
+          CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1",
+          CLAUDE_CODE_DISABLE_WORKFLOWS: "1",
           CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
+          MAX_THINKING_TOKENS: "0",
         },
       });
 
