@@ -95,20 +95,17 @@ export class QgridDispatcherClass {
         issueConvContext(result.threadCoord, decision),
       );
     } else if (route.provider === "anthropic") {
-      // Anthropic — AnthropicDispatcher(멀티턴 session resume) 경로
       if (!this.anthropicDispatcher) throw new QuotaError("Anthropic dispatcher not initialized");
 
       const decision = decideConvRouting(input);
       const result = await this.anthropicDispatcher.generate({
-        // AnthropicDispatcher 가 provider prefix 를 canonical model 로 정규화한다.
+        // AnthropicDispatcher 내부에서 알아서 provider prefix 를 canonical model 로 정규화함
         model: input.model,
         systemPrompt: input.system,
         outputSchema,
         effort: input.effort,
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
-        reuse: decision.reuse,
-        reuseInput: decision.reuseInput,
       });
 
       return applyToolCallEmulation(
@@ -177,8 +174,6 @@ export class QgridDispatcherClass {
           effort: input.effort,
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
-          reuse: decision.reuse,
-          reuseInput: decision.reuseInput,
           abortSignal,
         },
         {

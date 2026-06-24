@@ -21,7 +21,7 @@ function userLineCount(lines: Array<ClaudeStreamJsonLine>): number {
 
 describe("buildStreamJsonInput", () => {
   it("happy: 단일 user input → user 1줄", () => {
-    const lines = buildStreamJsonInput({ input: userText("안녕"), isResume: false });
+    const lines = buildStreamJsonInput({ input: userText("안녕") });
     expect(lines).toHaveLength(1);
     expect(userLineCount(lines)).toBe(1);
     expect(lines[0]).toEqual({
@@ -42,7 +42,6 @@ describe("buildStreamJsonInput", () => {
     const lines = buildStreamJsonInput({
       coldHistory,
       input: userText("비밀번호 뭐였지?"),
-      isResume: false,
     });
     // assistant context 1줄 + 실행 user 1줄
     expect(lines).toHaveLength(2);
@@ -57,28 +56,8 @@ describe("buildStreamJsonInput", () => {
     });
   });
 
-  it("resume: reuseInput(delta) user 1줄만, history 미포함", () => {
-    const lines = buildStreamJsonInput({
-      coldHistory: [
-        {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "이전 답변" }],
-        },
-      ],
-      input: userText("다음 질문"),
-      isResume: true,
-    });
-    expect(lines).toHaveLength(1);
-    expect(userLineCount(lines)).toBe(1);
-    expect(lines[0]).toEqual({
-      type: "user",
-      message: { role: "user", content: [{ type: "text", text: "다음 질문" }] },
-    });
-  });
-
   it("정규화: content 는 항상 block 배열 (KTD5 구현계약)", () => {
-    const lines = buildStreamJsonInput({ input: userText("x"), isResume: false });
+    const lines = buildStreamJsonInput({ input: userText("x") });
     expect(Array.isArray(lines[0]!.message.content)).toBe(true);
     expect(lines[0]!.message.content[0]).toHaveProperty("type", "text");
   });
@@ -91,7 +70,6 @@ describe("buildStreamJsonInput", () => {
     const lines = buildStreamJsonInput({
       coldHistory,
       input: userText("결과는?"),
-      isResume: false,
     });
     // assistant context 1줄 + 실행 user 1줄
     expect(lines).toHaveLength(2);
@@ -110,7 +88,6 @@ describe("buildStreamJsonInput", () => {
     const lines = buildStreamJsonInput({
       coldHistory: [],
       input: userText("단발"),
-      isResume: false,
     });
     expect(lines).toHaveLength(1);
     expect(lines[0]!.type).toBe("user");
@@ -122,7 +99,7 @@ describe("buildStreamJsonInput", () => {
       { type: "message", role: "assistant", content: [{ type: "output_text", text: "a1" }] },
       { type: "message", role: "assistant", content: [{ type: "output_text", text: "a2" }] },
     ];
-    const lines = buildStreamJsonInput({ coldHistory, input: userText("q"), isResume: false });
+    const lines = buildStreamJsonInput({ coldHistory, input: userText("q") });
     expect(lines).toHaveLength(2);
     expect(userLineCount(lines)).toBe(1);
     expect(lines[0]!.type).toBe("assistant");
@@ -137,7 +114,7 @@ describe("buildStreamJsonInput", () => {
       { type: "message", role: "user", content: [{ type: "input_text", text: "u2" }] },
       { type: "function_call_output", call_id: "x", output: "out" },
     ];
-    const lines = buildStreamJsonInput({ coldHistory, input: userText("final"), isResume: false });
+    const lines = buildStreamJsonInput({ coldHistory, input: userText("final") });
     expect(userLineCount(lines)).toBe(1);
     expect(lines[lines.length - 1]!.message.content[0]!.text).toBe("final");
   });
@@ -145,7 +122,7 @@ describe("buildStreamJsonInput", () => {
 
 describe("serializeStreamJsonInput", () => {
   it("JSONL 한 줄당 하나 + 마지막 개행", () => {
-    const lines = buildStreamJsonInput({ input: userText("hi"), isResume: false });
+    const lines = buildStreamJsonInput({ input: userText("hi") });
     const out = serializeStreamJsonInput(lines);
     expect(out.endsWith("\n")).toBe(true);
     const parsed = out

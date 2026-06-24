@@ -3,8 +3,27 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type GenerateRequest,
   type GenerateResult,
+  type GenerateStreamCallbacks,
 } from "../../utils/providers/common/provider-dispatcher";
 import { buildStrictOutputSchema, QgridDispatcherClass } from "./qgrid.dispatcher";
+
+function providerResult(overrides: Partial<GenerateResult> = {}): GenerateResult {
+  return {
+    text: "ok",
+    tokenName: "provider/test",
+    usage: {
+      totalTokens: 10,
+      inputTokens: 5,
+      cachedInputTokens: 0,
+      outputTokens: 5,
+      reasoningOutputTokens: 0,
+    },
+    durationMs: 12,
+    model: "model",
+    threadCoord: { workerId: 1, threadId: "sess-1", epoch: 0 },
+    ...overrides,
+  };
+}
 
 describe("QgridDispatcherClass", () => {
   it("AnthropicDispatcher 미초기화 시 query 는 폴백 없이 실패한다", async () => {
@@ -43,7 +62,7 @@ describe("QgridDispatcherClass", () => {
 
   it("Anthropic queryStream 은 abortSignal 을 provider request 로 전달한다", async () => {
     const dispatcher = new QgridDispatcherClass();
-    const generateStream = vi.fn(async () => {});
+    const generateStream = vi.fn(async (_req: GenerateRequest, _cb: GenerateStreamCallbacks) => {});
     dispatcher.anthropicDispatcher = { generateStream } as never;
     const abortSignal = new AbortController().signal;
 
@@ -81,6 +100,99 @@ describe("QgridDispatcherClass", () => {
     expect(onDelta).not.toHaveBeenCalled();
     expect(onComplete).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(serverError);
+  });
+
+  it("OpenAI query 는 reuse/reuseInput 을 provider 로 계속 전달한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (_req: GenerateRequest) => providerResult({ model: "gpt-5.5" }));
+    dispatcher.openaiDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "next",
+      model: "openai/gpt-5.5",
+      system: "same-system",
+      runContext: {
+        threadCoord: {
+          workerId: 1,
+          threadId: "thread-1",
+          epoch: 0,
+          systemHash: "800ddd9ba811b821",
+        },
+      },
+    });
+
+    const req = generate.mock.calls[0]![0];
+    expect(req.reuse).toEqual({ workerId: 1, threadId: "thread-1", epoch: 0 });
+    expect(req.reuseInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
+  });
+
+  it("Anthropic query 는 reuse/reuseInput 을 provider 로 전달하지 않는다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (_req: GenerateRequest) =>
+      providerResult({ model: "claude-sonnet-4-6" }),
+    );
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "next",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "same-system",
+      runContext: {
+        threadCoord: {
+          workerId: 1,
+          threadId: "thread-1",
+          epoch: 0,
+          systemHash: "800ddd9ba811b821",
+        },
+      },
+    });
+
+    const req = generate.mock.calls[0]![0];
+    expect(req).not.toHaveProperty("reuse");
+    expect(req).not.toHaveProperty("reuseInput");
+    expect(req.coldInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
+  });
+
+  it("Anthropic queryStream 도 reuse/reuseInput 을 provider 로 전달하지 않고 delta/complete 를 보존한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generateStream = vi.fn(async (_req, cb) => {
+      cb.onDelta("d");
+      cb.onComplete(providerResult({ model: "claude-sonnet-4-6" }));
+    });
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    const onDelta = vi.fn();
+    const onComplete = vi.fn();
+    await dispatcher.queryStream(
+      {
+        prompt: "next",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "same-system",
+        runContext: {
+          threadCoord: {
+            workerId: 1,
+            threadId: "thread-1",
+            epoch: 0,
+            systemHash: "800ddd9ba811b821",
+          },
+        },
+      },
+      { onDelta, onComplete, onError: vi.fn() },
+    );
+
+    const req = generateStream.mock.calls[0]![0];
+    expect(req).not.toHaveProperty("reuse");
+    expect(req).not.toHaveProperty("reuseInput");
+    expect(req.coldInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
+    expect(onDelta).toHaveBeenCalledWith("d");
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "ok",
+        runContext: expect.objectContaining({
+          threadCoord: expect.objectContaining({ threadId: "sess-1" }),
+        }),
+      }),
+    );
   });
 
   it("jsonSchema 를 required + additionalProperties:false 로 strictify 한다", () => {

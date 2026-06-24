@@ -6,7 +6,6 @@ import { ANTHROPIC_CONFIG_DIR_BASE, anthropicConfigDir } from "./anthropic-const
 import {
   applyOneMillionSuffix,
   buildClaudeArgs,
-  compatibilityKey,
   decorateAndSerialize,
   ensureConfigDir,
   makeAnthropicWorkerId,
@@ -15,53 +14,6 @@ import {
   withSessionLock,
 } from "./claude-session";
 import { buildStreamJsonInput } from "./stream-json-adapter";
-
-describe("compatibilityKey (P1-5)", () => {
-  it("같은 system+model+schema → 같은 키", () => {
-    const a = compatibilityKey({ system: "s", model: "claude-sonnet-4-6" });
-    const b = compatibilityKey({ system: "s", model: "claude-sonnet-4-6" });
-    expect(a).toBe(b);
-  });
-
-  it("model 다르면 다른 키 (sessionKey 재사용 오염 방지)", () => {
-    const a = compatibilityKey({ system: "s", model: "claude-sonnet-4-6" });
-    const b = compatibilityKey({ system: "s", model: "claude-opus-4-8" });
-    expect(a).not.toBe(b);
-  });
-
-  it("text 모드 vs structured 모드 다른 키", () => {
-    const text = compatibilityKey({ system: "s", model: "m" });
-    const json = compatibilityKey({ system: "s", model: "m", outputSchema: '{"type":"object"}' });
-    expect(text).not.toBe(json);
-  });
-
-  it("다른 schema 내용 → 다른 키 (codex P1-2: boolean 으로는 못 잡던 오염)", () => {
-    const schemaA = compatibilityKey({
-      system: "s",
-      model: "m",
-      outputSchema: '{"type":"object","properties":{"a":{"type":"string"}}}',
-    });
-    const schemaB = compatibilityKey({
-      system: "s",
-      model: "m",
-      outputSchema: '{"type":"object","properties":{"b":{"type":"integer"}}}',
-    });
-    expect(schemaA).not.toBe(schemaB);
-  });
-
-  it("같은 schema 내용 → 같은 키", () => {
-    const s = '{"type":"object"}';
-    expect(compatibilityKey({ system: "s", model: "m", outputSchema: s })).toBe(
-      compatibilityKey({ system: "s", model: "m", outputSchema: s }),
-    );
-  });
-
-  it("system 다르면 다른 키", () => {
-    const a = compatibilityKey({ system: "a", model: "m" });
-    const b = compatibilityKey({ system: "b", model: "m" });
-    expect(a).not.toBe(b);
-  });
-});
 
 describe("makeAnthropicWorkerId (coord 매핑 P0-2)", () => {
   it("tokenId 기반 안정 합성", () => {
@@ -178,11 +130,12 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(oneMillionEnv(false)).toEqual({ CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" });
   });
 
-  it("첫 호출: --session-id, resume 아님", () => {
-    const args = buildClaudeArgs({ model: "m", sessionId: "uuid-1", isResume: false });
+  it("cold-only: 항상 --session-id 를 사용하고 continuation flag 는 쓰지 않는다", () => {
+    const args = buildClaudeArgs({ model: "m", sessionId: "uuid-1" });
+    const continuationFlag = "--resume";
     expect(args).toContain("--session-id");
     expect(args).toContain("uuid-1");
-    expect(args).not.toContain("--resume");
+    expect(args).not.toContain(continuationFlag);
     expect(args).not.toContain("--include-partial-messages");
     // 멀티턴 필수: --no-session-persistence 없어야 함
     expect(args).not.toContain("--no-session-persistence");
@@ -191,18 +144,10 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(args[args.indexOf("--input-format") + 1]).toBe("stream-json");
   });
 
-  it("후속 호출: --resume <id>, session-id 아님", () => {
-    const args = buildClaudeArgs({ model: "m", sessionId: "uuid-1", isResume: true });
-    expect(args).toContain("--resume");
-    expect(args[args.indexOf("--resume") + 1]).toBe("uuid-1");
-    expect(args).not.toContain("--session-id");
-  });
-
   it("stream 호출: partial message delta 를 포함한다", () => {
     const args = buildClaudeArgs({
       model: "m",
       sessionId: "uuid-1",
-      isResume: false,
       includePartialMessages: true,
     });
     expect(args).toContain("--include-partial-messages");
@@ -231,7 +176,6 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     const args = buildClaudeArgs({
       model: "m",
       sessionId: "u",
-      isResume: false,
       jsonSchema: '{"type":"object"}',
     });
     expect(args).toContain("--allowed-tools");
@@ -244,7 +188,6 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     const args = buildClaudeArgs({
       model: "claude-sonnet-4-6",
       sessionId: "u",
-      isResume: false,
       needsOneMillionSuffix: true,
     });
     expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-6[1m]");
@@ -254,14 +197,13 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     const args = buildClaudeArgs({
       model: "claude-opus-4-8",
       sessionId: "u",
-      isResume: false,
       needsOneMillionSuffix: false,
     });
     expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-4-8");
   });
 
   it("non-structured(jsonSchema 없음): --allowed-tools 미부여 (P2-7)", () => {
-    const args = buildClaudeArgs({ model: "m", sessionId: "u", isResume: false });
+    const args = buildClaudeArgs({ model: "m", sessionId: "u" });
     expect(args).not.toContain("--allowed-tools");
     expect(args).not.toContain("--json-schema");
     expect(args).not.toContain("--max-turns");
@@ -274,7 +216,6 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
       model: "m",
       system: "you are X",
       sessionId: "u",
-      isResume: false,
     });
     expect(args).toContain("--system-prompt");
     expect(args[args.indexOf("--system-prompt") + 1]).toBe("you are X");
@@ -285,7 +226,6 @@ describe("decorateAndSerialize (envelope, U2 P1-#3 위임분)", () => {
   it("각 라인에 session_id/uuid/parent_tool_use_id:null 부착 + message 보존", () => {
     const lines = buildStreamJsonInput({
       input: [{ type: "text", text: "hi", text_elements: [] }],
-      isResume: false,
     });
     const out = decorateAndSerialize(lines, "sess-xyz");
     const parsed = out
@@ -309,7 +249,6 @@ describe("decorateAndSerialize (envelope, U2 P1-#3 위임분)", () => {
         { type: "message", role: "assistant", content: [{ type: "output_text", text: "prev" }] },
       ],
       input: [{ type: "text", text: "now", text_elements: [] }],
-      isResume: false,
     });
     const out = decorateAndSerialize(lines, "s");
     expect(out.endsWith("\n")).toBe(true);
@@ -323,7 +262,6 @@ describe("decorateAndSerialize (envelope, U2 P1-#3 위임분)", () => {
         { type: "message", role: "assistant", content: [{ type: "output_text", text: "a" }] },
       ],
       input: [{ type: "text", text: "b", text_elements: [] }],
-      isResume: false,
     });
     const parsed = decorateAndSerialize(lines, "s")
       .trim()

@@ -1,27 +1,21 @@
 /**
  * claude-session — Claude CLI 세션 spawn + QgridThreadCoord 매핑 + per-session 락.
  *
- * 멀티턴: 첫 호출 `--session-id <uuid>`, 후속 `--resume <uuid>`. 입력은 U2 어댑터가 만든
- * JSONL 을 stdin 으로 흘리고(`--input-format stream-json`), 출력은 U3 파서로 처리한다.
+ * 멀티턴: 매 호출 fresh `--session-id <uuid>`로 실행한다. 입력은 어댑터가 만든 JSONL 을
+ * stdin 으로 흘리고(`--input-format stream-json`), 출력은 파서로 처리한다.
  *
  * 핵심 계약:
  *  - coord 는 임의 저장이 아니라 기존 QgridThreadCoord{workerId,threadId,epoch,systemHash} 에
  *    매핑한다. threadId=세션 uuid, epoch=0 고정(worker restart 개념 없음), workerId=token 기반
  *    안정 합성, systemHash=요청 system 해시. issueConvContext/decideConvRouting 과 round-trip.
- *  - resume eligibility 는 systemHash 만으로 부족 → 확장 호환키(system+model+structured 모드)로
- *    판정. 불일치면 cold fallback.
- *  - 같은 세션의 동시 turn 은 per-session 락(session-id 단위 직렬화)으로 transcript 오염 방지.
+ *  - withSessionLock 은 exported primitive 로 유지한다. 기본 경로에서는 매 호출 새 session-id 라
+ *    사실상 no-contention 이지만, 직접 호출자/테스트의 직렬화 보장은 보존한다.
  *  - stream-json 직렬화 시 SDK envelope(uuid/session_id/parent_tool_use_id) decorate.
  *  - structured output 일 때 출력 파서에 { structuredOutput: true } 전달(없으면 streamObject 깨짐).
- *
- * ⚠️ 첫 호출 동시성: resume 가 아닌 "첫 호출"은 여기서 새 랜덤 session-id 를 발급하므로, 같은
- *    qgrid sessionKey 에 대한 두 동시 첫 호출은 서로 다른 id 로 둘 다 실행된다. 현재 IF/owner scope 는
- *    LLM 호출을 순차 실행하고 sessionKey 를 서버로 보내지 않으므로, dispatcher 는 cold 락을 두지 않는다.
- *    병렬 첫 호출을 서버가 지원하게 되면 sessionKey 전달/락 설계부터 다시 잡아야 한다.
  */
 
 import { spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
@@ -45,26 +39,10 @@ import {
   handleStreamJsonLine,
 } from "./stream-json-adapter";
 
-// ── 호환키 ──────────────────────────────────────────────────────────
-
-// resume 가능 여부를 가르는 키. systemHash 만으로는 같은 sessionKey 를 다른 model/schema 로
-// 재사용할 때 context 오염 → system + model + structured 모드까지 묶는다.
-export function compatibilityKey(opts: {
-  system?: string;
-  model: string;
-  // structured output schema 문자열. 없으면 text 모드. 내용이 다르면 다른 키.
-  outputSchema?: string;
-}): string {
-  const schemaPart = opts.outputSchema && opts.outputSchema.length > 0 ? opts.outputSchema : "text";
-  return createHash("sha256")
-    .update(`${opts.system ?? ""}\0${opts.model}\0${schemaPart}`)
-    .digest("hex")
-    .slice(0, 16);
-}
-
 // ── per-session 락 ─────────────────────────────────────────────────
 
-// session-id 단위 직렬화. 같은 세션의 동시 turn 이 같은 transcript 에 동시 resume·append 하는 것 방지.
+// session-id 단위 직렬화 primitive. 기본 경로에서는 매 호출 새 uuid 라 사실상 no-op 이지만,
+// 같은 session-id 를 직접 쓰는 호출자는 여전히 직렬화 보장을 받는다.
 const sessionChains = new Map<string, Promise<unknown>>();
 
 export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -124,11 +102,8 @@ export interface ClaudeSessionRequest {
   jsonSchema?: string; // 있으면 structured output
   effort?: string;
   timeoutMs: number;
-  // 입력: cold(coldHistory+coldInput) 또는 resume(reuseInput).
   coldHistory?: Array<JsonValue>;
   input: Array<UserInput>;
-  // resume 경로면 기존 session-id, cold 면 undefined(새로 발급).
-  resumeSessionId?: string;
   abortSignal?: AbortSignal;
   includePartialMessages?: boolean;
 }
@@ -174,7 +149,6 @@ export function buildClaudeArgs(opts: {
   effort?: string;
   jsonSchema?: string;
   sessionId: string;
-  isResume: boolean;
   needsOneMillionSuffix?: boolean;
   includePartialMessages?: boolean;
 }): Array<string> {
@@ -209,8 +183,8 @@ export function buildClaudeArgs(opts: {
     "--effort",
     opts.effort ?? ANTHROPIC_DEFAULT_EFFORT,
     "--disable-slash-commands",
-    // 멀티턴: 첫 호출은 session-id 발급, 후속은 resume. --no-session-persistence 는 쓰지 않는다.
-    ...(opts.isResume ? ["--resume", opts.sessionId] : ["--session-id", opts.sessionId]),
+    "--session-id",
+    opts.sessionId,
   ];
   if (useStructured) args.push("--json-schema", opts.jsonSchema!);
   return args;
@@ -230,8 +204,7 @@ export function runClaudeSession(
   const model = canonicalAnthropicModel(req.model);
   const supportsOneMillion = supports1MContext(model);
   const needsOneMillionSuffix = needsCli1mSuffix(model);
-  const isResume = Boolean(req.resumeSessionId);
-  const sessionId = req.resumeSessionId ?? randomUUID();
+  const sessionId = randomUUID();
   const useStructured = Boolean(req.jsonSchema && req.jsonSchema.length > 0);
   const workerId = makeAnthropicWorkerId(req.tokenId);
 
@@ -245,7 +218,6 @@ export function runClaudeSession(
       effort: req.effort,
       jsonSchema: req.jsonSchema,
       sessionId,
-      isResume,
       needsOneMillionSuffix,
       includePartialMessages: req.includePartialMessages,
     });
@@ -253,7 +225,6 @@ export function runClaudeSession(
     const inputLines = buildStreamJsonInput({
       coldHistory: req.coldHistory,
       input: req.input,
-      isResume,
     });
     const stdinPayload = decorateAndSerialize(inputLines, sessionId);
 
