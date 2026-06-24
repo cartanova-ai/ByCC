@@ -186,7 +186,6 @@ export class CodexAppServerWorker {
     await this.waitForLoginCompleted();
     this.ready = true;
     this.restartAttempts = 0;
-    logger.info(`worker ${this.config.tokenName} ready`);
   }
 
   async startBrowserLogin(): Promise<string> {

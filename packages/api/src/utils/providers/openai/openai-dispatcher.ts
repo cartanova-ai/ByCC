@@ -89,12 +89,16 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async onTokenRemoved(id: number): Promise<void> {
     const workers = this.workerPool.get(id) ?? [];
+    const tokenName = workers[0]?.tokenName;
     this.workerPool.delete(id);
     await Promise.allSettled(workers.map((w) => w.kill()));
     if (this.getAllReadyActiveWorkers().length === 0) {
       this.rejectAllQueued("NO_OPENAI_WORKERS");
     }
-    if (workers.length > 0) logger.info(`workers removed for token ${id}: ${workers.length}`);
+    if (workers.length > 0) {
+      const label = tokenName ?? `token ${id}`;
+      logger.info(`workers removed: ${label} (${workers.length})`);
+    }
   }
 
   async onTokenUpdated(id: number, name: string, credentials: OpenAICredentials): Promise<void> {
@@ -106,7 +110,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     if (existing.every((w) => w.canReuseForToken(name, credentials))) {
       existing.forEach((w) => w.updateTokenState(name, credentials));
-      logger.info(`workers updated in-place for token ${id} (${name})`);
+      logger.info(`workers updated in-place: ${name}`);
       this.drainQueue();
       return;
     }
@@ -117,21 +121,27 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   onTokenDeactivated(id: number): void {
-    (this.workerPool.get(id) ?? []).forEach((w) => {
+    const workers = this.workerPool.get(id) ?? [];
+    const tokenName = workers[0]?.tokenName;
+    workers.forEach((w) => {
       w.active = false;
     });
     if (this.getAllReadyActiveWorkers().length === 0) {
       this.rejectAllQueued("NO_ACTIVE_WORKERS");
     }
-    logger.info(`workers deactivated: token ${id}`);
+    const label = tokenName ?? `token ${id}`;
+    logger.info(`workers deactivated: ${label}`);
   }
 
   onTokenActivated(id: number): void {
-    (this.workerPool.get(id) ?? []).forEach((w) => {
+    const workers = this.workerPool.get(id) ?? [];
+    const tokenName = workers[0]?.tokenName;
+    workers.forEach((w) => {
       w.active = true;
     });
     this.drainQueue();
-    logger.info(`workers activated: token ${id}`);
+    const label = tokenName ?? `token ${id}`;
+    logger.info(`workers activated: ${label}`);
   }
 
   // ── Generate ────────────────────────────────────────────────────
@@ -403,10 +413,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       const worker = await this.spawnSingleWorker(tokenId, tokenName, credentials, i);
       if (worker) workers.push(worker);
     }
-    if (workers.length > 0) {
-      this.workerPool.set(tokenId, workers);
-      logger.info(`${workers.length}/${WORKERS_PER_TOKEN} workers spawned for ${tokenName}`);
-    }
+    if (workers.length > 0) this.workerPool.set(tokenId, workers);
   }
 
   async spawnSingleWorker(
@@ -435,7 +442,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     try {
       await worker.initialize();
-      logger.info(`worker spawned: ${tokenName}[${workerIndex}] (id=${tokenId + 1})`);
+      logger.info(`worker spawned: ${tokenName}[${workerIndex}]`);
       return worker;
     } catch (e) {
       logger.warn(`worker spawn failed: ${tokenName}[${workerIndex}]: ${(e as Error).message}`);

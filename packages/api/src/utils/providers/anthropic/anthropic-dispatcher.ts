@@ -111,8 +111,8 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         name: t.name,
         credentials: t.credentials as AnthropicCredentials,
       });
+      logger.info(`worker spawned: ${t.name}`);
     }
-    logger.info(`anthropic dispatcher started (${this.tokenPool.size} tokens)`);
   }
 
   async stop(): Promise<void> {
