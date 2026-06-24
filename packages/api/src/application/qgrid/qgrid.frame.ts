@@ -190,37 +190,47 @@ class QgridFrameClass extends BaseFrameClass {
     let turnId: string | undefined;
     let streamResult: QueryOutput | undefined;
     let streamError: Error | undefined;
+    const abortController = new AbortController();
 
-    sse.onClose(() => {
+    const interruptOpenAI = () => {
       if (threadId && turnId) {
         QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
       }
+    };
+
+    sse.onClose(() => {
+      abortController.abort();
+      interruptOpenAI();
     });
 
     try {
-      await QgridDispatcher.queryStream(args, {
-        onDelta: (text) => {
-          if (!sse.closed) sse.publish("delta", { text });
+      await QgridDispatcher.queryStream(
+        args,
+        {
+          onDelta: (text) => {
+            if (!sse.closed) sse.publish("delta", { text });
+          },
+          onThreadId: (id) => {
+            threadId = id;
+            if (sse.closed && turnId) {
+              interruptOpenAI();
+            }
+          },
+          onTurnId: (id) => {
+            turnId = id;
+            if (sse.closed && threadId) {
+              interruptOpenAI();
+            }
+          },
+          onComplete: (result) => {
+            streamResult = result;
+          },
+          onError: (err) => {
+            streamError = err;
+          },
         },
-        onThreadId: (id) => {
-          threadId = id;
-          if (sse.closed && turnId) {
-            QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
-          }
-        },
-        onTurnId: (id) => {
-          turnId = id;
-          if (sse.closed && threadId) {
-            QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
-          }
-        },
-        onComplete: (result) => {
-          streamResult = result;
-        },
-        onError: (err) => {
-          streamError = err;
-        },
-      });
+        abortController.signal,
+      );
     } catch (e) {
       streamError = e as Error;
     }
@@ -249,6 +259,11 @@ class QgridFrameClass extends BaseFrameClass {
       }
       if (!sse.closed) sse.publish("done", { ...streamResult, runContext });
     } else if (streamError) {
+      if (sse.closed && streamError.message === "aborted") {
+        if (runInfo) await finishRunAborted(runInfo.requestLogId, args);
+        await sse.end();
+        return;
+      }
       if (runInfo) await finishRunWithError(runInfo.requestLogId, streamError.message, args);
       if (!sse.closed) sse.publish("error", { message: streamError.message });
     } else if (sse.closed && runInfo) {

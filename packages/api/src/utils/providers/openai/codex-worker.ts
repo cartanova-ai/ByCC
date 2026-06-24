@@ -9,6 +9,7 @@ import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStart
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
 import { type TurnStartResponse } from "../../../codex-protocol/v2/TurnStartResponse";
+import { type StreamCallbacks as CommonStreamCallbacks } from "../common/provider-dispatcher";
 import { CodexRpcClient } from "./codex-rpc";
 
 const logger = getLogger(["qgrid", "codex-worker"]);
@@ -46,13 +47,7 @@ export interface TurnResult {
   model: string;
 }
 
-export interface StreamCallbacks {
-  onDelta: (text: string) => void;
-  onComplete: (result: TurnResult) => void;
-  onError: (error: Error) => void;
-  onThreadId?: (threadId: string) => void;
-  onTurnId?: (turnId: string) => void;
-}
+export type StreamCallbacks = CommonStreamCallbacks<TurnResult>;
 
 type RefreshableWorkerCredentials = Pick<WorkerConfig, "accessToken" | "accountId" | "planType">;
 type ActiveTurnAbort = (error: Error) => void;

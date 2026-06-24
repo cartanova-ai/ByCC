@@ -57,15 +57,18 @@ export interface GenerateResult {
   threadCoord: ReuseThreadCoord;
 }
 
-// 상위(qgrid.dispatcher)로 가는 스트림 콜백. onComplete 는 non-stream 의 GenerateResult 와
-// 동일 shape(tokenName/threadCoord 포함)를 받아, 두 경로가 같은 일급 타입을 공유한다.
-export interface GenerateStreamCallbacks {
+// 스트림 콜백 컨테이너. 계층별로 onComplete payload 만 다르고, 스트림 이벤트 shape 는 동일하다.
+export interface StreamCallbacks<TComplete> {
   onDelta: (text: string) => void;
-  onComplete: (result: GenerateResult) => void;
+  onComplete: (result: TComplete) => void;
   onError: (error: Error) => void;
   onThreadId?: (threadId: string) => void;
   onTurnId?: (turnId: string) => void;
 }
+
+// 상위(qgrid.dispatcher)로 가는 스트림 콜백. onComplete 는 non-stream 의 GenerateResult 와
+// 동일 shape(tokenName/threadCoord 포함)를 받아, 두 경로가 같은 일급 타입을 공유한다.
+export type GenerateStreamCallbacks = StreamCallbacks<GenerateResult>;
 
 export interface ProviderDispatcher {
   generate(req: GenerateRequest): Promise<GenerateResult>;
