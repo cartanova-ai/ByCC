@@ -195,8 +195,6 @@ export function buildClaudeArgs(opts: {
     "stream-json",
     "--verbose",
     ...(opts.includePartialMessages ? ["--include-partial-messages"] : []),
-    "--max-turns",
-    useStructured ? "2" : "1",
     "--permission-mode",
     "bypassPermissions",
     "--setting-sources",

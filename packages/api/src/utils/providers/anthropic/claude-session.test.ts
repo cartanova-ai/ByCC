@@ -237,6 +237,7 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(args).toContain("--allowed-tools");
     expect(args).toContain("StructuredOutput");
     expect(args).toContain("--json-schema");
+    expect(args).not.toContain("--max-turns");
   });
 
   it("1M suffix 는 CLI --model 인자에만 반영된다", () => {
@@ -263,6 +264,7 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     const args = buildClaudeArgs({ model: "m", sessionId: "u", isResume: false });
     expect(args).not.toContain("--allowed-tools");
     expect(args).not.toContain("--json-schema");
+    expect(args).not.toContain("--max-turns");
     // 단 --tools "" 로 전체 차단은 유지
     expect(args).toContain("--tools");
   });
