@@ -237,7 +237,11 @@ function structuredOutputToolUseText(j: ResponseItem): string | undefined {
   for (const raw of content) {
     const block = asObject(raw);
     if (!block) continue;
-    if (block.type === "tool_use" && block.name === "StructuredOutput" && block.input !== undefined) {
+    if (
+      block.type === "tool_use" &&
+      block.name === "StructuredOutput" &&
+      block.input !== undefined
+    ) {
       return JSON.stringify(block.input);
     }
   }
@@ -297,7 +301,12 @@ export function handleStreamJsonLine(
     return null;
   }
 
-  if (j.type === "assistant" && structuredOutput && state && state.structuredOutputText === undefined) {
+  if (
+    j.type === "assistant" &&
+    structuredOutput &&
+    state &&
+    state.structuredOutputText === undefined
+  ) {
     const text = structuredOutputToolUseText(j);
     if (text !== undefined) state.structuredOutputText = text;
     return null;
@@ -321,14 +330,10 @@ export function handleStreamJsonLine(
     // 또는 subtype 이 있고 "success" 가 아니면(error_during_execution / error_max_turns /
     // error_max_budget_usd / error_max_structured_output_retries 등) 에러로 본다.
     const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
-    const structuredMaxTurnsCompleted =
-      preservedStructuredOutput !== undefined &&
-      (subtype === "error_max_turns" || j.terminal_reason === "max_turns");
     const isError =
-      !structuredMaxTurnsCompleted &&
-      (j.is_error === true ||
-        j.terminal_reason === "model_error" ||
-        (subtype !== undefined && subtype !== "success"));
+      j.is_error === true ||
+      j.terminal_reason === "model_error" ||
+      (subtype !== undefined && subtype !== "success");
 
     return {
       text,

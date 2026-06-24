@@ -230,7 +230,7 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     expect(deltas).not.toContain(" (thinking)");
   });
 
-  it("structured tool-call: 첫 StructuredOutput을 보존하고 max_turns result를 성공 처리", () => {
+  it("structured tool-call: 첫 StructuredOutput은 보존하되 max_turns result는 error 유지", () => {
     const first = {
       action: "tool_call",
       answer: null,
@@ -247,6 +247,18 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
           type: "assistant",
           message: {
             content: [{ type: "tool_use", name: "StructuredOutput", input: first }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                is_error: true,
+                content: "Output does not match required schema",
+              },
+            ],
           },
         }),
         JSON.stringify({
@@ -269,7 +281,7 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     );
 
     expect(JSON.parse(result!.text)).toEqual(first);
-    expect(result!.isError).toBe(false);
+    expect(result!.isError).toBe(true);
     expect(result!.usage.inputTokens).toBe(30);
     expect(result!.usage.outputTokens).toBe(30);
     expect(result!.durationMs).toBe(1234);
