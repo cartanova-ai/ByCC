@@ -229,7 +229,9 @@ describe("QgridDispatcherClass", () => {
     expect(contentsArray?.items?.additionalProperties).toBe(false);
   });
 
-  it("Anthropic provider 경로에 strictified outputSchema 를 전달한다", async () => {
+  // SON-495: anthropic route 도 strict(required 유지)를 쓴다 — required 를 살려야 모델이 필드를
+  // 빠짐없이 채운다(실측 확정). optionalize 는 제거됨.
+  it("Anthropic route 에 strict(required 유지) outputSchema 를 전달한다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi.fn(
       async (_req: GenerateRequest): Promise<GenerateResult> => ({
@@ -253,6 +255,45 @@ describe("QgridDispatcherClass", () => {
     await dispatcher.query({
       prompt: "hi",
       model: "anthropic/claude-sonnet-4-6",
+      jsonSchema: JSON.stringify({
+        type: "object",
+        properties: { contents: { type: "array", items: { type: "object" } } },
+      }),
+    });
+
+    const outputSchema = generate.mock.calls[0]![0].outputSchema as {
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+    // anthropic 도 OpenAI 와 동일하게 strictify — required 살아있음
+    expect(outputSchema.required).toEqual(["contents"]);
+    expect(outputSchema.additionalProperties).toBe(false);
+  });
+
+  it("OpenAI route 도 strictify(required 유지)한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(
+      async (_req: GenerateRequest): Promise<GenerateResult> => ({
+        text: '{"contents":[{"text":"ok"}]}',
+        tokenName: "openai/test",
+        usage: {
+          totalTokens: 10,
+          inputTokens: 5,
+          cachedInputTokens: 0,
+          outputTokens: 5,
+          reasoningOutputTokens: 0,
+        },
+        durationMs: 12,
+        costUsd: 0.01,
+        model: "gpt-5.5",
+        threadCoord: { workerId: 1, threadId: "sess-1", epoch: 0 },
+      }),
+    );
+    dispatcher.openaiDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "hi",
+      model: "openai/gpt-5.5",
       jsonSchema: JSON.stringify({
         type: "object",
         properties: { contents: { type: "array", items: { type: "object" } } },

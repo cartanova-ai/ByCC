@@ -67,8 +67,8 @@ export class QgridDispatcherClass {
       throw new ProcessError("tools and jsonSchema cannot be used together");
     }
 
-    const outputSchema = buildStrictOutputSchema(input);
     const route = parseProviderRoute(input.model);
+    const outputSchema = buildStrictOutputSchema(input);
 
     // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
     if (route.provider === "openai") {
@@ -123,8 +123,8 @@ export class QgridDispatcherClass {
     cb: StreamCallbacks<QueryOutput>,
     abortSignal?: AbortSignal,
   ): Promise<void> {
-    const outputSchema = buildStrictOutputSchema(input);
     const route = parseProviderRoute(input.model);
+    const outputSchema = buildStrictOutputSchema(input);
 
     if (route.provider === "openai") {
       if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
@@ -212,18 +212,30 @@ function directLlmApiFallbackNotImplemented(input: QueryInput): ProcessError {
   );
 }
 
+// 모든 provider(OpenAI/Anthropic)가 동일하게 strict output schema 를 쓴다.
+//
+// SON-495 교훈: 한때 Anthropic route 만 required 를 제거(optionalize)해 partial/rejected attempt 가
+// 섞여도 통과하게 했으나, 실측 결과 그게 오히려 "모델이 비는 필드를 키째 생략"하도록 유도했다
+// (required 살린 schema 는 누락 0, loose 는 누락 다발). strict 로 두면 모델이 빠짐없이 채우고,
+// 드물게 어겨도 retry=1 + 비정상 종료는 정직한 에러(stream-json-adapter)로 받아준다.
 export function buildStrictOutputSchema(
   input: Pick<QueryInput, "tools" | "jsonSchema">,
 ): JsonValue | undefined {
-  const outputSchema = input.tools?.length
-    ? buildToolCallSchema(input.tools)
-    : input.jsonSchema
-      ? (JSON.parse(input.jsonSchema) as JsonValue)
-      : undefined;
+  const outputSchema = buildRawOutputSchema(input);
 
   return outputSchema
     ? (strictify(outputSchema as Parameters<typeof strictify>[0]) as JsonValue)
     : undefined;
+}
+
+function buildRawOutputSchema(
+  input: Pick<QueryInput, "tools" | "jsonSchema">,
+): JsonValue | undefined {
+  return input.tools?.length
+    ? buildToolCallSchema(input.tools)
+    : input.jsonSchema
+      ? (JSON.parse(input.jsonSchema) as JsonValue)
+      : undefined;
 }
 
 // GenerateResult(provider dispatcher 응답)를 applyToolCallEmulation 입력 shape 로 매핑한다.
