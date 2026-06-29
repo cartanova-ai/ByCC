@@ -1,6 +1,7 @@
 import { type TelemetryIntegration, type TelemetrySettings } from "ai";
 
 import { type QgridLoggerConfig } from "./index.types";
+import { DEFAULT_QGRID_SERVER_URL } from "./qgrid.constant";
 import {
   appendStep,
   createRun,
@@ -62,10 +63,8 @@ function timedKeySet() {
 }
 
 export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySettings {
-  const DEFAULT_SERVER_URL = "http://localhost:44900";
-  const serverUrl = config.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
+  const serverUrl = config.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_QGRID_SERVER_URL;
   const projectName = config.projectName ?? process.env.QGRID_PROJECT_NAME;
-  const tokenName = config.tokenName ?? process.env.QGRID_TOKEN_NAME ?? "external";
   const onLogError =
     config.onLogError ?? ((e: Error) => console.warn(`[qgrid-logger] ${e.message}`));
   const runs = new Map<string, RunState>();

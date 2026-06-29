@@ -102,12 +102,61 @@ describe("qgrid AI SDK provider", () => {
     });
   });
 
+  it("sends qgrid provider options", async () => {
+    let queryBody: unknown;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = JSON.parse(String(init?.body));
+          return new Response(
+            JSON.stringify({
+              text: "ok",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 50,
+              costUsd: 0.001,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5", { defaultEffort: "low" }).doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: {
+        qgrid: {
+          effort: "high",
+          verbosity: "medium",
+          reasoningSummary: "concise",
+          serviceTier: "flex",
+          fallbackModels: ["openai/gpt-5.4-mini"],
+        },
+      },
+    } as never);
+
+    expect(queryBody).toMatchObject({
+      args: {
+        effort: "high",
+        verbosity: "medium",
+        reasoningSummary: "concise",
+        serviceTier: "flex",
+      },
+    });
+    expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty(
+      "fallbackModels",
+    );
+  });
+
   it("sends tools and maps tool-call response", async () => {
     let queryBody: unknown;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
         if (url.includes("/query")) {
           queryBody = body;
           return new Response(
@@ -164,7 +213,7 @@ describe("qgrid AI SDK provider", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body));
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
         calls.push({ url, body });
 
         if (url.includes("/query")) {
@@ -358,6 +407,62 @@ describe("qgrid AI SDK provider", () => {
     // SDK는 직접 lifecycle 호출 안 함
     expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
     expect(calls.filter((c) => c.url.includes("/finishRun"))).toHaveLength(0);
+  });
+
+  it("does not store or replay qgrid sessionKey threadCoord for Anthropic models", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        calls.push({ url, body });
+
+        if (url.includes("/prepareStream")) {
+          return new Response(JSON.stringify({ streamId: `s${calls.length}` }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          sseDone({
+            text: "ok",
+            content: [{ type: "text", text: "ok" }],
+            finishReason: "stop",
+            model: "claude-opus-4-8",
+            tokenName: "anthropic/yds",
+            usage,
+            durationMs: 50,
+            costUsd: 0,
+            runContext: {
+              threadCoord: { threadId: "anthropic-thread", workerId: 1, epoch: 0 },
+            },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const model = qgrid("anthropic/claude-opus-4-8");
+    const providerOptions = { qgrid: { sessionKey: "anthropic-session" } };
+
+    for (const text of ["first", "second"]) {
+      const result = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text }] }],
+        providerOptions,
+      } as never);
+      const reader = result.stream.getReader();
+      expect(await reader.read()).toMatchObject({ done: false, value: { type: "text-start" } });
+      expect(await reader.read()).toMatchObject({ done: false, value: { type: "text-delta" } });
+      expect(await reader.read()).toMatchObject({ done: false, value: { type: "text-end" } });
+      expect(await reader.read()).toMatchObject({ done: false, value: { type: "finish" } });
+      expect(await reader.read()).toEqual({ done: true, value: undefined });
+    }
+
+    const prepares = calls.filter((c) => c.url.includes("/prepareStream"));
+    expect(prepares).toHaveLength(2);
+    expect(prepares[0]?.body.args).not.toHaveProperty("runContext");
+    expect(prepares[1]?.body.args).not.toHaveProperty("runContext");
   });
 
   it("clears client run state when prompt does not match pending tool calls", async () => {

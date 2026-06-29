@@ -6,20 +6,26 @@ export type QgridProviderConfig = {
 };
 
 /**
- * codex app-server가 지원하는 OpenAI provider options.
- *
- * AI SDK의 openai provider options 중 codex가 처리할 수 있는 subset만 정의.
- * 여기에 없는 옵션(temperature, maxOutputTokens 등)은 codex가 무시합니다.
- *
- * @see https://ai-sdk.dev/providers/ai-sdk-providers/openai#provider-options
+ * qgrid provider options.
+ * providerOptions.qgrid 로 전달한다.
  */
-type QgridOpenAIProviderOptions = {
+export type QgridProviderOptions = {
+  /**
+   * 멀티턴 시 codex thread reuse를 위한 대화 식별자, 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면
+   * provider가 같은 sessionKey 의 thread 좌표를 내부에서 회송해 prompt cache 를 적중시킨다
+   * 좌표는 sessionKey 별로 격리된다.
+   */
+  sessionKey?: string;
   /** reasoning 모델의 추론 깊이. 기본값은 qgrid config의 defaultEffort. */
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  /** reasoning 모델의 추론 요약 출력 방식. Responses API 전용. */
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  /** 응답 텍스트의 상세도. OpenAI/codex route에서만 적용된다. */
+  verbosity?: "low" | "medium" | "high";
+  /** reasoning 모델의 추론 요약 출력 방식. OpenAI/codex route에서만 적용된다. */
   reasoningSummary?: "auto" | "concise" | "detailed" | "none";
-  /** 응답 텍스트의 상세도. */
-  textVerbosity?: "low" | "medium" | "high";
+  /** OpenAI/codex service tier. OpenAI/codex route에서만 적용된다. */
+  serviceTier?: string;
+  /** @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록. */
+  fallbackModels?: string[];
 };
 
 /**
@@ -32,19 +38,6 @@ export type QgridThreadCoord = {
   threadId: string;
   epoch: number;
   systemHash: string;
-};
-
-/**
- * {@link QgridOpenAIProviderOptions}
- */
-export type QgridProviderOptions = {
-  openai?: QgridOpenAIProviderOptions;
-  /**
-   * 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면, provider 가
-   * 같은 sessionKey 의 thread 좌표를 내부에서 회송해 prompt cache 를 적중시킨다.
-   * 좌표는 sessionKey 별로 격리된다.
-   */
-  sessionKey?: string;
 };
 
 export type QgridSupportedModel =

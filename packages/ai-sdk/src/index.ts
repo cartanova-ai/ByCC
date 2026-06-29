@@ -13,8 +13,18 @@ import {
   type QgridSupportedModel,
   type QueryOutput,
   type QgridProviderConfig,
+  type QgridProviderOptions,
   type QgridThreadCoord,
 } from "./index.types";
+import {
+  DEFAULT_QGRID_EFFORT,
+  DEFAULT_QGRID_SERVER_URL,
+  PENDING_TOOL_RESULTS_WARNING,
+  QGRID_PROVIDER_NAME,
+  TEXT_STREAM_ID_PREFIX,
+  THREAD_COORD_TTL_MS,
+  TOP_LEVEL_SCHEMA_WARNING,
+} from "./qgrid.constant";
 import {
   extractPromptAndHistory,
   extractToolResultsFromHistory,
@@ -22,14 +32,9 @@ import {
   toQgridTool,
 } from "./utils";
 
-const DEFAULT_SERVER_URL = "http://localhost:44900";
-const DEFAULT_EFFORT = "low";
-
 // sessionKey → threadCoord(thread 좌표)
 // 클라이언트가 전달한 providerOptions.qgrid.sessionKey의 좌표 발급/보관/회송을 여기서 처리한다
 // 모듈 레벨이라 qgrid() 인스턴스를 매 호출 새로 만들어도 공유
-// TTL 은 서버 codex-worker 의 thread idle TTL(10분)과 맞춤 — 만료 엔트리는 조회 시 lazy 폐기
-const THREAD_COORD_TTL_MS = 10 * 60_000;
 const threadCoordStore = new Map<string, { coord: QgridThreadCoord; expiresAt: number }>();
 
 function getThreadCoord(sessionKey: string): QgridThreadCoord | undefined {
@@ -44,6 +49,14 @@ function getThreadCoord(sessionKey: string): QgridThreadCoord | undefined {
 
 function setThreadCoord(sessionKey: string, coord: QgridThreadCoord): void {
   threadCoordStore.set(sessionKey, { coord, expiresAt: Date.now() + THREAD_COORD_TTL_MS });
+}
+
+function reusableSessionKey(modelId: QgridSupportedModel, sessionKey?: string): string | undefined {
+  return modelId.startsWith("anthropic/") ? undefined : sessionKey;
+}
+
+function getQgridProviderOptions(options: LanguageModelV3CallOptions): QgridProviderOptions {
+  return (options.providerOptions?.qgrid as QgridProviderOptions | undefined) ?? {};
 }
 
 function toAiSdkUsage(usage: QueryOutput["usage"]) {
@@ -65,8 +78,8 @@ function toAiSdkUsage(usage: QueryOutput["usage"]) {
 }
 
 export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig): LanguageModelV3 {
-  const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_SERVER_URL;
-  const effort = config?.defaultEffort ?? DEFAULT_EFFORT;
+  const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_QGRID_SERVER_URL;
+  const effort = config?.defaultEffort ?? DEFAULT_QGRID_EFFORT;
   const projectName = config?.projectName ?? process.env.QGRID_PROJECT_NAME;
 
   type ClientRunState = {
@@ -78,7 +91,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 
   return {
     specificationVersion: "v3",
-    provider: "qgrid",
+    provider: QGRID_PROVIDER_NAME,
     modelId,
     supportedUrls: {},
 
@@ -89,14 +102,15 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const hasTools = tools && tools.length > 0;
       const { prompt, system, history } = extractPromptAndHistory(options.prompt);
 
-      const openaiOpts = options.providerOptions?.openai as Record<string, unknown> | undefined;
-      const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
-      const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
-      const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
+      const qgridOptions = getQgridProviderOptions(options);
+      const effectiveEffort = qgridOptions.effort ?? effort;
+      const verbosity = qgridOptions.verbosity;
+      const reasoningSummary = qgridOptions.reasoningSummary;
+      const serviceTier = qgridOptions.serviceTier;
       // 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID)만 넘기면,
       // thread 좌표 보관/회송은 threadCoordStore 가 내부에서 처리한다 → 클라이언트 무부담.
-      const sessionKey = (options.providerOptions?.qgrid as { sessionKey?: string } | undefined)
-        ?.sessionKey;
+      const sessionKey = qgridOptions.sessionKey;
+      const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
 
       // top-level이 object인지 검사, 아니면 무시 (SDK 방어로직)
       const rawSchema =
@@ -104,7 +118,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const schemaType = rawSchema ? (rawSchema as { type?: string }).type : undefined;
       if (rawSchema && !hasTools && schemaType !== "object") {
         console.warn(
-          `[qgrid] responseFormat.schema top-level type is "${schemaType ?? "unknown"}". OpenAI structured output requires "object". Falling back to client-side parsing.`,
+          `[qgrid] responseFormat.schema top-level type is "${schemaType ?? "unknown"}". ${TOP_LEVEL_SCHEMA_WARNING}`,
         );
       }
       const jsonSchema =
@@ -131,16 +145,14 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             .map((r) => ({ toolCallId: r.callId, output: r.result }));
           logMode = "run";
         } else {
-          console.warn(
-            "[qgrid] pending tool results not found in prompt, clearing client run state",
-          );
+          console.warn(PENDING_TOOL_RESULTS_WARNING);
           clientRun = null;
         }
       }
 
       // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송.
       // clientRun(tool 루프) 과 동시 활성되지 않게, runContext 미설정 시에만 적용.
-      const storedCoord = sessionKey ? getThreadCoord(sessionKey) : undefined;
+      const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
       if (!runContext && storedCoord) {
         runContext = { threadCoord: storedCoord };
       }
@@ -158,6 +170,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             effort: effectiveEffort,
             ...(verbosity ? { verbosity } : {}),
             ...(reasoningSummary ? { reasoningSummary } : {}),
+            ...(serviceTier ? { serviceTier } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
@@ -214,8 +227,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       }
 
       // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
-      if (sessionKey && data.runContext?.threadCoord) {
-        setThreadCoord(sessionKey, data.runContext.threadCoord);
+      if (reuseSessionKey && data.runContext?.threadCoord) {
+        setThreadCoord(reuseSessionKey, data.runContext.threadCoord);
       }
 
       return {
@@ -242,12 +255,13 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const hasTools = tools && tools.length > 0;
       const { prompt, system, history } = extractPromptAndHistory(options.prompt);
 
-      const openaiOpts = options.providerOptions?.openai as Record<string, unknown> | undefined;
-      const effectiveEffort = (openaiOpts?.reasoningEffort as string) ?? effort;
-      const verbosity = (openaiOpts?.textVerbosity ?? openaiOpts?.verbosity) as string | undefined;
-      const reasoningSummary = openaiOpts?.reasoningSummary as string | undefined;
-      const sessionKey = (options.providerOptions?.qgrid as { sessionKey?: string } | undefined)
-        ?.sessionKey;
+      const qgridOptions = getQgridProviderOptions(options);
+      const effectiveEffort = qgridOptions.effort ?? effort;
+      const verbosity = qgridOptions.verbosity;
+      const reasoningSummary = qgridOptions.reasoningSummary;
+      const serviceTier = qgridOptions.serviceTier;
+      const sessionKey = qgridOptions.sessionKey;
+      const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
 
       const rawSchema =
         options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
@@ -276,15 +290,13 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             .map((r) => ({ toolCallId: r.callId, output: r.result }));
           logMode = "run";
         } else {
-          console.warn(
-            "[qgrid] pending tool results not found in prompt, clearing client run state",
-          );
+          console.warn(PENDING_TOOL_RESULTS_WARNING);
           clientRun = null;
         }
       }
 
       // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송 (clientRun 미설정 시에만).
-      const storedCoord = sessionKey ? getThreadCoord(sessionKey) : undefined;
+      const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
       if (!runContext && storedCoord) {
         runContext = { threadCoord: storedCoord };
       }
@@ -303,6 +315,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             effort: effectiveEffort,
             ...(verbosity ? { verbosity } : {}),
             ...(reasoningSummary ? { reasoningSummary } : {}),
+            ...(serviceTier ? { serviceTier } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
@@ -328,7 +341,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         throw new Error(`qgrid stream ${streamRes.status}: ${text}`);
       }
 
-      const textId = `text_${Math.random().toString(36).slice(2, 10)}`;
+      const textId = `${TEXT_STREAM_ID_PREFIX}_${Math.random().toString(36).slice(2, 10)}`;
       let textStarted = false;
       let deltaTextEmitted = false;
 
@@ -379,15 +392,17 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                 }
 
                 // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
-                if (sessionKey && done.runContext?.threadCoord) {
-                  setThreadCoord(sessionKey, done.runContext.threadCoord);
+                if (reuseSessionKey && done.runContext?.threadCoord) {
+                  setThreadCoord(reuseSessionKey, done.runContext.threadCoord);
                 }
 
                 // AI SDK stream parts
                 if (done.content) {
                   for (const item of done.content) {
                     if (item.type === "text" && !deltaTextEmitted) {
-                      const tid = `text_${Math.random().toString(36).slice(2, 10)}`;
+                      const tid = `${TEXT_STREAM_ID_PREFIX}_${Math.random()
+                        .toString(36)
+                        .slice(2, 10)}`;
                       controller.enqueue({ type: "text-start", id: tid });
                       controller.enqueue({ type: "text-delta", id: tid, delta: item.text });
                       controller.enqueue({ type: "text-end", id: tid });
