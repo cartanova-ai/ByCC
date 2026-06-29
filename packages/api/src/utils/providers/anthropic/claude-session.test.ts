@@ -12,6 +12,7 @@ import {
   oneMillionEnv,
   runClaudeSession,
   structuredOutputRetriesEnv,
+  SYSTEM_PROMPT_ARGV_MAX_BYTES,
   withSessionLock,
 } from "./claude-session";
 import { buildStreamJsonInput } from "./stream-json-adapter";
@@ -237,6 +238,45 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     });
     expect(args).toContain("--system-prompt");
     expect(args[args.indexOf("--system-prompt") + 1]).toBe("you are X");
+  });
+
+  // E2BIG 회피: 대형 시스템 프롬프트는 파일 경로로 넘겨 Linux argv 한계(128KB)를 피한다.
+  it("systemPromptFile 이 오면 --system-prompt-file 을 쓰고 inline --system-prompt 는 안 쓴다", () => {
+    const args = buildClaudeArgs({
+      model: "m",
+      systemPromptFile: "/cfg/7/system-prompt-u.txt",
+      sessionId: "u",
+    });
+    expect(args).toContain("--system-prompt-file");
+    expect(args[args.indexOf("--system-prompt-file") + 1]).toBe("/cfg/7/system-prompt-u.txt");
+    expect(args).not.toContain("--system-prompt");
+  });
+
+  it("systemPromptFile 이 inline system 보다 우선한다 (둘 다 와도 file 경로만)", () => {
+    const args = buildClaudeArgs({
+      model: "m",
+      system: "ignored inline",
+      systemPromptFile: "/cfg/7/sp.txt",
+      sessionId: "u",
+    });
+    expect(args).toContain("--system-prompt-file");
+    expect(args).not.toContain("--system-prompt");
+    expect(args).not.toContain("ignored inline");
+  });
+
+  it("임계값(64KB)을 넘는 시스템 프롬프트가 argv 에 통째로 들어가지 않는다 (E2BIG 회귀 방지)", () => {
+    const huge = "x".repeat(SYSTEM_PROMPT_ARGV_MAX_BYTES + 1);
+    // 실제 호출부(runClaudeSession)는 huge 를 파일로 빼고 systemPromptFile 만 넘긴다.
+    const args = buildClaudeArgs({
+      model: "m",
+      systemPromptFile: "/cfg/7/sp.txt",
+      sessionId: "u",
+    });
+    // 어떤 단일 인자도 임계값을 넘지 않아야 한다(=거대 프롬프트가 argv 에 없음).
+    for (const a of args) {
+      expect(Buffer.byteLength(a, "utf8")).toBeLessThanOrEqual(SYSTEM_PROMPT_ARGV_MAX_BYTES);
+    }
+    expect(args).not.toContain(huge);
   });
 });
 

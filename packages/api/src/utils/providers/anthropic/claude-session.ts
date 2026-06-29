@@ -16,7 +16,7 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
@@ -156,9 +156,21 @@ export function structuredOutputRetriesEnv(raw = process.env.MAX_STRUCTURED_OUTP
   return { MAX_STRUCTURED_OUTPUT_RETRIES: String(Math.max(parsed, 1)) };
 }
 
+// Linux 단일 argv 인자 한계(MAX_ARG_STRLEN = PAGE_SIZE×32 = 128KB, 커널 하드코딩 상수)
+// 시스템 프롬프트가 이를 넘으면 execve 가 E2BIG 로 거부된다. deti 등 대형 프롬프트는 실측
+// 평균 343KB·최대 485KB(opus-4-8)라 일상적으로 초과한다. 한계의 절반(64KB)을 임계값으로 잡아
+// UTF-8 멀티바이트·예측 못 한 여유분까지 안전 마진을 둔다.
+export const SYSTEM_PROMPT_ARGV_MAX_BYTES = 64 * 1024;
+
 export function buildClaudeArgs(opts: {
   model: string;
+  // 시스템 프롬프트 전달은 크기로 분기한다(호출부가 결정):
+  //  - 작으면 system(inline) → --system-prompt <text> (파일 I/O 없음, 기존 경로)
+  //  - 크면 systemPromptFile(경로) → --system-prompt-file <path> (argv 한계 회피)
+  // --system-prompt-file 은 --system-prompt 와 동일하게 default 를 replace 한다(append 아님 —
+  // R7 격리 보존, 실측 확인). 둘 다 없으면 빈 --system-prompt(default 23k 주입 방지).
   system?: string;
+  systemPromptFile?: string;
   effort?: string;
   jsonSchema?: string;
   sessionId: string;
@@ -170,6 +182,12 @@ export function buildClaudeArgs(opts: {
   const toolArgs = useStructured
     ? ["--tools", "", "--allowed-tools", "StructuredOutput"]
     : ["--tools", ""];
+
+  // 시스템 프롬프트: 파일 경로가 오면 --system-prompt-file, 아니면 inline --system-prompt.
+  // (호출부가 크기로 분기해 둘 중 하나만 채운다. 둘 다 없으면 빈 --system-prompt.)
+  const systemArgs = opts.systemPromptFile
+    ? ["--system-prompt-file", opts.systemPromptFile]
+    : ["--system-prompt", opts.system ?? ""];
 
   const args: Array<string> = [
     "-p",
@@ -189,8 +207,8 @@ export function buildClaudeArgs(opts: {
     "--model",
     applyOneMillionSuffix(opts.model, opts.needsOneMillionSuffix ?? false),
     // inline [System] 금지 — 정식 채널만(R7). 생략 시 CC default(23k) 주입되므로 반드시 명시.
-    "--system-prompt",
-    opts.system ?? "",
+    // 크기에 따라 --system-prompt(작음) / --system-prompt-file(큼)로 분기(systemArgs).
+    ...systemArgs,
     "--thinking",
     "disabled",
     "--effort",
@@ -225,9 +243,19 @@ export function runClaudeSession(
     ensureCwd();
     const configDir = ensureConfigDir(req.tokenId);
 
+    // 시스템 프롬프트를 크기로 분기: 128KB(argv 한계)의 절반을 넘으면 파일로 넘겨 E2BIG 회피.
+    // 작은 프롬프트는 파일 I/O 없이 기존 inline 경로를 그대로 쓴다(대부분의 호출).
+    // 실제 파일 쓰기는 abort 체크 이후(Promise 안)로 미뤄, 이미 취소된 요청엔 쓰지 않는다.
+    const system = req.system ?? "";
+    const useSystemPromptFile = Buffer.byteLength(system, "utf8") > SYSTEM_PROMPT_ARGV_MAX_BYTES;
+    const systemPromptFile = useSystemPromptFile
+      ? `${configDir}/system-prompt-${sessionId}.txt`
+      : undefined;
+
     const args = buildClaudeArgs({
       model,
-      system: req.system,
+      system: useSystemPromptFile ? undefined : req.system,
+      systemPromptFile,
       effort: req.effort,
       jsonSchema: req.jsonSchema,
       sessionId,
@@ -246,6 +274,9 @@ export function runClaudeSession(
         reject(new Error("aborted"));
         return;
       }
+
+      // 대형 시스템 프롬프트는 spawn 직전에 파일로 기록(argv E2BIG 회피). 종료 시 정리한다.
+      if (systemPromptFile) writeFileSync(systemPromptFile, system);
 
       const child = spawn("claude", args, {
         // stderr 도 캡처: invalid OAuth / 잘못된 플래그 / CLI 검증 실패가
@@ -281,11 +312,23 @@ export function runClaudeSession(
         stderrBuf = (stderrBuf + d.toString()).slice(-STDERR_CAP);
       });
       const stderrSuffix = () => (stderrBuf.trim() ? ` — stderr: ${stderrBuf.trim()}` : "");
+      // spawn 시 쓴 임시 시스템 프롬프트 파일 정리(한 번만). 모든 종료 경로에서 호출한다.
+      // 누락돼도 다음 ensureConfigDir 가 디렉토리를 재사용할 뿐이지만, sessionId 별 파일이라
+      // 쌓이면 디스크가 차므로 settle 시 즉시 지운다.
+      const cleanupSpawnFiles = () => {
+        if (!systemPromptFile) return;
+        try {
+          unlinkSync(systemPromptFile);
+        } catch {
+          // 이미 없거나 권한 문제면 무시 — 정리는 best-effort.
+        }
+      };
       let cleanupAbort: (() => void) | undefined;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
         cleanupAbort?.();
+        cleanupSpawnFiles();
         child.kill();
         reject(new Error(`Claude session timeout after ${req.timeoutMs / 1000}s`));
       }, req.timeoutMs);
@@ -295,6 +338,7 @@ export function runClaudeSession(
         settled = true;
         clearTimeout(timer);
         cleanupAbort?.();
+        cleanupSpawnFiles();
         resolve({ ...result, sessionId, workerId });
       };
 
@@ -303,6 +347,7 @@ export function runClaudeSession(
         settled = true;
         clearTimeout(timer);
         cleanupAbort?.();
+        cleanupSpawnFiles();
         child.kill();
         reject(new Error("aborted"));
       };
@@ -331,6 +376,7 @@ export function runClaudeSession(
         settled = true;
         clearTimeout(timer);
         cleanupAbort?.();
+        cleanupSpawnFiles();
         reject(new Error(`Claude session closed without result${stderrSuffix()}`));
       });
       child.on("error", (err) => {
@@ -338,6 +384,7 @@ export function runClaudeSession(
         settled = true;
         clearTimeout(timer);
         cleanupAbort?.();
+        cleanupSpawnFiles();
         reject(new Error(`Claude session spawn error: ${err.message}`));
       });
 
