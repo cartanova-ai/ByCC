@@ -204,9 +204,17 @@ export class AnthropicDispatcher implements ProviderDispatcher {
 
       if (session.quotaExhausted) throw new Error(`quota exhausted (${token.name})`);
       if (session.isError) {
-        // text 가 비어 있을 수 있으므로 진단 가능한 형태로 메시지를 만든다(subtype 등은 raw 로그 참조).
-        const detail = session.text || `empty text, outputTokens=${session.usage.outputTokens}`;
-        throw new Error(`claude error (${token.name}): ${detail}`);
+        // 진단(SON-495): isError 판정 사유(subtype/terminal_reason)를 메시지 앞에 드러낸다.
+        // 그동안 detail 이 session.text(완전한 JSON 본문)뿐이라 "schema 위반인지 / max retries 인지 /
+        // max turns 인지"를 구분할 수 없었다. text 는 진단에 필요한 만큼만 잘라 덧붙인다.
+        const reason =
+          session.subtype ?? session.terminalReason ?? (session.isError ? "is_error" : "unknown");
+        const body = session.text
+          ? session.text.length > 500
+            ? `${session.text.slice(0, 500)}…(${session.text.length} chars)`
+            : session.text
+          : `empty text, outputTokens=${session.usage.outputTokens}`;
+        throw new Error(`claude error (${token.name}) [${reason}]: ${body}`);
       }
 
       return {

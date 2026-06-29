@@ -265,6 +265,61 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     expect(result!.costUsd).toBe(0.0042);
   });
 
+  // SON-495: error_max_structured_output_retries 는 모델이 schema 를 못 맞춘 비정상 종료다.
+  // CC structured output 은 constrained decoding 이 아니라 사후 AJV 검증이라, 모델이 가끔
+  // placeholder($PARAMETER_NAME)·거부("just kidding")·필드 누락 같은 발작/불완전 출력을 낸다.
+  // 이를 "거의 맞았으니 살리자"고 흘리면 클라이언트 검증이 깨지거나 쓰레기가 샌다(실측 11674/11675).
+  // 그래서 보존 출력 유무·내용과 무관하게 항상 에러로 처리한다(알려진 best practice: refusal/degenerate
+  // output 은 graceful error). 보존 출력은 진단용 text 로는 남기되 isError 는 true.
+  it("error_max_structured_output_retries: 보존 출력이 valid JSON 이어도 에러로 처리", () => {
+    const attempt = {
+      scenes: [{ visual: { backgroundId: "IL-LOC-02" }, contents: [], advance: "choice" }],
+    };
+    const { result } = runLines(
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", name: "StructuredOutput", input: attempt }] },
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "error_max_structured_output_retries",
+          is_error: true,
+          usage: { input_tokens: 10, output_tokens: 20 },
+          duration_ms: 100,
+          total_cost_usd: 0.001,
+        }),
+      ],
+      { structuredOutput: true },
+    );
+
+    expect(result!.isError).toBe(true);
+    expect(result!.subtype).toBe("error_max_structured_output_retries");
+  });
+
+  it("error_max_structured_output_retries: placeholder 쓰레기 출력도 에러로 처리", () => {
+    const garbage = { $PARAMETER_NAME: "" };
+    const { result } = runLines(
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", name: "StructuredOutput", input: garbage }] },
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "error_max_structured_output_retries",
+          is_error: true,
+          usage: { input_tokens: 10, output_tokens: 0 },
+          duration_ms: 100,
+          total_cost_usd: 0.001,
+        }),
+      ],
+      { structuredOutput: true },
+    );
+
+    expect(result!.isError).toBe(true);
+  });
+
   it("text 모드: partial_json 이 와도 무시, text_delta 만", () => {
     const { deltas } = runLines(
       [

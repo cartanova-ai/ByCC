@@ -11,6 +11,7 @@ import {
   makeAnthropicWorkerId,
   oneMillionEnv,
   runClaudeSession,
+  structuredOutputRetriesEnv,
   withSessionLock,
 } from "./claude-session";
 import { buildStreamJsonInput } from "./stream-json-adapter";
@@ -128,6 +129,23 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
   it("oneMillionEnv: 지원 모델은 DISABLE_1M 을 제거하고 미지원은 유지", () => {
     expect(oneMillionEnv(true)).toEqual({});
     expect(oneMillionEnv(false)).toEqual({ CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" });
+  });
+
+  // SON-495: structured output retry 를 1 로 고정한다.
+  it("structuredOutputRetriesEnv: 미설정/비정상 값은 1 로 기본 고정", () => {
+    expect(structuredOutputRetriesEnv(undefined)).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
+    expect(structuredOutputRetriesEnv("")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
+    expect(structuredOutputRetriesEnv("abc")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
+  });
+
+  it("structuredOutputRetriesEnv: 1 미만(0, 음수)은 1 로 클램프", () => {
+    expect(structuredOutputRetriesEnv("0")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
+    expect(structuredOutputRetriesEnv("-3")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
+  });
+
+  it("structuredOutputRetriesEnv: 1 이상 값은 그대로 유지", () => {
+    expect(structuredOutputRetriesEnv("1")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
+    expect(structuredOutputRetriesEnv("5")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "5" });
   });
 
   it("cold-only: 항상 --session-id 를 사용하고 continuation flag 는 쓰지 않는다", () => {

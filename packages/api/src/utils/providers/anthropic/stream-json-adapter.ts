@@ -133,6 +133,10 @@ export interface ClaudeStreamResult {
   quotaExhausted: boolean;
   // result.is_error / terminal model_error 등. dispatcher 가 에러로 변환.
   isError: boolean;
+  // 진단용: CC result 라인의 subtype("success" | "error_max_turns" | ...) 과 terminal_reason.
+  // isError 판정 사유를 에러 메시지에 드러내기 위해 보존한다(SON-495).
+  subtype?: string;
+  terminalReason?: string;
 }
 
 export interface ClaudeStreamJsonState {
@@ -248,6 +252,15 @@ export function handleStreamJsonLine(
     const usage = toUsageBreakdown((asObject(j.usage) ?? {}) as ClaudeUsage);
     const quotaExhausted = text.startsWith("You've hit");
     const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
+    const terminalReason = typeof j.terminal_reason === "string" ? j.terminal_reason : undefined;
+
+    // SON-495: 비정상 종료(error_max_structured_output_retries 등)는 정직하게 에러로 처리한다.
+    // CC structured output 은 constrained decoding 이 아니라 "tool input 생성 후 사후 AJV 검증"이라
+    // 모델이 가끔 placeholder($PARAMETER_NAME)·거부("just kidding")·필드 누락(advance) 같은 발작/
+    // 불완전 출력을 낸다. 이를 "거의 맞았으니 살리자"고 흘리면 클라이언트 검증에서 깨지거나(필드 누락)
+    // 쓰레기가 새어 나간다(실측 11674/11675). 알려진 best practice(refusal/degenerate output 은 살리지
+    // 말고 graceful error)대로, subtype != success 는 그대로 에러로 둔다. 클라이언트가 그 턴을 실패로
+    // 다루게 한다(스트림이라 자동 재시도 없음 — 시간 2배 방지).
     const isError =
       j.is_error === true ||
       j.terminal_reason === "model_error" ||
@@ -260,6 +273,8 @@ export function handleStreamJsonLine(
       costUsd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : 0,
       quotaExhausted,
       isError,
+      subtype,
+      terminalReason,
     };
   }
 

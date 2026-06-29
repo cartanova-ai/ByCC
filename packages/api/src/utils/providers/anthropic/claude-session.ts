@@ -143,6 +143,19 @@ export function oneMillionEnv(supported: boolean): { CLAUDE_CODE_DISABLE_1M_CONT
   return supported ? {} : { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" };
 }
 
+// SON-495: structured output retry 를 1 로 고정한다. CC 가 attempt 를 reject 하고 retry 하면
+// `{rejected}{accepted}` 누적이 AI-SDK 의 JSON.parse 를 깨뜨리므로, retry 자체를 막아 그 경로를
+// 원천 차단한다. `0` 은 CC query loop(`callsThisQuery >= maxRetries`)가 첫 attempt emit 전에
+// 실패시키므로(`error_max_structured_output_retries`) 외부 값이 1 미만이어도 1 로 클램프한다.
+export function structuredOutputRetriesEnv(raw = process.env.MAX_STRUCTURED_OUTPUT_RETRIES): {
+  MAX_STRUCTURED_OUTPUT_RETRIES: string;
+} {
+  if (!raw) return { MAX_STRUCTURED_OUTPUT_RETRIES: "1" };
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return { MAX_STRUCTURED_OUTPUT_RETRIES: "1" };
+  return { MAX_STRUCTURED_OUTPUT_RETRIES: String(Math.max(parsed, 1)) };
+}
+
 export function buildClaudeArgs(opts: {
   model: string;
   system?: string;
@@ -253,6 +266,8 @@ export function runClaudeSession(
           CLAUDE_CODE_DISABLE_WORKFLOWS: "1",
           CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
           MAX_THINKING_TOKENS: "0",
+          // structured output 일 때만 retry 를 고정한다(SON-495). text 모드는 영향 없음.
+          ...(useStructured ? structuredOutputRetriesEnv() : {}),
         },
       });
 
