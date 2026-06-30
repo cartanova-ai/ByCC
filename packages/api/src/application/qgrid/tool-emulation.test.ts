@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildToolCallSchema } from "./tool-emulation";
 import { type QgridTool } from "./qgrid.types";
+import { buildToolCallSchema } from "./tool-emulation";
 
 describe("buildToolCallSchema", () => {
   it("documents that emulated tools must be requested through StructuredOutput", () => {
@@ -36,9 +36,13 @@ describe("buildToolCallSchema", () => {
     };
 
     expect(schema.description).toContain("StructuredOutput");
-    expect(schema.description).toContain("Do not invoke listed client tools as native Claude Code tools");
+    expect(schema.description).toContain(
+      "Do not invoke listed client tools as native Claude Code tools",
+    );
     expect(schema.properties?.action?.description).toContain("tool_call");
-    expect(schema.properties?.toolCalls?.description).toContain("Do not call these tools as native");
+    expect(schema.properties?.toolCalls?.description).toContain(
+      "Do not call these tools as native",
+    );
     expect(
       schema.properties?.toolCalls?.anyOf?.[0]?.items?.properties?.toolName?.description,
     ).toContain("getWeather");

@@ -39,7 +39,8 @@ const SETUP_SQL = `
     OLD.active IS DISTINCT FROM NEW.active OR
     OLD.credentials IS DISTINCT FROM NEW.credentials OR
     OLD.provider IS DISTINCT FROM NEW.provider OR
-    OLD.name IS DISTINCT FROM NEW.name
+    OLD.name IS DISTINCT FROM NEW.name OR
+    OLD.quota_threshold IS DISTINCT FROM NEW.quota_threshold
   )
   EXECUTE FUNCTION public.tokens_notify();
 `;

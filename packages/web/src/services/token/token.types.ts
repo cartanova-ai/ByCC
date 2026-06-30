@@ -35,11 +35,16 @@ export type TokenCredentials = z.infer<typeof TokenCredentials>;
 export const TokenListParams = TokenBaseListParams;
 export type TokenListParams = z.infer<typeof TokenListParams>;
 
+const TokenQuotaThreshold = z.int().min(1).max(100).nullable();
+
 // Token - SaveParams
 export const TokenSaveParams = TokenBaseSchema.partial({
   id: true,
   created_at: true,
   active: true,
   ord: true,
+  quota_threshold: true,
+}).extend({
+  quota_threshold: TokenQuotaThreshold.optional(),
 });
 export type TokenSaveParams = z.infer<typeof TokenSaveParams>;

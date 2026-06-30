@@ -14,11 +14,17 @@
     },
     { "name": "name", "desc": "토큰 이름", "type": "string" },
     { "name": "active", "type": "boolean", "desc": "활성 여부", "dbDefault": "true" },
-    { "name": "ord", "type": "integer", "desc": "정렬 순서", "dbDefault": "0" }
+    { "name": "ord", "type": "integer", "desc": "정렬 순서", "dbDefault": "0" },
+    {
+      "name": "quota_threshold",
+      "type": "integer",
+      "nullable": true,
+      "desc": "quota 사용률 임계치(%). null이면 미설정"
+    }
   ],
   "indexes": [],
   "subsets": {
-    "A": ["id", "created_at", "provider", "credentials", "name", "active", "ord"]
+    "A": ["id", "created_at", "provider", "credentials", "name", "active", "ord", "quota_threshold"]
   },
   "enums": {
     "TokenOrderBy": { "id-desc": "ID최신순", "ord-asc": "순서순" },

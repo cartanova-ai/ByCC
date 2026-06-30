@@ -1,19 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
 import { type AnthropicCredentials } from "../../../application/token/token.types";
 import { type GenerateRequest } from "../common/provider-dispatcher";
 import { ANTHROPIC_DEFAULT_MODEL } from "./anthropic-constants";
 import { AnthropicDispatcher } from "./anthropic-dispatcher";
+import { type AnthropicQuotaUsageResult } from "./anthropic-quota";
 
-const { runClaudeSessionMock, refreshTokenMock } = vi.hoisted(() => ({
+const {
+  runClaudeSessionMock,
+  refreshTokenMock,
+  readAnthropicQuotaUsageMock,
+  loggerInfoMock,
+  loggerWarnMock,
+} = vi.hoisted(() => ({
   runClaudeSessionMock: vi.fn(),
   refreshTokenMock: vi.fn(),
+  readAnthropicQuotaUsageMock: vi.fn(),
+  loggerInfoMock: vi.fn(),
+  loggerWarnMock: vi.fn(),
+}));
+
+vi.mock("@logtape/logtape", () => ({
+  getLogger: () => ({ info: loggerInfoMock, warn: loggerWarnMock }),
 }));
 
 vi.mock("./claude-session", async (importActual) => {
   const actual = await importActual<typeof import("./claude-session")>();
   return { ...actual, runClaudeSession: runClaudeSessionMock };
 });
+
+vi.mock("./anthropic-quota", () => ({
+  readAnthropicQuotaUsage: readAnthropicQuotaUsageMock,
+}));
 
 vi.mock("../../../application/qgrid/qgrid.frame", () => ({
   QgridFrame: { refreshToken: refreshTokenMock },
@@ -56,12 +75,35 @@ function baseReq(overrides: Partial<GenerateRequest> = {}): GenerateRequest {
   };
 }
 
+function quotaOk(utilizationPct: number, cacheAgeMs = 100): AnthropicQuotaUsageResult {
+  return { kind: "ok", utilizationPct, cacheAgeMs };
+}
+
+function quotaFail(reason = "usage lookup failed"): AnthropicQuotaUsageResult {
+  return { kind: "lookup_failed", reason };
+}
+
+function firstRunRequest() {
+  const call = runClaudeSessionMock.mock.calls[0]?.[0];
+  if (call === undefined) throw new Error("runClaudeSession was not called");
+  return call;
+}
+
+function firstRefreshTokenArg() {
+  const call = refreshTokenMock.mock.calls[0]?.[0];
+  if (call === undefined) throw new Error("refreshToken was not called");
+  return call;
+}
+
 describe("AnthropicDispatcher", () => {
   beforeEach(() => {
     runClaudeSessionMock.mockReset();
     runClaudeSessionMock.mockResolvedValue(sessionResult());
     refreshTokenMock.mockReset();
     refreshTokenMock.mockResolvedValue("sk-ant-oat01-refreshed");
+    readAnthropicQuotaUsageMock.mockReset();
+    loggerInfoMock.mockReset();
+    loggerWarnMock.mockReset();
   });
 
   it("토큰 없으면 에러", async () => {
@@ -89,7 +131,7 @@ describe("AnthropicDispatcher", () => {
       baseReq({ coldHistory: [{ type: "message", role: "assistant", content: [] }] }),
     );
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call).not.toHaveProperty("resumeSessionId");
     expect(call.coldHistory).toBeDefined();
     expect(call.input).toEqual([{ type: "text", text: "hi", text_elements: [] }]);
@@ -107,7 +149,7 @@ describe("AnthropicDispatcher", () => {
       }),
     );
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call).not.toHaveProperty("resumeSessionId");
     expect(call.coldHistory).toBeDefined();
     expect(call.input).toEqual([{ type: "text", text: "hi", text_elements: [] }]);
@@ -118,7 +160,7 @@ describe("AnthropicDispatcher", () => {
     d.onTokenAdded(1, "tok-A", creds());
     await d.generate(baseReq({ outputSchema: { type: "object", properties: {} } }));
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call.jsonSchema).toBe(JSON.stringify({ type: "object", properties: {} }));
   });
 
@@ -166,6 +208,127 @@ describe("AnthropicDispatcher", () => {
     names.add(r2.tokenName);
 
     expect(names.size).toBe(2);
+    expect(readAnthropicQuotaUsageMock).not.toHaveBeenCalled();
+  });
+
+  it("threshold 초과 토큰은 후보에서 제외하고 미설정 토큰을 선택한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(2, "tok-B", creds());
+    readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaOk(85, 1_000));
+
+    const result = await d.generate(baseReq());
+
+    expect(result.tokenName).toBe("tok-B");
+    expect(readAnthropicQuotaUsageMock).toHaveBeenCalledTimes(1);
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      expect.stringContaining("over_threshold"),
+      expect.objectContaining({
+        tokenId: 1,
+        tokenName: "tok-A",
+        provider: "anthropic",
+        threshold: 80,
+        cachedUtilization: 85,
+        cacheAge: 1_000,
+        reason: "over_threshold",
+      }),
+    );
+  });
+
+  it("threshold 경계는 utilization >= threshold 일 때 제외한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(2, "tok-B", creds(), 80);
+    readAnthropicQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(80))
+      .mockResolvedValueOnce(quotaOk(79));
+
+    const result = await d.generate(baseReq());
+
+    expect(result.tokenName).toBe("tok-B");
+  });
+
+  it("quota 조회 실패는 fail-open 으로 통과시키고 lookup_fail_open 로그를 남긴다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaFail("timeout"));
+
+    const result = await d.generate(baseReq());
+
+    expect(result.tokenName).toBe("tok-A");
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("lookup_fail_open"),
+      expect.objectContaining({
+        tokenId: 1,
+        tokenName: "tok-A",
+        provider: "anthropic",
+        threshold: 80,
+        reason: "lookup_fail_open",
+      }),
+    );
+  });
+
+  it("utilization 0 은 정상 조회로 보고 fail-open 로그를 남기지 않는다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaOk(0));
+
+    const result = await d.generate(baseReq());
+
+    expect(result.tokenName).toBe("tok-A");
+    expect(loggerWarnMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("lookup_fail_open"),
+      expect.anything(),
+    );
+  });
+
+  it("모든 threshold 설정 토큰이 초과되면 typed error 로 실패한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(2, "tok-B", creds(), 90);
+    readAnthropicQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(85, 100))
+      .mockResolvedValueOnce(quotaOk(95, 200));
+
+    const error = await d.generate(baseReq()).catch((e) => e);
+
+    expect(error).toBeInstanceOf(QuotaThresholdExceededError);
+    expect(error).toMatchObject({ code: "QUOTA_THRESHOLD_EXCEEDED" });
+  });
+
+  it("minCount 는 초과 토큰을 제외한 eligible 집합에서 계산한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(2, "tok-B", creds(), 80);
+    d.onTokenAdded(3, "tok-C", creds(), 80);
+
+    readAnthropicQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(10))
+      .mockResolvedValueOnce(quotaOk(10))
+      .mockResolvedValueOnce(quotaOk(10));
+    await d.generate(baseReq());
+    readAnthropicQuotaUsageMock.mockReset();
+
+    readAnthropicQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(95))
+      .mockResolvedValueOnce(quotaOk(10))
+      .mockResolvedValueOnce(quotaOk(10));
+
+    const result = await d.generate(baseReq());
+
+    expect(result.tokenName).not.toBe("tok-A");
+    expect(new Set(["tok-B", "tok-C"]).has(result.tokenName)).toBe(true);
+  });
+
+  it("동시 요청은 quota await 이후 charge 선반영으로 서로 다른 eligible 토큰을 고른다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(2, "tok-B", creds(), 80);
+    readAnthropicQuotaUsageMock.mockResolvedValue(quotaOk(0));
+
+    const results = await Promise.all([d.generate(baseReq()), d.generate(baseReq())]);
+
+    expect(new Set(results.map((r) => r.tokenName)).size).toBe(2);
   });
 
   it("onTokenRemoved 후 그 토큰 미선택", async () => {
@@ -183,7 +346,7 @@ describe("AnthropicDispatcher", () => {
 
     await d.generate(baseReq());
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call.tokenId).toBe(1);
   });
 
@@ -193,7 +356,7 @@ describe("AnthropicDispatcher", () => {
 
     const result = await d.generate(baseReq({ model: "anthropic/claude-opus-4-8" }));
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call.model).toBe("claude-opus-4-8");
     expect(result.model).toBe("claude-opus-4-8");
   });
@@ -204,7 +367,7 @@ describe("AnthropicDispatcher", () => {
 
     const result = await d.generate(baseReq({ model: "anthropic/claude-sonnet-4-6[1m]" }));
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call.model).toBe("claude-sonnet-4-6");
     expect(result.model).toBe("claude-sonnet-4-6");
   });
@@ -224,7 +387,7 @@ describe("AnthropicDispatcher", () => {
 
     const result = await d.generate(baseReq({ model: undefined }));
 
-    const call = runClaudeSessionMock.mock.calls[0]![0];
+    const call = firstRunRequest();
     expect(call.model).toBe(ANTHROPIC_DEFAULT_MODEL);
     expect(result.model).toBe(ANTHROPIC_DEFAULT_MODEL);
   });
@@ -257,7 +420,7 @@ describe("AnthropicDispatcher", () => {
 
     expect(deltas).toEqual(["부분"]);
     expect(completed).not.toBeNull();
-    expect(runClaudeSessionMock.mock.calls[0]![0].includePartialMessages).toBe(true);
+    expect(firstRunRequest().includePartialMessages).toBe(true);
   });
 
   it("generateStream: Claude server error 는 onError 로 전달하고 complete 하지 않는다", async () => {
@@ -276,7 +439,7 @@ describe("AnthropicDispatcher", () => {
     expect(onDelta).not.toHaveBeenCalled();
     expect(onComplete).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(serverError);
-    expect(runClaudeSessionMock.mock.calls[0]![0].includePartialMessages).toBe(true);
+    expect(firstRunRequest().includePartialMessages).toBe(true);
   });
 
   it("refresh: 만료 임박 토큰은 provider 포함해 refreshToken 호출, 새 access token 으로 세션 진행", async () => {
@@ -287,10 +450,10 @@ describe("AnthropicDispatcher", () => {
     await d.generate(baseReq());
 
     expect(refreshTokenMock).toHaveBeenCalledTimes(1);
-    const refreshArg = refreshTokenMock.mock.calls[0]![0];
+    const refreshArg = firstRefreshTokenArg();
     expect(refreshArg.provider).toBe("anthropic");
     expect(refreshArg.id).toBe(1);
-    expect(runClaudeSessionMock.mock.calls[0]![0].token).toBe("sk-ant-oat01-refreshed");
+    expect(firstRunRequest().token).toBe("sk-ant-oat01-refreshed");
   });
 
   it("refresh: 만료 여유 있으면 refresh 안 함, 기존 access token 사용", async () => {
@@ -300,7 +463,7 @@ describe("AnthropicDispatcher", () => {
     await d.generate(baseReq());
 
     expect(refreshTokenMock).not.toHaveBeenCalled();
-    expect(runClaudeSessionMock.mock.calls[0]![0].token).toBe("sk-ant-oat01-test");
+    expect(firstRunRequest().token).toBe("sk-ant-oat01-test");
   });
 
   it("refresh 실패해도 기존 access token 으로 진행 — 요청을 죽이지 않음", async () => {
@@ -311,6 +474,6 @@ describe("AnthropicDispatcher", () => {
     const result = await d.generate(baseReq());
 
     expect(result.text).toBe("hello");
-    expect(runClaudeSessionMock.mock.calls[0]![0].token).toBe("sk-ant-oat01-test");
+    expect(firstRunRequest().token).toBe("sk-ant-oat01-test");
   });
 });

@@ -10,6 +10,10 @@ export type AnthropicUsageRaw = {
   five_hour?: { utilization: number | null; resets_at: string | null } | null;
   seven_day?: { utilization: number | null; resets_at: string | null } | null;
 };
+export type AnthropicUsageWithMeta = {
+  data: AnthropicUsageRaw;
+  cachedAt: number;
+};
 
 const logger = getLogger(["qgrid", "oauth"]);
 
@@ -140,14 +144,18 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
   };
 }
 
-const usageCache: Record<string, { data: AnthropicUsageRaw; cachedAt: number }> = {};
+const usageCache: Record<string, AnthropicUsageWithMeta> = {};
 const USAGE_API_CACHE_TTL = 60_000; // 1분
 
 export async function fetchUsage(accessToken: string): Promise<AnthropicUsageRaw> {
+  return (await fetchUsageWithMeta(accessToken)).data;
+}
+
+export async function fetchUsageWithMeta(accessToken: string): Promise<AnthropicUsageWithMeta> {
   const cacheKey = accessToken.slice(-10);
   const cached = usageCache[cacheKey];
   if (cached && Date.now() - cached.cachedAt < USAGE_API_CACHE_TTL) {
-    return cached.data;
+    return cached;
   }
 
   const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
@@ -173,16 +181,18 @@ export async function fetchUsage(accessToken: string): Promise<AnthropicUsageRaw
     logger.warn(`${res.status}: ${errorMessage}`);
 
     // 이전 성공 캐시 있으면 유지
-    if (cached?.data && !cached.data.error) return cached.data;
+    if (cached?.data && !cached.data.error) return cached;
 
     // 실패도 캐시 (반복 호출 방지)
     const errorResult = { error: errorMessage };
-    usageCache[cacheKey] = { data: errorResult, cachedAt: Date.now() };
-    return errorResult;
+    const entry = { data: errorResult, cachedAt: Date.now() };
+    usageCache[cacheKey] = entry;
+    return entry;
   }
 
   const data = (await res.json()) as AnthropicUsageRaw;
   // cache invalidate
-  usageCache[cacheKey] = { data, cachedAt: Date.now() };
-  return data;
+  const entry = { data, cachedAt: Date.now() };
+  usageCache[cacheKey] = entry;
+  return entry;
 }

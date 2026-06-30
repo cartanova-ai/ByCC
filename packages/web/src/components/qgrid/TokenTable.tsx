@@ -1,8 +1,6 @@
 import { Input } from "@sonamu-kit/react-components/components";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import CheckIcon from "~icons/lucide/check";
-import CopyIcon from "~icons/lucide/copy";
 import PencilIcon from "~icons/lucide/pencil";
 import TrashIcon from "~icons/lucide/trash-2";
 
@@ -76,9 +74,11 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
 
   const handleUpdate = async () => {
     if (!editTarget) return;
+    // threshold 는 UsageCard 에서 설정한다. 여기선 name 만 바꾸고 기존 threshold 는 보존한다.
     await updateMutation.mutateAsync({
       id: editTarget.id,
       name: editName.trim(),
+      quotaThreshold: editTarget.quota_threshold,
     });
     await invalidate();
     setEditTarget(null);

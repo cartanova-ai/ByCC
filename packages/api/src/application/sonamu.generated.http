@@ -39,7 +39,8 @@ Content-Type: application/json
       },
       "name": "NAME",
       "active": false,
-      "ord": 0
+      "ord": 0,
+      "quota_threshold": null
     }
   ]
 }
@@ -405,7 +406,8 @@ Content-Type: application/json
 
 {
   "id": 0,
-  "name": "NAME"
+  "name": "NAME",
+  "quotaThreshold": null
 }
 
 ###

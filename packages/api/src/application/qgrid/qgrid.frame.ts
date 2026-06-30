@@ -2,9 +2,10 @@ import crypto from "node:crypto";
 
 import { getLogger } from "@logtape/logtape";
 import { type FastifyReply } from "fastify";
-import { api, BaseFrameClass, Sonamu, stream } from "sonamu";
+import { api, BadRequestException, BaseFrameClass, Sonamu, stream } from "sonamu";
 import { getCacheManagerRef } from "sonamu/cache";
 
+import { type LocalizedString } from "../../i18n/sd.generated";
 import {
   getAccessToken,
   getExpiresAt,
@@ -13,7 +14,11 @@ import {
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { TokenModel } from "../token/token.model";
-import { TokenCredentials } from "../token/token.types";
+import {
+  TokenCredentials,
+  TokenSaveParams,
+  type TokenSaveParams as TokenSaveParamsType,
+} from "../token/token.types";
 import {
   type AnthropicUsageRaw,
   buildAuthUrl,
@@ -48,6 +53,10 @@ const pendingStreams = new Map<string, QueryInput>();
 type PendingOAuth = { codeVerifier: string; name: string; redirectUri: string };
 const OAUTH_STATE_PREFIX = "oauth:state:";
 const OAUTH_STATE_TTL = "5m";
+
+function unixSecondsToIso(seconds: number | null | undefined): string | null {
+  return typeof seconds === "number" ? new Date(seconds * 1000).toISOString() : null;
+}
 
 async function setOAuthState(state: string, data: PendingOAuth): Promise<void> {
   const cache = getCacheManagerRef();
@@ -359,18 +368,33 @@ class QgridFrameClass extends BaseFrameClass {
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
-  async updateToken(id: number, name?: string): Promise<{ updated: boolean }> {
+  async updateToken(
+    id: number,
+    name?: string,
+    quotaThreshold?: number | null,
+  ): Promise<{ updated: boolean }> {
     const entry = await TokenModel.findOne("A", { id });
     if (!entry) return { updated: false };
 
-    await TokenModel.save([
-      {
-        id: entry.id,
-        provider: entry.provider,
-        credentials: entry.credentials,
-        name: name !== undefined ? name : entry.name,
-      },
-    ]);
+    const patch: TokenSaveParamsType = {
+      id: entry.id,
+      provider: entry.provider,
+      credentials: entry.credentials,
+      name: name !== undefined ? name : entry.name,
+    };
+    if (quotaThreshold !== undefined) {
+      patch.quota_threshold = quotaThreshold;
+    }
+
+    const parsed = TokenSaveParams.safeParse(patch);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        "quotaThreshold must be an integer between 1 and 100, or null" as LocalizedString,
+        { zodError: parsed.error },
+      );
+    }
+
+    await TokenModel.save([parsed.data]);
     return { updated: true };
   }
 
@@ -513,25 +537,20 @@ class QgridFrameClass extends BaseFrameClass {
 
     if (entry.provider === "openai") {
       try {
-        const raw = (await QgridDispatcher.openaiDispatcher?.getRateLimits(entry.name)) as {
-          rateLimits?: {
-            primary?: { usedPercent: number; windowDurationMins: number; resetsAt: number };
-            secondary?: { usedPercent: number; windowDurationMins: number; resetsAt: number };
-          };
-        };
-        const rl = raw?.rateLimits;
+        const raw = await QgridDispatcher.openaiDispatcher?.getRateLimitsByTokenId(entry.id);
+        const rl = raw?.data.rateLimits;
         return {
           provider: "openai",
           fiveHour: rl?.primary
             ? {
                 utilization: rl.primary.usedPercent,
-                resetsAt: new Date(rl.primary.resetsAt * 1000).toISOString(),
+                resetsAt: unixSecondsToIso(rl.primary.resetsAt),
               }
             : null,
           sevenDay: rl?.secondary
             ? {
                 utilization: rl.secondary.usedPercent,
-                resetsAt: new Date(rl.secondary.resetsAt * 1000).toISOString(),
+                resetsAt: unixSecondsToIso(rl.secondary.resetsAt),
               }
             : null,
         };

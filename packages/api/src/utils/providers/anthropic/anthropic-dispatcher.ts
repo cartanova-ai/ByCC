@@ -13,6 +13,7 @@
 
 import { getLogger } from "@logtape/logtape";
 
+import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
 import { TokenModel } from "../../../application/token/token.model";
 import { type AnthropicCredentials } from "../../../application/token/token.types";
 import { getExpiresAt, getRefreshToken } from "../common/credentials";
@@ -23,6 +24,7 @@ import {
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
 import { assertSupportedOneMillionSuffix, canonicalAnthropicModel } from "./anthropic-constants";
+import { readAnthropicQuotaUsage, type AnthropicQuotaUsageResult } from "./anthropic-quota";
 import { makeAnthropicWorkerId, runClaudeSession } from "./claude-session";
 
 const logger = getLogger(["qgrid", "anthropic-dispatcher"]);
@@ -37,6 +39,7 @@ interface PooledToken {
   id: number;
   name: string;
   credentials: AnthropicCredentials;
+  quotaThreshold?: number | null;
 }
 
 export class AnthropicDispatcher implements ProviderDispatcher {
@@ -57,6 +60,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         id: t.id,
         name: t.name,
         credentials: t.credentials as AnthropicCredentials,
+        quotaThreshold: t.quota_threshold,
       });
       logger.info(`worker spawned: ${t.name}`);
     }
@@ -80,7 +84,12 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   //  - DB 에 없는데 풀에 있는 토큰 → onTokenRemoved
   //  - DB 에 있는 토큰 → 신규면 onTokenAdded, 기존이면 onTokenUpdated
   replaceTokens(
-    rows: Array<{ id: number; name: string; credentials: AnthropicCredentials }>,
+    rows: Array<{
+      id: number;
+      name: string;
+      credentials: AnthropicCredentials;
+      quotaThreshold?: number | null;
+    }>,
   ): void {
     const next = new Set(rows.map((r) => r.id));
     // onTokenRemoved 가 tokenPool 을 delete 하므로 순회 중 수정을 피하려 키를 먼저 스냅샷한다.
@@ -89,18 +98,31 @@ export class AnthropicDispatcher implements ProviderDispatcher {
       if (!next.has(id)) this.onTokenRemoved(id);
     }
     for (const r of rows) {
-      if (this.tokenPool.has(r.id)) this.onTokenUpdated(r.id, r.name, r.credentials);
-      else this.onTokenAdded(r.id, r.name, r.credentials);
+      if (this.tokenPool.has(r.id)) {
+        this.onTokenUpdated(r.id, r.name, r.credentials, r.quotaThreshold);
+      } else {
+        this.onTokenAdded(r.id, r.name, r.credentials, r.quotaThreshold);
+      }
     }
   }
 
   // token events (token-subscriber 가 호출)
-  onTokenAdded(id: number, name: string, credentials: AnthropicCredentials): void {
-    this.tokenPool.set(id, { id, name, credentials });
+  onTokenAdded(
+    id: number,
+    name: string,
+    credentials: AnthropicCredentials,
+    quotaThreshold?: number | null,
+  ): void {
+    this.tokenPool.set(id, { id, name, credentials, quotaThreshold });
   }
 
-  onTokenUpdated(id: number, name: string, credentials: AnthropicCredentials): void {
-    this.tokenPool.set(id, { id, name, credentials });
+  onTokenUpdated(
+    id: number,
+    name: string,
+    credentials: AnthropicCredentials,
+    quotaThreshold?: number | null,
+  ): void {
+    this.tokenPool.set(id, { id, name, credentials, quotaThreshold });
   }
 
   onTokenRemoved(id: number): void {
@@ -113,14 +135,101 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   }
 
   // 요청마다 least-used RR 로 토큰을 고른다(동점이면 rrIndex 로 회전).
-  private selectToken(): PooledToken | null {
+  private async selectToken(): Promise<PooledToken | null> {
     const rows = [...this.tokenPool.values()];
     if (rows.length === 0) return null;
-    const minCount = Math.min(...rows.map((r) => this.countOf(r.id)));
-    const idle = rows.filter((r) => this.countOf(r.id) === minCount);
-    const picked = idle[this.rrIndex % idle.length]!;
+    const eligible = await this.filterEligibleTokens(rows);
+    if (eligible.length === 0) {
+      logger.warn("quota_threshold gate: all_exceeded", {
+        provider: "anthropic",
+        tokenCount: rows.length,
+        thresholdedTokenCount: rows.filter((r) => this.hasQuotaThreshold(r)).length,
+        reason: "all_exceeded",
+      });
+      throw new QuotaThresholdExceededError("All anthropic tokens exceeded quota threshold");
+    }
+
+    const minCount = Math.min(...eligible.map((r) => this.countOf(r.id)));
+    const idle = eligible.filter((r) => this.countOf(r.id) === minCount);
+    const picked = idle[this.rrIndex % idle.length];
+    if (!picked) return null;
     this.rrIndex++;
     return this.charge(picked);
+  }
+
+  private async filterEligibleTokens(rows: PooledToken[]): Promise<PooledToken[]> {
+    const thresholded = rows.filter((token) => this.hasQuotaThreshold(token));
+    if (thresholded.length === 0) return rows;
+
+    const eligibleIds = new Set(
+      rows.filter((token) => !this.hasQuotaThreshold(token)).map((token) => token.id),
+    );
+    const checks = await Promise.allSettled(
+      thresholded.map(async (token) => ({
+        token,
+        result: await readAnthropicQuotaUsage(token.credentials.accessToken),
+      })),
+    );
+
+    checks.forEach((check, index) => {
+      if (check.status === "rejected") {
+        const token = thresholded[index];
+        if (!token) return;
+        this.logQuotaLookupFailOpen(token, String(check.reason));
+        eligibleIds.add(token.id);
+        return;
+      }
+
+      const token = check.value.token;
+      const result = check.value.result;
+      if (result.kind === "lookup_failed") {
+        this.logQuotaLookupFailOpen(token, result.reason);
+        eligibleIds.add(token.id);
+        return;
+      }
+
+      if (result.utilizationPct >= token.quotaThreshold) {
+        this.logQuotaOverThreshold(token, result);
+        return;
+      }
+
+      eligibleIds.add(token.id);
+    });
+
+    return rows.filter((token) => eligibleIds.has(token.id));
+  }
+
+  private hasQuotaThreshold(token: PooledToken): token is PooledToken & { quotaThreshold: number } {
+    return token.quotaThreshold !== undefined && token.quotaThreshold !== null;
+  }
+
+  private logQuotaOverThreshold(
+    token: PooledToken & { quotaThreshold: number },
+    result: Extract<AnthropicQuotaUsageResult, { kind: "ok" }>,
+  ): void {
+    logger.info("quota_threshold gate: over_threshold", {
+      tokenId: token.id,
+      tokenName: token.name,
+      provider: "anthropic",
+      threshold: token.quotaThreshold,
+      cachedUtilization: result.utilizationPct,
+      cacheAge: result.cacheAgeMs,
+      reason: "over_threshold",
+    });
+  }
+
+  private logQuotaLookupFailOpen(
+    token: PooledToken & { quotaThreshold: number },
+    reason: string,
+  ): void {
+    logger.warn("quota_threshold gate: lookup_fail_open", {
+      tokenId: token.id,
+      tokenName: token.name,
+      provider: "anthropic",
+      threshold: token.quotaThreshold,
+      reason: "lookup_fail_open",
+      lookupReason: reason,
+    });
   }
 
   // 선택된 토큰의 사용 카운트를 await 전에 선반영(동시 요청이 다른 토큰을 고르도록).
@@ -157,7 +266,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     const jsonSchema =
       req.outputSchema !== undefined ? JSON.stringify(req.outputSchema) : undefined;
 
-    const token = this.selectToken();
+    const token = await this.selectToken();
     if (!token) throw new Error("No anthropic tokens available");
 
     const exec = async (): Promise<GenerateResult> => {

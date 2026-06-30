@@ -255,6 +255,9 @@ export type HealthResponse = z.infer<typeof HealthResponse>;
 export class QuotaError extends Error {
   readonly code = "QUOTA_EXHAUSTED" as const;
 }
+export class QuotaThresholdExceededError extends Error {
+  readonly code = "QUOTA_THRESHOLD_EXCEEDED" as const;
+}
 export class TimeoutError extends Error {
   readonly code = "TIMEOUT" as const;
 }

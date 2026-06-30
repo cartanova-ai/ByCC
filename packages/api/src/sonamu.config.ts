@@ -46,6 +46,12 @@ export default defineConfig({
           database: process.env.QGRID_DB_NAME,
         },
       },
+      test: {
+        connection: {
+          ...connConfig,
+          database: process.env.QGRID_DB_NAME,
+        },
+      },
     },
   },
   api: {
