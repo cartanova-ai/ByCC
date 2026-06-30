@@ -8,8 +8,10 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { Input } from "@sonamu-kit/react-components/components";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import GaugeIcon from "~icons/lucide/gauge";
 import GripVerticalIcon from "~icons/lucide/grip-vertical";
 
 import { formatUsd } from "@/lib/cost";
@@ -17,6 +19,22 @@ import { QgridService, TokenService } from "@/services/services.generated";
 import { type TokenSubsetMapping } from "@/services/sonamu.generated";
 
 type Token = TokenSubsetMapping["A"];
+
+// Quota gate 가 구현된 provider 에서만 threshold 편집/표시를 연다(거짓 UI 방지).
+const QUOTA_THRESHOLD_PROVIDERS = new Set(["anthropic", "openai"]);
+
+// threshold 입력(문자열) → 저장값(number|null) 검증.
+// 빈 값 또는 0 = 해제(null, 제한 없음). 1..100 정수는 그대로. 소수/음수/100 초과는 거부.
+function validateThreshold(
+  raw: string,
+): { ok: true; value: number | null } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: null };
+  if (!/^\d+$/.test(trimmed)) return { ok: false, error: "정수만 입력하세요 (0–100)" };
+  const n = Number(trimmed);
+  if (n > 100) return { ok: false, error: "100 이하여야 합니다" };
+  return { ok: true, value: n === 0 ? null : n };
+}
 
 type ProviderTheme = {
   stripe: string;
@@ -77,21 +95,32 @@ function UsageRow({
   utilization,
   resetsAt,
   theme,
+  threshold,
 }: {
   label: string;
   utilization: number | null;
   resetsAt: string | null;
   theme: ProviderTheme;
+  // primary(5h) 행에만 전달. 설정 시 막대 위 그 % 위치에 제외선을 그린다. null이면 선 없음.
+  threshold?: number | null;
 }) {
   const pct = utilization ?? 0;
+  const hasThreshold = threshold !== undefined && threshold !== null;
   return (
     <div className="flex items-center gap-3">
       <span className="text-xs text-sand-600 w-20 shrink-0">{label}</span>
-      <div className="flex-1 h-2 bg-sand-200 rounded-full overflow-hidden">
+      <div className="relative flex-1 h-2 bg-sand-200 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-300 ${barColor(pct, theme)}`}
           style={{ width: `${Math.min(pct, 100)}%` }}
         />
+        {hasThreshold && (
+          // 제외 임계선 — 사용률이 이 선에 닿으면 토큰이 풀에서 빠진다.
+          <div
+            className="absolute top-[-2px] bottom-[-2px] w-0.5 bg-sienna-500 rounded-full"
+            style={{ left: `calc(${Math.min(threshold, 100)}% - 1px)` }}
+          />
+        )}
       </div>
       <span className="text-xs tabular-nums text-sand-700 w-10 text-right">{pct}%</span>
       <span className="text-[10px] text-sand-400 w-24 text-right">{formatResets(resetsAt)}</span>
@@ -131,6 +160,11 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
     return <p className="text-[11px] text-sand-400 py-1">No usage data</p>;
   }
 
+  // threshold 선은 gate 기준 window(primary = 5h 행)에만, 지원 provider일 때만.
+  const thresholdForPrimary = QUOTA_THRESHOLD_PROVIDERS.has(token.provider)
+    ? token.quota_threshold
+    : null;
+
   return (
     <div className="space-y-1.5 py-1">
       {data.fiveHour && (
@@ -139,6 +173,7 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
           utilization={data.fiveHour.utilization}
           resetsAt={data.fiveHour.resetsAt}
           theme={theme}
+          threshold={thresholdForPrimary}
         />
       )}
       {data.sevenDay && (
@@ -148,6 +183,176 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
           resetsAt={data.sevenDay.resetsAt}
           theme={theme}
         />
+      )}
+    </div>
+  );
+}
+
+// 드래그 리스너로 전파 차단(아이콘/팝오버 클릭이 카드 드래그 시작으로 잡히지 않게).
+function stopDragPropagation(e: React.PointerEvent | React.MouseEvent): void {
+  e.stopPropagation();
+}
+
+// 카드 내 threshold 설정. 트리거는 카드 안 작은 버튼, 편집은 트리거 좌표 기준 fixed 박스로
+// 카드 위에 띄운다(카드 overflow-hidden + 그리드에 잘리지 않게 absolute 대신 fixed+좌표).
+// 트리거 버튼 영역은 pointerdown 을 stopPropagation 해 클릭이 카드 드래그로 잡히지 않게 한다.
+function ThresholdControl({ token }: { token: Token }) {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [value, setValue] = useState("");
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const queryClient = useQueryClient();
+  const updateMutation = QgridService.useUpdateTokenMutation();
+
+  const supported = QUOTA_THRESHOLD_PROVIDERS.has(token.provider);
+  const open = pos !== null;
+  const validation = validateThreshold(value);
+
+  const POPOVER_WIDTH = 240; // w-60
+  const POPOVER_EST_HEIGHT = 150; // 대략(라벨+입력+helper+버튼). flip 판정용 추정치.
+  const MARGIN = 8;
+  const GAP = 6;
+
+  const openPopover = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    // left: 트리거 우변에 박스 우변을 맞추되 viewport [MARGIN, w-width-MARGIN] 로 clamp.
+    const left = Math.min(
+      Math.max(rect.right - POPOVER_WIDTH, MARGIN),
+      Math.max(window.innerWidth - POPOVER_WIDTH - MARGIN, MARGIN),
+    );
+    // top: 기본은 버튼 위. 위 공간이 부족하면 아래로 flip. 최종적으로 viewport 안으로 clamp.
+    const above = rect.top - GAP - POPOVER_EST_HEIGHT;
+    const below = rect.bottom + GAP;
+    const top = above >= MARGIN ? above : below;
+    const clampedTop = Math.min(
+      Math.max(top, MARGIN),
+      Math.max(window.innerHeight - POPOVER_EST_HEIGHT - MARGIN, MARGIN),
+    );
+    setPos({ left, top: clampedTop });
+    // 미설정이면 100에서 시작 — 거기서 -10 으로 내려가며 정하고, 0은 해제(null)로 저장한다.
+    setValue(String(token.quota_threshold ?? 100));
+  };
+
+  const close = () => setPos(null);
+
+  if (!supported) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] text-sand-300 border border-sand-100"
+        title="Quota threshold는 이 provider에서 지원되지 않습니다"
+      >
+        <GaugeIcon className="size-3" />
+        n/a
+      </span>
+    );
+  }
+
+  // +10 / -10 버튼. 현재 입력을 숫자로 해석(빈 값/비정상은 0 기준)해 10 단위로 조정,
+  // 0..100 으로 clamp. 0 = 제한 해제(저장 시 null). 직접 타이핑도 허용.
+  const adjust = (delta: number) => {
+    const current = /^\d+$/.test(value.trim()) ? Number(value.trim()) : 0;
+    const next = Math.min(Math.max(current + delta, 0), 100);
+    setValue(String(next));
+  };
+
+  const save = async () => {
+    if (!validation.ok) return;
+    await updateMutation.mutateAsync({
+      id: token.id,
+      name: token.name ?? "",
+      quotaThreshold: validation.value,
+    });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["Token"] }),
+      queryClient.invalidateQueries({ queryKey: ["Qgrid"] }),
+    ]);
+    close();
+  };
+
+  return (
+    <div className="inline-flex" onPointerDown={stopDragPropagation} onClick={stopDragPropagation}>
+      <button
+        ref={triggerRef}
+        type="button"
+        title="사용률 제한 설정"
+        onClick={open ? close : openPopover}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] border border-sand-200/80 text-sand-400 hover:text-sand-600 hover:border-sand-300 transition-colors duration-150"
+      >
+        <GaugeIcon className="size-3" />
+        Set limit
+      </button>
+
+      {open && pos && (
+        // 카드 위에 뜨는 작은 박스. 트리거 좌표 기준 fixed 라 카드 overflow-hidden·그리드에
+        // 잘리지 않는다. 바깥 클릭(투명 오버레이)으로 닫힌다.
+        <>
+          <div className="fixed inset-0 z-40" onPointerDown={close} />
+          <div
+            className="fixed z-50 w-60 panel shadow-xl p-3"
+            style={{ top: pos.top, left: pos.left }}
+          >
+            <label
+              htmlFor={`threshold-${token.id}`}
+              className="text-[10px] uppercase tracking-wider text-sand-500 font-medium"
+            >
+              사용률 제한
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => adjust(-10)}
+                className="size-9 shrink-0 rounded-md border border-sand-200 text-sand-600 text-base leading-none hover:bg-sand-100 transition-colors duration-150"
+              >
+                −
+              </button>
+              <Input
+                id={`threshold-${token.id}`}
+                value={value}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValue(e.target.value)}
+                inputMode="numeric"
+                className={`h-9 w-14 border rounded-md text-center text-sm text-sand-900 bg-white tabular-nums focus:outline-none ${
+                  validation.ok
+                    ? "border-sand-200 focus:border-sienna-300"
+                    : "border-red-300 focus:border-red-400"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => adjust(10)}
+                className="size-9 shrink-0 rounded-md border border-sand-200 text-sand-600 text-base leading-none hover:bg-sand-100 transition-colors duration-150"
+              >
+                +
+              </button>
+              <span className="text-sm text-sand-500">%</span>
+            </div>
+            {validation.ok ? (
+              <p className="mt-1.5 text-[11px] text-sand-500 leading-snug">
+                {validation.value === null
+                  ? "제한 없음 — 사용률과 무관하게 항상 사용합니다."
+                  : "5h 사용률이 임계치에 달하면 해당 토큰을 건너뜁니다."}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-red-500">{validation.error}</p>
+            )}
+            <div className="mt-2 flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                className="px-2 py-1 text-[11px] font-medium rounded-md border border-sand-200 text-sand-600 hover:bg-sand-100 transition-colors duration-150"
+                onClick={close}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 text-[11px] font-medium rounded-md bg-sienna-400 text-white hover:bg-sienna-500 disabled:opacity-50 transition-colors duration-150"
+                disabled={updateMutation.isPending || !validation.ok}
+                onClick={save}
+              >
+                {updateMutation.isPending ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -200,11 +405,24 @@ function SortableTokenCard({ token }: { token: Token }) {
           </span>
         </div>
         <TokenUsage token={token} theme={theme} />
-        <span
-          className={`absolute top-2.5 right-3 px-2 py-0.5 rounded-md bg-sand-50 text-[11px] tabular-nums font-medium border border-sand-200/80 ${theme.cost}`}
-        >
-          {formatUsd(costData?.usd ?? 0)}
-        </span>
+        <div className="mt-2 flex items-center justify-end">
+          <ThresholdControl token={token} />
+        </div>
+        <div className="absolute top-2.5 right-3 flex items-center gap-1.5">
+          {QUOTA_THRESHOLD_PROVIDERS.has(token.provider) && token.quota_threshold !== null && (
+            <span
+              className="px-1.5 py-0.5 rounded-md bg-sienna-50 text-[11px] tabular-nums font-medium border border-sienna-200 text-sienna-600"
+              title={`사용률 ${token.quota_threshold}% 이상이면 이 토큰 제외`}
+            >
+              ≤ {token.quota_threshold}%
+            </span>
+          )}
+          <span
+            className={`px-2 py-0.5 rounded-md bg-sand-50 text-[11px] tabular-nums font-medium border border-sand-200/80 ${theme.cost}`}
+          >
+            {formatUsd(costData?.usd ?? 0)}
+          </span>
+        </div>
       </div>
     </div>
   );
