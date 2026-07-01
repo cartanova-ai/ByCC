@@ -51,6 +51,7 @@ export default defineConfig(({ command, isSsrBuild }) => ({
               if (id.includes("@tanstack/react-query") || id.includes("@tanstack/react-router")) {
                 return "vendor-tanstack";
               }
+              return undefined;
             },
           },
     },

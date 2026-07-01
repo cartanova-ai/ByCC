@@ -251,7 +251,19 @@ export function extractTextContent(content: unknown): string {
 export function getErrorMessage(value: unknown): string {
   if (value instanceof Error) return String(value);
   if (value === undefined || value === null) return "unknown error";
-  return String(value);
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value) ?? "unknown error";
+  } catch {
+    return "unknown error";
+  }
 }
 
 export function extractUserPrompt(prompt: unknown, messages: unknown): string {

@@ -46,15 +46,15 @@ function normalizedUsageForCost(row: RequestLogUsageRow): {
   cachedInputTokens: number;
   cacheCreationInputTokens: number;
 } {
-  const cacheRead = Number(row.cache_read_tokens ?? 0);
-  const cacheCreation = Number(row.cache_creation_tokens ?? 0);
-  const storedInput = Number(row.input_tokens ?? 0);
+  const cacheRead = row.cache_read_tokens;
+  const cacheCreation = row.cache_creation_tokens;
+  const storedInput = row.input_tokens;
   const legacyAnthropicSplitInput =
     isAnthropicUsageRow(row) && storedInput < cacheRead + cacheCreation;
   return {
     model: row.model_name ? canonicalModelName(row.model_name) : null,
     inputTokens: legacyAnthropicSplitInput ? storedInput + cacheRead + cacheCreation : storedInput,
-    outputTokens: Number(row.output_tokens ?? 0),
+    outputTokens: row.output_tokens,
     cachedInputTokens: cacheRead,
     cacheCreationInputTokens: cacheCreation,
   };
@@ -62,7 +62,7 @@ function normalizedUsageForCost(row: RequestLogUsageRow): {
 
 function normalizeLegacyAnthropicRow<T extends RequestLogUsageRow>(row: T): T {
   const usage = normalizedUsageForCost(row);
-  if (usage.inputTokens === Number(row.input_tokens ?? 0)) return row;
+  if (usage.inputTokens === row.input_tokens) return row;
   const normalized = { ...row, input_tokens: usage.inputTokens };
   if (usage.model) {
     normalized.cost_usd = Math.round(calculateCostUsd(usage.model, usage) * MICRO_USD);
@@ -424,7 +424,7 @@ class RequestLogModelClass extends BaseModelClass<
 
     return rows.reduce((sum, row) => {
       const usage = normalizedUsageForCost(row);
-      if (!usage.model) return sum + Math.max(Number(row.cost_usd ?? 0), 0) / MICRO_USD;
+      if (!usage.model) return sum + Math.max(row.cost_usd ?? 0, 0) / MICRO_USD;
       return (
         sum +
         calculateCostUsd(usage.model, {

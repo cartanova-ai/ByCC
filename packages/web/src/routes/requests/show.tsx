@@ -43,11 +43,11 @@ type TokenRateProvider = "anthropic" | "openai";
 // U0 duration 기준 실측이 끝난 provider만 opt-in한다. 미판정 기본값은 전 provider off.
 const TOKENS_PER_SEC_PROVIDERS = new Set<TokenRateProvider>();
 
-function tryParseJson(text: string): unknown | null {
+function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false } {
   try {
-    return JSON.parse(text);
+    return { ok: true, value: JSON.parse(text) };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 
@@ -63,7 +63,7 @@ function safeParseJson(text: string | null | undefined): unknown {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
-    if (!copied) return;
+    if (!copied) return undefined;
     const id = setTimeout(() => setCopied(false), 1500);
     return () => clearTimeout(id);
   }, [copied]);
@@ -90,7 +90,7 @@ function FormattedContent({ text, markdown }: { text: string; markdown?: boolean
   const parsed = tryParseJson(text);
   const [mode, setMode] = useState<"pretty" | "plain">("pretty");
 
-  if (parsed === null) {
+  if (!parsed.ok) {
     if (markdown) {
       return (
         <div className="prose prose-sm prose-qgrid max-w-none">
@@ -125,7 +125,7 @@ function FormattedContent({ text, markdown }: { text: string; markdown?: boolean
       </div>
       {mode === "pretty" ? (
         <JsonView
-          value={parsed as object}
+          value={parsed.value as object}
           style={lightTheme}
           displayDataTypes={false}
           enableClipboard
@@ -133,7 +133,7 @@ function FormattedContent({ text, markdown }: { text: string; markdown?: boolean
         />
       ) : (
         <pre className="text-sm text-sand-800 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed">
-          {JSON.stringify(parsed, null, 2)}
+          {JSON.stringify(parsed.value, null, 2)}
         </pre>
       )}
     </div>

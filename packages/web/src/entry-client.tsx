@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 
 import { routeTree } from "./routeTree.gen";
 
+// oxlint-disable-next-line import/no-unassigned-import -- Vite CSS entry side effect.
 import "./styles/tailwind.css";
 import { dateReviver } from "./services/sonamu.shared";
 

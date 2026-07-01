@@ -111,7 +111,7 @@ export default defineConfig({
             return reply.redirect("/?oauth=error&reason=missing_params");
           }
           try {
-            await QgridFrame.handleOAuthCallback(code, state, reply);
+            return QgridFrame.handleOAuthCallback(code, state, reply);
           } catch (e) {
             return reply.redirect(
               `/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`,
@@ -163,6 +163,7 @@ export default defineConfig({
             // CSR fallback (index.html): 1분 캐시
             return CachePresets.shortLived;
         }
+        return CachePresets.noCache;
       },
     },
     cache: {

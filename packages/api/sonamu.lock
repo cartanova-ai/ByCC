@@ -29,7 +29,7 @@
   },
   {
     "path": "api/src/application/request-log/request-log.model.ts",
-    "checksum": "405c0923a2c16fa28dda32d851bbec523ac64ec2"
+    "checksum": "ae4bd20f9316bc766b9f1bcaf61198d5a695bc20"
   },
   {
     "path": "api/src/application/request-log/request-log.types.ts",
@@ -73,7 +73,7 @@
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "756983809c4dd9ca0f3d08b77a2d705f52be9c2f"
+    "checksum": "18f7c62a2a53f69e9822e71c0c90f3da2b93b29c"
   },
   {
     "path": "web/src/i18n/en.ts",
