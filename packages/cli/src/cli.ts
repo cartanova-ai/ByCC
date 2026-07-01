@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,12 +9,77 @@ import { Command } from "commander";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
-function hasCommand(command: string): boolean {
+const RUNTIME_CLI_DEPENDENCIES = [
+  {
+    command: "codex",
+    packageName: "@openai/codex",
+    label: "Codex CLI",
+    missingReason: "OpenAI tokens require codex app-server.",
+  },
+  {
+    command: "claude",
+    packageName: "@anthropic-ai/claude-code",
+    label: "Claude Code",
+    missingReason: "Anthropic tokens require Claude Code.",
+  },
+] as const;
+
+type RuntimeCliDependency = (typeof RUNTIME_CLI_DEPENDENCIES)[number];
+
+function commandVersion(command: string): string | null {
   try {
-    execSync(`${command} --version`, { stdio: "ignore" });
-    return true;
+    return execFileSync(command, ["--version"], { encoding: "utf-8", stdio: "pipe" }).trim();
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function packageLatestVersion(packageName: string): string {
+  return execFileSync("npm", ["view", packageName, "version"], {
+    encoding: "utf-8",
+    stdio: "pipe",
+  }).trim();
+}
+
+function parseVersion(output: string | null): string | null {
+  return output?.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/)?.[0] ?? null;
+}
+
+function warnMissingRuntimeCliDependency(dep: RuntimeCliDependency): void {
+  console.warn(`Warning: ${dep.command} CLI not found. ${dep.missingReason}`);
+  console.warn(`Install: npm i -g ${dep.packageName}`);
+}
+
+function installRuntimeCliDependency(dep: RuntimeCliDependency): void {
+  execFileSync("npm", ["i", "-g", `${dep.packageName}@latest`], { stdio: "inherit" });
+}
+
+function ensureLatestRuntimeCliDependencies(): void {
+  for (const dep of RUNTIME_CLI_DEPENDENCIES) {
+    let installedOutput = commandVersion(dep.command);
+
+    try {
+      const installed = parseVersion(installedOutput);
+
+      if (!installed) {
+        console.log(`Updating ${dep.label}: installing latest`);
+        installRuntimeCliDependency(dep);
+        installedOutput = commandVersion(dep.command);
+      } else {
+        const latest = packageLatestVersion(dep.packageName);
+        if (installed === latest) continue;
+
+        console.log(`Updating ${dep.label}: ${installed} → ${latest}`);
+        installRuntimeCliDependency(dep);
+        installedOutput = commandVersion(dep.command);
+      }
+    } catch (e) {
+      console.warn(`Warning: failed to update ${dep.label}: ${(e as Error).message}`);
+    }
+
+    if (!installedOutput) {
+      warnMissingRuntimeCliDependency(dep);
+    }
   }
 }
 
@@ -35,7 +100,7 @@ program
   .description("Qgrid — LLM subscription token proxy server")
   .option("--db <url>", "PostgreSQL connection URL (e.g. postgres://user:pw@host:port/dbname)")
   .option("-p, --port <port>", "server port (default: 44900)")
-  .option("--skip-update", "skip auto-update check")
+  .option("--skip-update", "skip qgrid self-update check")
   .action(async (opts) => {
     const serverPort = normalizePort(opts.port ?? "44900");
 
@@ -52,9 +117,7 @@ program
 
     // check latest version and self-update
     if (!opts.skipUpdate) {
-      const latest = execSync("npm view @cartanova/qgrid-cli version", {
-        encoding: "utf-8",
-      }).trim();
+      const latest = packageLatestVersion("@cartanova/qgrid-cli");
       const shouldUpdate = latest !== pkg.version;
 
       if (shouldUpdate) {
@@ -74,6 +137,8 @@ program
       }
     }
 
+    ensureLatestRuntimeCliDependencies();
+
     //  parse --db postgres://user:password@host:port/dbname & set env vars
     if (opts.db) {
       const m = opts.db.match(/^postgres(?:ql)?:\/\/([^:]+):(.+)@([^:]+):(\d+)\/(.+)$/);
@@ -89,15 +154,6 @@ program
       process.env.QGRID_DB_NAME = dbName;
     }
     process.env.PORT = serverPort;
-
-    if (!hasCommand("codex")) {
-      console.warn("Warning: codex CLI not found. OpenAI tokens require codex app-server.");
-      console.warn("Install: npm i -g @openai/codex");
-    }
-    if (!hasCommand("claude")) {
-      console.warn("Warning: claude CLI not found. Anthropic tokens require Claude Code.");
-      console.warn("Install: npm i -g @anthropic-ai/claude-code");
-    }
 
     process.env.LR = "remote";
     const bundlePath = join(__dirname, "..", "bundle");
