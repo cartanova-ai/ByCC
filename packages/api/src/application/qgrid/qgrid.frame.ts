@@ -538,6 +538,10 @@ class QgridFrameClass extends BaseFrameClass {
     if (!entry) return { error: "NOT_FOUND" };
 
     if (entry.provider === "openai") {
+      if (!entry.active) {
+        return { provider: "openai", fiveHour: null, sevenDay: null };
+      }
+
       try {
         const raw = await QgridDispatcher.openaiDispatcher?.getRateLimitsByTokenId(entry.id);
         const rl = raw?.data.rateLimits;

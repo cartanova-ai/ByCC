@@ -2,11 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QgridFrame } from "./qgrid.frame";
 
-const { findOneMock, saveMock, requestLogSaveMock, dispatcherQueryMock } = vi.hoisted(() => ({
+const {
+  findOneMock,
+  findManyMock,
+  saveMock,
+  requestLogSaveMock,
+  dispatcherQueryMock,
+  getRateLimitsByTokenIdMock,
+} = vi.hoisted(() => ({
   findOneMock: vi.fn(),
+  findManyMock: vi.fn(),
   saveMock: vi.fn(),
   requestLogSaveMock: vi.fn(),
   dispatcherQueryMock: vi.fn(),
+  getRateLimitsByTokenIdMock: vi.fn(),
 }));
 
 vi.mock("../request-log/request-log.model", () => ({
@@ -19,6 +28,7 @@ vi.mock("../request-log/request-log.model", () => ({
 vi.mock("../token/token.model", () => ({
   TokenModel: {
     findOne: findOneMock,
+    findMany: findManyMock,
     save: saveMock,
   },
 }));
@@ -26,6 +36,9 @@ vi.mock("../token/token.model", () => ({
 vi.mock("./qgrid.dispatcher", () => ({
   QgridDispatcher: {
     query: dispatcherQueryMock,
+    openaiDispatcher: {
+      getRateLimitsByTokenId: getRateLimitsByTokenIdMock,
+    },
   },
 }));
 
@@ -124,5 +137,36 @@ describe("QgridFrame.query auto logging", () => {
     expect(requestLogSaveMock).toHaveBeenCalledWith([
       expect.objectContaining({ ttft_ms: 0 }),
     ]);
+  });
+});
+
+describe("QgridFrame.usage", () => {
+  beforeEach(() => {
+    findManyMock.mockReset();
+    getRateLimitsByTokenIdMock.mockReset();
+  });
+
+  it("returns empty usage for inactive OpenAI tokens without asking for workers", async () => {
+    findManyMock.mockResolvedValueOnce({
+      rows: [
+        {
+          ...tokenEntry,
+          provider: "openai",
+          credentials: {
+            accessToken: "access",
+            refreshToken: "refresh",
+            accountId: "account",
+          },
+          active: false,
+        },
+      ],
+    });
+
+    await expect(QgridFrame.usage(1)).resolves.toEqual({
+      provider: "openai",
+      fiveHour: null,
+      sevenDay: null,
+    });
+    expect(getRateLimitsByTokenIdMock).not.toHaveBeenCalled();
   });
 });
