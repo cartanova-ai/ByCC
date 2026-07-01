@@ -13,6 +13,13 @@ import { type TokenSubsetKey, type TokenSubsetMapping } from "../sonamu.generate
 import { tokenLoaderQueries, tokenSubsetQueries } from "../sonamu.generated.sso";
 import { type TokenListParams, type TokenSaveParams } from "./token.types";
 
+const DEFAULT_QUOTA_THRESHOLD = 80;
+
+function applyCreateDefaults(sp: TokenSaveParams): TokenSaveParams {
+  if (sp.id !== undefined || sp.quota_threshold !== undefined) return sp;
+  return { ...sp, quota_threshold: DEFAULT_QUOTA_THRESHOLD };
+}
+
 class TokenModelClass extends BaseModelClass<
   TokenSubsetKey,
   TokenSubsetMapping,
@@ -143,7 +150,7 @@ class TokenModelClass extends BaseModelClass<
   async save(spa: TokenSaveParams[]): Promise<number[]> {
     const wdb = this.getPuri("w");
     spa.forEach((sp) => {
-      wdb.ubRegister("tokens", sp);
+      wdb.ubRegister("tokens", applyCreateDefaults(sp));
     });
     return wdb.transaction(async (trx) => {
       return trx.ubUpsert("tokens");

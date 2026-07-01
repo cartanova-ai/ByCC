@@ -37,7 +37,7 @@
   },
   {
     "path": "api/src/application/sonamu.generated.http",
-    "checksum": "9f16a3f7be55bb3780de0fbc88027a4bbb9f2956"
+    "checksum": "9a99f807c561d7c80ed34b292f9e97e2ca08fb41"
   },
   {
     "path": "api/src/application/sonamu.generated.sso.ts",
@@ -53,7 +53,7 @@
   },
   {
     "path": "api/src/application/token/token.model.ts",
-    "checksum": "7a3af0dfe278a0741b8adc5dd623adc97b87f021"
+    "checksum": "df9fab1704d067d313b8bd45087085e84a499539"
   },
   {
     "path": "api/src/application/token/token.types.ts",
