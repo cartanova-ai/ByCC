@@ -102,6 +102,7 @@ export const QueryOutput = z.object({
     cache_read_input_tokens: z.number(),
   }),
   durationMs: z.number(),
+  ttftMs: z.number(),
   costUsd: z.number(),
   runContext: QgridRunContext.optional(),
 });
@@ -128,6 +129,7 @@ export const StreamEvents = z.object({
       cache_read_input_tokens: z.number(),
     }),
     durationMs: z.number(),
+    ttftMs: z.number(),
     costUsd: z.number(),
     content: z.array(QgridContent),
     runContext: QgridRunContext.optional(),
@@ -157,6 +159,7 @@ export const AppendStepInput = z.object({
   cacheReadTokens: z.number().optional(),
   cacheCreationTokens: z.number().optional(),
   durationMs: z.number().optional(),
+  ttftMs: z.number().nullable().optional(),
   finishReason: z.string().optional(),
   reasoningText: z.string().optional(),
   reasoningTokens: z.number().optional(),

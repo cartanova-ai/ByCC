@@ -280,6 +280,7 @@ class RequestLogModelClass extends BaseModelClass<
       if (params[key] !== undefined) update[key] = params[key];
     }
     if (params.history !== undefined) update.history = params.history;
+    update.ttft_ms = (await this.firstGenerateStepTtft(requestLogId)) ?? 0;
 
     if (params.input_tokens !== undefined && params.output_tokens !== undefined) {
       const db = this.getDB("r");
@@ -313,6 +314,19 @@ class RequestLogModelClass extends BaseModelClass<
     await wdb.transaction(async (trx) => {
       await trx.ubUpsert("request_logs");
     });
+  }
+
+  async firstGenerateStepTtft(requestLogId: number): Promise<number | null> {
+    const db = this.getDB("r");
+    const [row] = await db("request_log_steps")
+      .select("ttft_ms")
+      .where("request_log_id", requestLogId)
+      .where("type", "generate")
+      .whereNotNull("ttft_ms")
+      .orderBy("step_index", "asc")
+      .orderBy("id", "asc")
+      .limit(1);
+    return row?.ttft_ms === null || row?.ttft_ms === undefined ? null : Number(row.ttft_ms);
   }
 
   async aggregateStepUsage(requestLogId: number): Promise<{

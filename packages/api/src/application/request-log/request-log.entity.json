@@ -42,6 +42,7 @@
       "dbDefault": "0"
     },
     { "name": "duration_ms", "type": "integer", "desc": "응답 소요시간(ms)", "dbDefault": "0" },
+    { "name": "ttft_ms", "type": "integer", "desc": "first gen TTFT(ms)", "dbDefault": "0" },
     { "name": "cost_usd", "type": "integer", "nullable": true, "desc": "API 비용" },
     { "name": "effort", "type": "string", "length": 10, "nullable": true, "desc": "effort level" },
     {
@@ -91,6 +92,7 @@
         "cache_read_tokens",
         "cache_creation_tokens",
         "duration_ms",
+        "ttft_ms",
         "cost_usd",
         "effort",
         "history",
@@ -111,6 +113,7 @@
         "cache_read_tokens",
         "cache_creation_tokens",
         "duration_ms",
+        "ttft_ms",
         "cost_usd",
         "effort",
         "status",

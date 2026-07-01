@@ -256,6 +256,7 @@ function toEmulationResult(
       cache_read_input_tokens: result.usage.cachedInputTokens,
     },
     durationMs: result.durationMs,
+    ttftMs: result.ttftMs ?? 0,
     costUsd:
       result.costUsd !== undefined && result.costUsd > 0
         ? result.costUsd

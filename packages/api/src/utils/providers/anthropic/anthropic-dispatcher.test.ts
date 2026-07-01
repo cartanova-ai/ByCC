@@ -114,12 +114,14 @@ describe("AnthropicDispatcher", () => {
   it("happy: generate → GenerateResult (threadCoord 조립, systemHash 없음)", async () => {
     const d = new AnthropicDispatcher();
     d.onTokenAdded(1, "tok-A", creds());
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ ttftMs: 42 }));
 
     const result = await d.generate(baseReq());
 
     expect(result.text).toBe("hello");
     expect(result.tokenName).toBe("tok-A");
     expect(result.model).toBe("claude-sonnet-4-6");
+    expect(result.ttftMs).toBe(42);
     expect(result.threadCoord).toEqual({ workerId: 1, threadId: "sess-generated", epoch: 0 });
   });
 

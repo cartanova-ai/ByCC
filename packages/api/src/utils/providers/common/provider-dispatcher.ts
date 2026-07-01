@@ -49,6 +49,7 @@ export interface GenerateResult {
   tokenName: string;
   usage: ProviderTokenUsageBreakdown;
   durationMs: number;
+  ttftMs?: number | null;
   // Provider 가 직접 산출한 비용. Anthropic Claude Code 는 total_cost_usd 를 주므로 이 값을
   // 우선 사용하고, 없으면 상위가 모델별 가격표로 계산한다.
   costUsd?: number;

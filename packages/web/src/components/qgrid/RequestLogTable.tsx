@@ -5,9 +5,6 @@ import ChevronRightIcon from "~icons/lucide/chevron-right";
 import { cacheHitRate, formatMicroUsd, formatUsd } from "@/lib/cost";
 import { type LogsSearch } from "@/routes/logs";
 import { QgridService, RequestLogService, TokenService } from "@/services/services.generated";
-import { type RequestLogSubsetMapping } from "@/services/sonamu.generated";
-
-type RequestLog = RequestLogSubsetMapping["P"];
 
 const PAGE_SIZE = 50;
 const UNASSIGNED = "__unassigned__";
@@ -32,12 +29,19 @@ function formatDuration(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+// TTFT 는 보통 1초 미만이라 초 단위로 뭉개면 "0s" 가 된다. ms/s 적응형으로 표기.
+// ttft_ms 는 0-fallback(non-null)이라 duration 과 마찬가지로 0 도 그대로 보여준다.
+function formatTtft(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
 const COLUMNS: { label: string; align: "left" | "right"; width?: string }[] = [
   { label: "ID", align: "left", width: "w-12" },
   { label: "Date", align: "left", width: "w-20" },
   { label: "Project", align: "left", width: "w-20" },
   { label: "Token", align: "left", width: "w-24" },
   { label: "Model", align: "left", width: "w-20" },
+  { label: "TTFT", align: "left", width: "w-16" },
   { label: "Duration", align: "left", width: "w-20" },
   { label: "In", align: "left", width: "w-16" },
   { label: "Out", align: "left", width: "w-20" },
@@ -189,6 +193,9 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                     </td>
                     <td className="px-4 py-1.5 whitespace-nowrap">
                       <span className="text-xs text-sand-500">{row.model_name ?? "—"}</span>
+                    </td>
+                    <td className="px-4 py-1.5 text-left tabular-nums text-sand-500 whitespace-nowrap">
+                      {formatTtft(row.ttft_ms)}
                     </td>
                     <td className="pl-5 pr-3 py-1.5 text-left tabular-nums text-sand-500 whitespace-nowrap">
                       {formatDuration(row.duration_ms)}

@@ -331,6 +331,7 @@ Content-Type: application/json
     "cacheReadTokens": 0,
     "cacheCreationTokens": 0,
     "durationMs": 0,
+    "ttftMs": null,
     "finishReason": "FINISHREASON",
     "reasoningText": "REASONINGTEXT",
     "reasoningTokens": 0,

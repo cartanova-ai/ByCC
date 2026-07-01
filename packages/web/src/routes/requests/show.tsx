@@ -38,6 +38,11 @@ function formatNum(n: number): string {
   return n.toLocaleString();
 }
 
+type TokenRateProvider = "anthropic" | "openai";
+
+// U0 duration 기준 실측이 끝난 provider만 opt-in한다. 미판정 기본값은 전 provider off.
+const TOKENS_PER_SEC_PROVIDERS = new Set<TokenRateProvider>();
+
 function tryParseJson(text: string): unknown | null {
   try {
     return JSON.parse(text);
@@ -217,19 +222,30 @@ function HeaderBar({ data }: { data: RequestLog }) {
 }
 
 function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount: number }) {
+  const tokensPerSecEnabled = isTokensPerSecEnabled(data);
   return (
     <div className="panel overflow-hidden px-5 py-3 space-y-3">
-      <div className="grid grid-cols-4 gap-x-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3">
         <Metric label="Duration" value={`${(data.duration_ms / 1000).toFixed(1)}s`} />
+        <Metric label="TTFT" value={formatDurationMs(data.ttft_ms)} />
+        <Metric
+          label="Tokens/sec"
+          value={formatTokensPerSec(
+            data.output_tokens,
+            data.duration_ms,
+            data.ttft_ms,
+            tokensPerSecEnabled,
+          )}
+        />
         <Metric label="Cost" value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"} />
         <Metric label="Tool Calls" value={`${toolCallCount}회`} />
-        <Metric label="Cache Hit" value={cacheHitRate(data)} />
       </div>
-      <div className="border-t border-sand-100/60 pt-3 grid grid-cols-4 gap-x-6">
+      <div className="border-t border-sand-100/60 pt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3">
         <Metric label="Input" value={formatNum(data.input_tokens)} />
         <Metric label="Output" value={formatNum(data.output_tokens)} />
         <Metric label="Cache Read" value={formatNum(data.cache_read_tokens)} />
         <Metric label="Cache Write" value={formatNum(data.cache_creation_tokens)} />
+        <Metric label="Cache Hit" value={cacheHitRate(data)} />
       </div>
     </div>
   );
@@ -253,6 +269,7 @@ type GenerateStepEntry = {
   cacheReadTokens: number | null;
   cacheCreationTokens: number | null;
   durationMs: number | null;
+  ttftMs: number | null;
   finishReason: string | null;
   reasoningTokens: number | null;
 };
@@ -264,8 +281,55 @@ type StepTreeEntry = {
 };
 
 function formatDurationMs(ms: number | null | undefined): string {
-  if (ms == null) return "—";
+  if (ms === null || ms === undefined) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function detectTokenRateProvider(source: {
+  model_name?: string | null;
+  token_name?: string | null;
+}): TokenRateProvider | null {
+  const modelName = source.model_name?.trim().toLowerCase();
+  if (modelName) {
+    const canonical = modelName.includes("/") ? modelName.split("/").pop()! : modelName;
+    if (canonical.startsWith("claude-")) return "anthropic";
+    if (/^(gpt-|codex-|o\d)/.test(canonical)) return "openai";
+  }
+
+  const tokenName = source.token_name?.trim().toLowerCase();
+  if (tokenName?.startsWith("anthropic/")) return "anthropic";
+  if (tokenName?.startsWith("openai/")) return "openai";
+  return null;
+}
+
+function isTokensPerSecEnabled(source: {
+  model_name?: string | null;
+  token_name?: string | null;
+}): boolean {
+  const provider = detectTokenRateProvider(source);
+  return provider !== null && TOKENS_PER_SEC_PROVIDERS.has(provider);
+}
+
+function formatTokensPerSec(
+  outputTokens: number | null | undefined,
+  durationMs: number | null | undefined,
+  ttftMs: number | null | undefined,
+  enabled: boolean,
+): string {
+  if (
+    !enabled ||
+    outputTokens === null ||
+    outputTokens === undefined ||
+    durationMs === null ||
+    durationMs === undefined ||
+    ttftMs === null ||
+    ttftMs === undefined
+  ) {
+    return "—";
+  }
+  const generationMs = durationMs - ttftMs;
+  if (outputTokens <= 0 || generationMs <= 0) return "—";
+  return `${Math.round(outputTokens / (generationMs / 1000)).toLocaleString()} tok/s`;
 }
 
 function CompactMetric({ label, value }: { label: string; value: string }) {
@@ -383,10 +447,19 @@ function ReasoningBlock({ stepId }: { stepId: number }) {
   );
 }
 
-function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
+function StepTreeItem({
+  entry,
+  tokensPerSecEnabled,
+}: {
+  entry: StepTreeEntry;
+  tokensPerSecEnabled: boolean;
+}) {
   const generate = entry.generate;
   const hasReasoning =
-    generate != null && generate.reasoningTokens != null && generate.reasoningTokens > 0;
+    generate !== null &&
+    generate.reasoningTokens !== null &&
+    generate.reasoningTokens !== undefined &&
+    generate.reasoningTokens > 0;
   const errorCount = entry.toolCalls.filter((toolCall) => toolCall.error).length;
 
   return (
@@ -420,8 +493,18 @@ function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
       <div className="ml-4 mb-4 space-y-3">
         {generate && (
           <div className="rounded-md border border-sand-100 bg-sand-50/70 p-3">
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
               <CompactMetric label="Duration" value={formatDurationMs(generate.durationMs)} />
+              <CompactMetric label="TTFT" value={formatDurationMs(generate.ttftMs)} />
+              <CompactMetric
+                label="Tokens/sec"
+                value={formatTokensPerSec(
+                  generate.outputTokens,
+                  generate.durationMs,
+                  generate.ttftMs,
+                  tokensPerSecEnabled,
+                )}
+              />
               <CompactMetric label="Input" value={formatNum(generate.inputTokens ?? 0)} />
               <CompactMetric label="Output" value={formatNum(generate.outputTokens ?? 0)} />
               <CompactMetric label="Cache Read" value={formatNum(generate.cacheReadTokens ?? 0)} />
@@ -431,7 +514,11 @@ function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
               />
               <CompactMetric
                 label="Reasoning"
-                value={generate.reasoningTokens != null ? formatNum(generate.reasoningTokens) : "—"}
+                value={
+                  generate.reasoningTokens !== null && generate.reasoningTokens !== undefined
+                    ? formatNum(generate.reasoningTokens)
+                    : "—"
+                }
               />
             </div>
 
@@ -454,14 +541,24 @@ function StepTreeItem({ entry }: { entry: StepTreeEntry }) {
   );
 }
 
-function StepTreeSection({ steps }: { steps: StepTreeEntry[] }) {
+function StepTreeSection({
+  steps,
+  tokensPerSecEnabled,
+}: {
+  steps: StepTreeEntry[];
+  tokensPerSecEnabled: boolean;
+}) {
   const toolCallCount = steps.reduce((sum, step) => sum + step.toolCalls.length, 0);
 
   return (
     <Section title={`Steps (${steps.length} steps · ${toolCallCount} tool calls)`} defaultOpen>
       <div className="space-y-1">
         {steps.map((step) => (
-          <StepTreeItem key={step.stepIndex} entry={step} />
+          <StepTreeItem
+            key={step.stepIndex}
+            entry={step}
+            tokensPerSecEnabled={tokensPerSecEnabled}
+          />
         ))}
       </div>
     </Section>
@@ -490,6 +587,7 @@ function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
         cacheReadTokens: step.cache_read_tokens,
         cacheCreationTokens: step.cache_creation_tokens,
         durationMs: step.duration_ms,
+        ttftMs: step.ttft_ms,
         finishReason: step.finish_reason,
         reasoningTokens: step.reasoning_tokens,
       };
@@ -562,7 +660,7 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
             <div className="text-[10px] uppercase tracking-wider text-sand-500 font-medium mb-1">
               {historyItemLabel(item)}
             </div>
-            {item.content != null && (
+            {item.content !== null && item.content !== undefined && (
               <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
                 {extractText(item.content)}
               </pre>
@@ -623,6 +721,7 @@ function RequestDetail({ id }: { id: number }) {
   const stepTree = buildStepTree(steps);
   const toolCalls = stepTree.flatMap((step) => step.toolCalls);
   const hasSteps = stepTree.length > 0;
+  const tokensPerSecEnabled = isTokensPerSecEnabled(data);
   const history = data.history ?? null;
   const hasHistory = history !== null && history.length > 0;
 
@@ -663,7 +762,7 @@ function RequestDetail({ id }: { id: number }) {
         <div className="flex gap-4 items-start">
           <div className="flex-1 min-w-0">{promptSections}</div>
           <div className="flex-1 min-w-0 space-y-4">
-            <StepTreeSection steps={stepTree} />
+            <StepTreeSection steps={stepTree} tokensPerSecEnabled={tokensPerSecEnabled} />
           </div>
         </div>
       ) : (

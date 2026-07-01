@@ -2,15 +2,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QgridFrame } from "./qgrid.frame";
 
-const { findOneMock, saveMock } = vi.hoisted(() => ({
+const { findOneMock, saveMock, requestLogSaveMock, dispatcherQueryMock } = vi.hoisted(() => ({
   findOneMock: vi.fn(),
   saveMock: vi.fn(),
+  requestLogSaveMock: vi.fn(),
+  dispatcherQueryMock: vi.fn(),
+}));
+
+vi.mock("../request-log/request-log.model", () => ({
+  MICRO_USD: 1_000_000,
+  RequestLogModel: {
+    save: requestLogSaveMock,
+  },
 }));
 
 vi.mock("../token/token.model", () => ({
   TokenModel: {
     findOne: findOneMock,
     save: saveMock,
+  },
+}));
+
+vi.mock("./qgrid.dispatcher", () => ({
+  QgridDispatcher: {
+    query: dispatcherQueryMock,
   },
 }));
 
@@ -35,6 +50,9 @@ describe("QgridFrame.updateToken", () => {
     findOneMock.mockReset();
     saveMock.mockReset();
     saveMock.mockResolvedValue([1]);
+    requestLogSaveMock.mockReset();
+    requestLogSaveMock.mockResolvedValue([1]);
+    dispatcherQueryMock.mockReset();
   });
 
   it("rejects quota thresholds outside TokenSaveParams bounds before saving", async () => {
@@ -58,6 +76,53 @@ describe("QgridFrame.updateToken", () => {
         name: "tok-A",
         quota_threshold: 80,
       }),
+    ]);
+  });
+});
+
+describe("QgridFrame.query auto logging", () => {
+  beforeEach(() => {
+    requestLogSaveMock.mockReset();
+    requestLogSaveMock.mockResolvedValue([1]);
+    dispatcherQueryMock.mockReset();
+  });
+
+  function queryOutput(ttftMs: number) {
+    return {
+      text: "hello",
+      content: [{ type: "text", text: "hello" }],
+      finishReason: "stop",
+      tokenName: "tok-A",
+      model: "gpt-5-codex",
+      usage: {
+        input_tokens: 5,
+        output_tokens: 7,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      durationMs: 120,
+      ttftMs,
+      costUsd: 0.001,
+    };
+  }
+
+  it("persists auto request ttft_ms from QueryOutput", async () => {
+    dispatcherQueryMock.mockResolvedValueOnce(queryOutput(39));
+
+    await QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex", logMode: "auto" });
+
+    expect(requestLogSaveMock).toHaveBeenCalledWith([
+      expect.objectContaining({ duration_ms: 120, ttft_ms: 39 }),
+    ]);
+  });
+
+  it("persists auto request ttft_ms zero when no first-token timing is available", async () => {
+    dispatcherQueryMock.mockResolvedValueOnce(queryOutput(0));
+
+    await QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex", logMode: "auto" });
+
+    expect(requestLogSaveMock).toHaveBeenCalledWith([
+      expect.objectContaining({ ttft_ms: 0 }),
     ]);
   });
 });

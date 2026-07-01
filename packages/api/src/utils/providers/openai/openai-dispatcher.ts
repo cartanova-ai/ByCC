@@ -483,6 +483,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       tokenName: worker.tokenName,
       usage: result.usage,
       durationMs: result.durationMs,
+      ttftMs: result.ttftMs,
       model: result.model,
       threadCoord: {
         workerId: makeWorkerId(worker.tokenId, worker.workerIndex),

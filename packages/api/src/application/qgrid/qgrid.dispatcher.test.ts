@@ -335,4 +335,20 @@ describe("QgridDispatcherClass", () => {
     expect(result.costUsd).toBe(0.123456);
     expect(result.usage.cache_creation_input_tokens).toBe(600);
   });
+
+  it("provider ttftMs 를 QueryOutput.ttftMs 로 매핑하고 누락 값은 0 으로 둔다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(providerResult({ ttftMs: 37 }))
+      .mockResolvedValueOnce(providerResult());
+    dispatcher.openaiDispatcher = { generate } as never;
+
+    await expect(
+      dispatcher.query({ prompt: "hi", model: "openai/gpt-5.5" }),
+    ).resolves.toMatchObject({ ttftMs: 37 });
+    await expect(
+      dispatcher.query({ prompt: "hi", model: "openai/gpt-5.5" }),
+    ).resolves.toMatchObject({ ttftMs: 0 });
+  });
 });

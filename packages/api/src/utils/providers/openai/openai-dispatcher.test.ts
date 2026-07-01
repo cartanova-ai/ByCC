@@ -377,6 +377,42 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     expect(executeTurn).toHaveBeenCalledWith(worker, expect.anything(), "thread-1");
   });
 
+  it("passes worker ttftMs into GenerateResult", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "tok-A" });
+    const usage = {
+      totalTokens: 12,
+      inputTokens: 5,
+      cachedInputTokens: 0,
+      outputTokens: 7,
+      reasoningOutputTokens: 0,
+    };
+    (
+      worker as unknown as {
+        executeTurn: () => Promise<{
+          text: string;
+          usage: typeof usage;
+          durationMs: number;
+          ttftMs: number | null;
+          model: string;
+          threadId: string;
+        }>;
+      }
+    ).executeTurn = vi.fn(async () => ({
+      text: "ok",
+      usage,
+      durationMs: 80,
+      ttftMs: 11,
+      model: "gpt-5-codex",
+      threadId: "thread-1",
+    }));
+
+    const result = await dispatcher.executeTurn(worker, baseReq());
+
+    expect(result.ttftMs).toBe(11);
+    expect(result.threadCoord?.threadId).toBe("thread-1");
+  });
+
   it("throws typed error when reuse is over threshold and no cold tokenId is eligible", async () => {
     const dispatcher = new OpenAIDispatcher();
     const worker = fakeWorker({ tokenId: 1, tokenName: "tok-A", threads: ["thread-1"] });

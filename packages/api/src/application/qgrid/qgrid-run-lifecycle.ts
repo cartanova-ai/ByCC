@@ -85,6 +85,7 @@ export async function afterQuery(
     cache_read_tokens: result.usage.cache_read_input_tokens,
     cache_creation_tokens: result.usage.cache_creation_input_tokens,
     duration_ms: result.durationMs,
+    ttft_ms: result.ttftMs,
     finish_reason: result.finishReason,
   });
 

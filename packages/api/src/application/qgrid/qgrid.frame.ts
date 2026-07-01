@@ -151,6 +151,7 @@ class QgridFrameClass extends BaseFrameClass {
         cache_read_tokens: result.usage.cache_read_input_tokens,
         cache_creation_tokens: result.usage.cache_creation_input_tokens,
         duration_ms: result.durationMs,
+        ttft_ms: result.ttftMs,
         cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
         effort: args.effort ?? null,
         // malformed history가 와도 성공한 턴(특히 stream sse.end())을 깨지 않도록 방어.
@@ -305,6 +306,7 @@ class QgridFrameClass extends BaseFrameClass {
       cache_read_tokens: input.cacheReadTokens,
       cache_creation_tokens: input.cacheCreationTokens,
       duration_ms: input.durationMs,
+      ttft_ms: input.ttftMs ?? null,
       finish_reason: input.finishReason,
       reasoning_text: input.reasoningText,
       reasoning_tokens: input.reasoningTokens,

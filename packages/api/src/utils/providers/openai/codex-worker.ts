@@ -10,6 +10,7 @@ import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageB
 import { type TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
 import { type TurnStartResponse } from "../../../codex-protocol/v2/TurnStartResponse";
 import { type StreamCallbacks as CommonStreamCallbacks } from "../common/provider-dispatcher";
+import { createTtftTracker } from "../common/ttft";
 import { CodexRpcClient } from "./codex-rpc";
 
 const logger = getLogger(["qgrid", "codex-worker"]);
@@ -44,6 +45,7 @@ export interface TurnResult {
   text: string;
   usage: TokenUsageBreakdown;
   durationMs: number;
+  ttftMs: number | null;
   model: string;
 }
 
@@ -387,8 +389,17 @@ export class CodexAppServerWorker {
     } else {
       ({ threadId, model } = await this.createThread(req));
     }
-    await this.startTurnOnThread(threadId, req);
-    const result = await this.consumeTurnNotifications(threadId, model);
+    const ttftTracker = createTtftTracker();
+    const resultPromise = this.consumeTurnNotifications(threadId, model, ttftTracker);
+    try {
+      ttftTracker.markStart();
+      await this.startTurnOnThread(threadId, req);
+    } catch (e) {
+      this.failActiveTurn(e as Error);
+      await resultPromise.catch(() => {});
+      throw e;
+    }
+    const result = await resultPromise;
     return { ...result, threadId };
   }
 
@@ -405,10 +416,20 @@ export class CodexAppServerWorker {
     } else {
       ({ threadId, model } = await this.createThread(req));
     }
-    const { turnId } = await this.startTurnOnThread(threadId, req);
     cb.onThreadId?.(threadId);
+    const ttftTracker = createTtftTracker();
+    const resultPromise = this.consumeStreamNotifications(threadId, model, cb, ttftTracker);
+    let turnId: string;
+    try {
+      ttftTracker.markStart();
+      ({ turnId } = await this.startTurnOnThread(threadId, req));
+    } catch (e) {
+      this.failActiveTurn(e as Error);
+      await resultPromise.catch(() => {});
+      throw e;
+    }
     cb.onTurnId?.(turnId);
-    await this.consumeStreamNotifications(threadId, model, cb);
+    await resultPromise;
     return { threadId };
   }
 
@@ -456,7 +477,11 @@ export class CodexAppServerWorker {
     abort?.(error);
   }
 
-  private consumeTurnNotifications(threadId: string, model: string): Promise<TurnResult> {
+  private consumeTurnNotifications(
+    threadId: string,
+    model: string,
+    ttftTracker = createTtftTracker(),
+  ): Promise<TurnResult> {
     return new Promise<TurnResult>((resolve, reject) => {
       let settled = false;
       let abort: ActiveTurnAbort;
@@ -510,6 +535,12 @@ export class CodexAppServerWorker {
         if (p.item.type === "agentMessage") text = p.item.text;
       });
 
+      this.rpc!.onNotification("item/agentMessage/delta", (p) => {
+        if (p.threadId !== threadId) return;
+        ttftTracker.recordFirstDelta();
+        text += p.delta;
+      });
+
       this.rpc!.onNotification("thread/tokenUsage/updated", (p) => {
         if (p.threadId !== threadId) return;
         // thread 재사용 시 .total 은 대화 전체 누적이라, cold 였던 이전 turn 까지 섞여
@@ -521,8 +552,11 @@ export class CodexAppServerWorker {
       this.rpc!.onNotification("turn/completed", (p) => {
         if (p.threadId !== threadId) return;
         durationMs = p.turn.durationMs ?? 0;
-        if (p.turn.status === "completed") finishWithResult({ text, usage, durationMs, model });
-        else finishWithError(new Error(`turn failed: ${JSON.stringify(p.turn.error)}`));
+        if (p.turn.status === "completed") {
+          finishWithResult({ text, usage, durationMs, ttftMs: ttftTracker.value(), model });
+        } else {
+          finishWithError(new Error(`turn failed: ${JSON.stringify(p.turn.error)}`));
+        }
       });
 
       this.rpc!.onNotification("error", (p) => {
@@ -538,6 +572,7 @@ export class CodexAppServerWorker {
     threadId: string,
     model: string,
     cb: StreamCallbacks,
+    ttftTracker = createTtftTracker(),
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -590,6 +625,7 @@ export class CodexAppServerWorker {
 
       this.rpc!.onNotification("item/agentMessage/delta", (p) => {
         if (p.threadId !== threadId) return;
+        ttftTracker.recordFirstDelta();
         text += p.delta;
         cb.onDelta(p.delta);
       });
@@ -610,7 +646,13 @@ export class CodexAppServerWorker {
       this.rpc!.onNotification("turn/completed", (p) => {
         if (p.threadId !== threadId) return;
         if (p.turn.status === "completed") {
-          finishWithComplete({ text, usage, durationMs: p.turn.durationMs ?? 0, model });
+          finishWithComplete({
+            text,
+            usage,
+            durationMs: p.turn.durationMs ?? 0,
+            ttftMs: ttftTracker.value(),
+            model,
+          });
         } else {
           finishWithError(new Error(`turn ${p.turn.status}: ${JSON.stringify(p.turn.error)}`));
         }

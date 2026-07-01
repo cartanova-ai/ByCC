@@ -21,6 +21,7 @@ import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import { createTtftTracker } from "../common/ttft";
 import {
   ANTHROPIC_CLAUDE_CWD,
   anthropicConfigDir,
@@ -111,6 +112,7 @@ export interface ClaudeSessionRequest {
 export interface ClaudeSessionResult extends ClaudeStreamResult {
   sessionId: string;
   workerId: number;
+  ttftMs: number | null;
 }
 
 // per-token CLAUDE_CONFIG_DIR 보장(격리). 경로 규칙은 anthropicConfigDir(순수 함수)이 소유 —
@@ -305,6 +307,8 @@ export function runClaudeSession(
       let settled = false;
       let buffer = "";
       const streamState: ClaudeStreamJsonState = {};
+      const ttftTracker = createTtftTracker();
+      const onTrackedDelta = ttftTracker.wrapDelta(onDelta);
       // bounded stderr 버퍼(최근 ~4KB만 유지 — 무한 누적 방지).
       let stderrBuf = "";
       const STDERR_CAP = 4096;
@@ -339,7 +343,7 @@ export function runClaudeSession(
         clearTimeout(timer);
         cleanupAbort?.();
         cleanupSpawnFiles();
-        resolve({ ...result, sessionId, workerId });
+        resolve({ ...result, sessionId, workerId, ttftMs: ttftTracker.value() });
       };
 
       const onAbort = () => {
@@ -360,7 +364,7 @@ export function runClaudeSession(
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          const result = handleStreamJsonLine(line, onDelta, {
+          const result = handleStreamJsonLine(line, onTrackedDelta, {
             structuredOutput: useStructured,
             state: streamState,
           });
@@ -389,6 +393,7 @@ export function runClaudeSession(
       });
 
       // stdin 으로 입력 JSONL 흘리고 닫는다.
+      ttftTracker.markStart();
       child.stdin?.write(stdinPayload);
       child.stdin?.end();
     });

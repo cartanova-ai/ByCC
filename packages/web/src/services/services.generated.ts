@@ -501,6 +501,7 @@ export namespace QgridService {
             cache_read_input_tokens: number;
           };
           durationMs: number;
+          ttftMs: number;
           costUsd: number;
           content:
             | {
@@ -551,6 +552,7 @@ export namespace QgridService {
           cache_read_input_tokens: number;
         };
         durationMs: number;
+        ttftMs: number;
         costUsd: number;
         content:
           | {
