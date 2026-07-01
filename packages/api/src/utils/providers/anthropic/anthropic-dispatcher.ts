@@ -42,6 +42,18 @@ interface PooledToken {
   quotaThreshold?: number | null;
 }
 
+function quotaThresholdExceededMessage(
+  provider: string,
+  tokens: Array<{ tokenName: string; threshold: number }>,
+): string {
+  const details = tokens
+    .map((token) => `${token.tokenName} (threshold ${token.threshold}%)`)
+    .join(", ");
+  return details.length > 0
+    ? `All ${provider} tokens exceeded quota threshold: ${details}`
+    : `All ${provider} tokens exceeded quota threshold`;
+}
+
 export class AnthropicDispatcher implements ProviderDispatcher {
   // tokenId → 풀 항목. start()/token 이벤트로 채움
   private tokenPool = new Map<number, PooledToken>();
@@ -138,15 +150,18 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   private async selectToken(): Promise<PooledToken | null> {
     const rows = [...this.tokenPool.values()];
     if (rows.length === 0) return null;
-    const eligible = await this.filterEligibleTokens(rows);
+    const { eligible, overThresholdTokens } = await this.filterEligibleTokens(rows);
     if (eligible.length === 0) {
       logger.warn("quota_threshold gate: all_exceeded", {
         provider: "anthropic",
         tokenCount: rows.length,
         thresholdedTokenCount: rows.filter((r) => this.hasQuotaThreshold(r)).length,
+        overThresholdTokens,
         reason: "all_exceeded",
       });
-      throw new QuotaThresholdExceededError("All anthropic tokens exceeded quota threshold");
+      throw new QuotaThresholdExceededError(
+        quotaThresholdExceededMessage("anthropic", overThresholdTokens),
+      );
     }
 
     const minCount = Math.min(...eligible.map((r) => this.countOf(r.id)));
@@ -157,13 +172,17 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     return this.charge(picked);
   }
 
-  private async filterEligibleTokens(rows: PooledToken[]): Promise<PooledToken[]> {
+  private async filterEligibleTokens(rows: PooledToken[]): Promise<{
+    eligible: PooledToken[];
+    overThresholdTokens: Array<{ tokenName: string; threshold: number }>;
+  }> {
     const thresholded = rows.filter((token) => this.hasQuotaThreshold(token));
-    if (thresholded.length === 0) return rows;
+    if (thresholded.length === 0) return { eligible: rows, overThresholdTokens: [] };
 
     const eligibleIds = new Set(
       rows.filter((token) => !this.hasQuotaThreshold(token)).map((token) => token.id),
     );
+    const overThresholdTokens: Array<{ tokenName: string; threshold: number }> = [];
     const checks = await Promise.allSettled(
       thresholded.map(async (token) => ({
         token,
@@ -190,13 +209,14 @@ export class AnthropicDispatcher implements ProviderDispatcher {
 
       if (result.utilizationPct >= token.quotaThreshold) {
         this.logQuotaOverThreshold(token, result);
+        overThresholdTokens.push({ tokenName: token.name, threshold: token.quotaThreshold });
         return;
       }
 
       eligibleIds.add(token.id);
     });
 
-    return rows.filter((token) => eligibleIds.has(token.id));
+    return { eligible: rows.filter((token) => eligibleIds.has(token.id)), overThresholdTokens };
   }
 
   private hasQuotaThreshold(token: PooledToken): token is PooledToken & { quotaThreshold: number } {

@@ -53,6 +53,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function quotaThresholdExceededMessage(
+  provider: string,
+  tokens: Array<{ tokenName: string; threshold: number }>,
+): string {
+  const details = tokens
+    .map((token) => `${token.tokenName} (threshold ${token.threshold}%)`)
+    .join(", ");
+  return details.length > 0
+    ? `All ${provider} tokens exceeded quota threshold: ${details}`
+    : `All ${provider} tokens exceeded quota threshold`;
+}
+
 type QueueItem = {
   resolve: (worker: CodexAppServerWorker) => void;
   reject: (error: Error) => void;
@@ -69,6 +81,7 @@ type TokenMetadata = {
 type TokenEligibility = {
   readyActiveTokenIds: Set<number>;
   eligibleTokenIds: Set<number>;
+  overThresholdTokens: Array<{ tokenName: string; threshold: number }>;
   thresholdedTokenCount: number;
 };
 
@@ -624,6 +637,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     const readyActiveTokenIds = new Set(byToken.keys());
     const eligibleTokenIds = new Set<number>();
+    const overThresholdTokens: Array<{ tokenName: string; threshold: number }> = [];
     let thresholdedTokenCount = 0;
 
     const entries = Array.from(byToken.entries());
@@ -631,14 +645,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       entries.map(async ([tokenId, tokenName]) => {
         if (excludedTokenIds.has(tokenId)) {
           thresholdedTokenCount++;
-          return { tokenId, eligible: false };
+          return { tokenId, tokenName, eligible: false };
         }
         if (!this.hasQuotaThreshold(tokenId)) {
-          return { tokenId, eligible: true };
+          return { tokenId, tokenName, eligible: true };
         }
         thresholdedTokenCount++;
         return {
           tokenId,
+          tokenName,
           eligible: await this.isTokenQuotaEligible(tokenId, tokenName),
         };
       }),
@@ -646,7 +661,14 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     checks.forEach((check, index) => {
       if (check.status === "fulfilled") {
-        if (check.value.eligible) eligibleTokenIds.add(check.value.tokenId);
+        if (check.value.eligible) {
+          eligibleTokenIds.add(check.value.tokenId);
+        } else {
+          const threshold = this.getQuotaThreshold(check.value.tokenId);
+          if (threshold !== undefined && threshold !== null) {
+            overThresholdTokens.push({ tokenName: check.value.tokenName, threshold });
+          }
+        }
         return;
       }
 
@@ -658,7 +680,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       }
     });
 
-    return { readyActiveTokenIds, eligibleTokenIds, thresholdedTokenCount };
+    return { readyActiveTokenIds, eligibleTokenIds, overThresholdTokens, thresholdedTokenCount };
   }
 
   private async isWorkerEligibleForQueueItem(
@@ -736,9 +758,12 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       provider: "openai",
       tokenCount: eligibility.readyActiveTokenIds.size,
       thresholdedTokenCount: eligibility.thresholdedTokenCount,
+      overThresholdTokens: eligibility.overThresholdTokens,
       reason: "all_exceeded",
     });
-    throw new QuotaThresholdExceededError("All openai tokens exceeded quota threshold");
+    throw new QuotaThresholdExceededError(
+      quotaThresholdExceededMessage("openai", eligibility.overThresholdTokens),
+    );
   }
 
   // ── Browser login flow ───────────────────────────────────────────

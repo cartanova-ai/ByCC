@@ -296,6 +296,9 @@ describe("AnthropicDispatcher", () => {
 
     expect(error).toBeInstanceOf(QuotaThresholdExceededError);
     expect(error).toMatchObject({ code: "QUOTA_THRESHOLD_EXCEEDED" });
+    expect(error.message).toBe(
+      "All anthropic tokens exceeded quota threshold: tok-A (threshold 80%), tok-B (threshold 90%)",
+    );
   });
 
   it("minCount 는 초과 토큰을 제외한 eligible 집합에서 계산한다", async () => {

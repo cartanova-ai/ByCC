@@ -275,8 +275,12 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     await dispatcher.onTokenUpdated(1, "tok-A", credentials(), 80);
     readOpenAIQuotaUsageMock.mockResolvedValueOnce(quotaOk(90));
 
-    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
-      QuotaThresholdExceededError,
+    const error = await dispatcher.acquireIdleWorker().catch((e) => e);
+
+    expect(error).toBeInstanceOf(QuotaThresholdExceededError);
+    expect(error).toMatchObject({ code: "QUOTA_THRESHOLD_EXCEEDED" });
+    expect(error.message).toBe(
+      "All openai tokens exceeded quota threshold: tok-A (threshold 80%)",
     );
   });
 
