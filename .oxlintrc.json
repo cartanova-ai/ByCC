@@ -37,9 +37,17 @@
     "dist/**",
     "build/**",
     "node_modules/**",
-    "**/*.gen.ts",
-    "**/*.generated.ts",
-    "**/*.generated.tsx",
+    "**/e2e/**",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "packages/api/src/codex-protocol/**",
+    "**/*.gen.*",
+    "**/*.generated.*",
+    "**/sonamu.shared.ts",
+    "**/sonamu.lock",
     "**/*.d.ts"
   ]
 }
