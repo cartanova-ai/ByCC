@@ -22,6 +22,13 @@ export interface ReuseThreadCoord {
   epoch: number;
 }
 
+// provider-무관 이미지 결과. OpenAI(codex) 경로에서만 채워지며, 상위(qgrid.dispatcher)가
+// content 파트로 전파한다. Anthropic 경로는 이 필드를 채우지 않는다.
+export interface GeneratedImage {
+  data: string; // base64 PNG
+  revisedPrompt: string | null;
+}
+
 export interface GenerateRequest {
   // 미지정이면 dispatcher 가 provider 별 default 를 적용한다(Anthropic: ANTHROPIC_DEFAULT_MODEL).
   // OpenAI 경로는 항상 prefix split 후 canonical model 을 넘기므로 영향 없음.
@@ -42,6 +49,9 @@ export interface GenerateRequest {
   // coldInput + coldHistory 로 폴백한다(전체 history 로 문맥 복구).
   reuse?: ReuseThreadCoord;
   reuseInput?: Array<UserInput>;
+  // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in).
+  // 이 플래그가 있으면 dispatcher 는 항상 cold thread 로 실행하고 재사용 라우팅을 건너뛴다.
+  imageGeneration?: boolean;
 }
 
 export interface GenerateResult {
@@ -56,6 +66,8 @@ export interface GenerateResult {
   model: string;
   // 이번 turn 이 사용한 thread 좌표. 상위가 conv 핸들을 발급/갱신하는 데 쓴다.
   threadCoord: ReuseThreadCoord;
+  // 이미지 turn 에서만 채워짐(OpenAI 경로). 완성 이미지가 없으면 undefined.
+  images?: GeneratedImage[];
 }
 
 // 스트림 콜백 컨테이너. 계층별로 onComplete payload 만 다르고, 스트림 이벤트 shape 는 동일하다.

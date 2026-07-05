@@ -4,7 +4,7 @@ import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.ty
 import { type OpenAICredentials } from "../../../application/token/token.types";
 import { type GenerateRequest, type GenerateResult } from "../common/provider-dispatcher";
 import { type CodexAppServerWorker } from "./codex-worker";
-import { OpenAIDispatcher } from "./openai-dispatcher";
+import { ImageGenerationError, OpenAIDispatcher } from "./openai-dispatcher";
 import { type OpenAIQuotaUsageResult } from "./openai-quota";
 
 const { readOpenAIQuotaUsageMock, loggerInfoMock, loggerWarnMock } = vi.hoisted(() => ({
@@ -91,6 +91,10 @@ function fakeWorker(
         threads?: string[];
         epoch?: number;
         rateLimits?: unknown;
+        // 이미지 게이트/생성 mock. imageGateReason 이 있으면 checkImageGenerationSupport 가
+        // 그 사유를 반환(불가), null 이면 통과. imageTurnResult 로 worker.executeTurn 반환값 지정.
+        imageGateReason?: string | null;
+        imageTurnResult?: { images?: Array<{ data: string; revisedPrompt: string | null }>; imageAttempted?: boolean };
       },
 ): CodexAppServerWorker {
   const options =
@@ -120,6 +124,17 @@ function fakeWorker(
     getRateLimits: vi.fn(
       async () => options.rateLimits ?? { rateLimits: {}, rateLimitsByLimitId: null },
     ),
+    checkImageGenerationSupport: vi.fn(async () => options.imageGateReason ?? null),
+    executeTurn: vi.fn(async () => ({
+      text: "ok",
+      usage: { totalTokens: 1, inputTokens: 1, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+      durationMs: 10,
+      ttftMs: null,
+      model: "gpt-5-codex",
+      threadId: "thread-new",
+      images: options.imageTurnResult?.images,
+      imageAttempted: options.imageTurnResult?.imageAttempted,
+    })),
   } as unknown as CodexAppServerWorker;
   return worker;
 }
@@ -427,5 +442,66 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     await expect(
       dispatcher.generate(baseReq({ reuse: { workerId: 10, threadId: "thread-1", epoch: 1 } })),
     ).rejects.toBeInstanceOf(QuotaThresholdExceededError);
+  });
+});
+
+describe("OpenAIDispatcher image generation gate and failure classification", () => {
+  it("throws a gate error without running the turn when capability is unsupported", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ imageGateReason: "provider does not support image generation" });
+
+    await expect(
+      dispatcher.executeTurn(worker, baseReq({ imageGeneration: true })),
+    ).rejects.toMatchObject({ kind: "gate" });
+    // 게이트 실패 시 turn 은 실행되지 않는다.
+    expect((worker as unknown as { executeTurn: ReturnType<typeof vi.fn> }).executeTurn).not.toHaveBeenCalled();
+  });
+
+  it("throws a gate error for a non-multimodal model", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ imageGateReason: "model gpt-x is not multimodal (no image input modality)" });
+
+    await expect(
+      dispatcher.executeTurn(worker, baseReq({ imageGeneration: true, model: "gpt-x" })),
+    ).rejects.toBeInstanceOf(ImageGenerationError);
+  });
+
+  it("classifies zero images with no tool call as not_called (retry futile)", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ imageGateReason: null, imageTurnResult: { imageAttempted: false } });
+
+    await expect(
+      dispatcher.executeTurn(worker, baseReq({ imageGeneration: true })),
+    ).rejects.toMatchObject({ kind: "not_called" });
+  });
+
+  it("classifies zero images after an attempt as incomplete (retry candidate)", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ imageGateReason: null, imageTurnResult: { imageAttempted: true } });
+
+    await expect(
+      dispatcher.executeTurn(worker, baseReq({ imageGeneration: true })),
+    ).rejects.toMatchObject({ kind: "incomplete" });
+  });
+
+  it("passes an image result through without gating a valid request", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({
+      imageGateReason: null,
+      imageTurnResult: { images: [{ data: "iVBORw0KGgoBAgM", revisedPrompt: "a cat" }], imageAttempted: true },
+    });
+
+    const result = await dispatcher.executeTurn(worker, baseReq({ imageGeneration: true }));
+    expect(result.images).toHaveLength(1);
+    expect(result.images?.[0]?.revisedPrompt).toBe("a cat");
+  });
+
+  it("does not gate or classify a normal text request", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ imageTurnResult: {} });
+
+    const result = await dispatcher.executeTurn(worker, baseReq());
+    expect(result.text).toBe("ok");
+    expect((worker as unknown as { checkImageGenerationSupport: ReturnType<typeof vi.fn> }).checkImageGenerationSupport).not.toHaveBeenCalled();
   });
 });

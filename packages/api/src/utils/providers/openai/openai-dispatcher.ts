@@ -28,6 +28,22 @@ import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
 
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
 
+// 이미지 생성 요청이 게이트/생성에 실패했을 때의 구분자.
+// - "gate": 사전 검증 실패(capability/모델 멀티모달 불충족) — turn 미실행.
+// - "not_called": turn 은 성공했으나 모델이 image tool 을 호출 안 함 — 재시도 무익(프롬프트 문제).
+// - "incomplete": tool 시도됐으나 완성 이미지 미도착 — 재시도 후보(서버측 실패/거부).
+export type ImageFailureKind = "gate" | "not_called" | "incomplete";
+
+export class ImageGenerationError extends Error {
+  constructor(
+    readonly kind: ImageFailureKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ImageGenerationError";
+  }
+}
+
 const DEFAULT_EFFORT = "low";
 const MAX_WORKERS_PER_TOKEN = 5;
 const WORKERS_PER_TOKEN = Math.min(
@@ -481,6 +497,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       verbosity: req.verbosity,
       reasoningSummary: req.reasoningSummary,
       serviceTier: req.serviceTier,
+      imageGeneration: req.imageGeneration,
     };
   }
 
@@ -489,8 +506,23 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     req: GenerateRequest,
     reuseThreadId?: string,
   ): Promise<GenerateResult> {
+    // 이미지 요청 사전 게이트(R5): 배정된 worker 의 capability + 적용 모델 멀티모달.
+    // 불충족이면 turn 을 실행하지 않고 명시적 에러.
+    if (req.imageGeneration) {
+      const reason = await worker.checkImageGenerationSupport(req.model);
+      if (reason) throw new ImageGenerationError("gate", reason);
+    }
+
     const turnReq = this.buildTurnRequest(req, reuseThreadId);
     const result = await worker.executeTurn(turnReq, reuseThreadId);
+
+    // 이미지 0개 실패 분류(R6): tool 미호출(재시도 무익) vs 시도 후 미완성(재시도 후보).
+    if (req.imageGeneration && (!result.images || result.images.length === 0)) {
+      throw result.imageAttempted
+        ? new ImageGenerationError("incomplete", "image tool ran but produced no completed image")
+        : new ImageGenerationError("not_called", "model did not call the image_generation tool");
+    }
+
     return {
       text: result.text,
       tokenName: worker.tokenName,
@@ -503,6 +535,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         threadId: result.threadId,
         epoch: worker.epoch,
       },
+      images: result.images,
     };
   }
 

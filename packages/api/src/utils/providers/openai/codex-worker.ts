@@ -3,6 +3,9 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
+import { type Model } from "../../../codex-protocol/v2/Model";
+import { type ModelListResponse } from "../../../codex-protocol/v2/ModelListResponse";
+import { type ModelProviderCapabilitiesReadResponse } from "../../../codex-protocol/v2/ModelProviderCapabilitiesReadResponse";
 import { type ThreadInjectItemsParams } from "../../../codex-protocol/v2/ThreadInjectItemsParams";
 import { type ThreadStartParams } from "../../../codex-protocol/v2/ThreadStartParams";
 import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStartResponse";
@@ -144,6 +147,10 @@ export class CodexAppServerWorker {
   private epochCounter = 0;
   private static readonly THREAD_IDLE_TTL_MS = 10 * 60_000;
   private static readonly MAX_THREADS_PER_WORKER = 16;
+  // 이미지 게이트 검증용 캐시. spawn 단위로 무효화(restart 시 clear).
+  // capability 는 provider 단위 boolean, 모델 멀티모달 여부는 model/list 로 확인.
+  private cachedCapabilities?: ModelProviderCapabilitiesReadResponse;
+  private cachedModels?: Map<string, Model>;
 
   constructor(private config: WorkerConfig) {
     const suffix = config.workerIndex !== undefined ? `-${config.workerIndex}` : "";
@@ -156,6 +163,9 @@ export class CodexAppServerWorker {
     // 새 codex 프로세스 → 기존 ephemeral thread 전부 무효. epoch 증가로 stale 감지.
     this.epochCounter++;
     this.threadMeta.clear();
+    // 새 프로세스 → capability/model 캐시 무효(로그인 계정/버전이 바뀌었을 수 있음).
+    this.cachedCapabilities = undefined;
+    this.cachedModels = undefined;
     const cwd = `${this.codexHome}/cwd`;
     mkdirSync(cwd, { recursive: true });
     // codex 내장 tool/web_search/instruction 블록 비활성화
@@ -319,6 +329,49 @@ export class CodexAppServerWorker {
   async getRateLimits(): Promise<unknown> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
     return this.rpc.request("account/rateLimits/read", {});
+  }
+
+  // ── Image generation gate ───────────────────────────────────────
+  // 이미지 tool 은 codex 에서 (AuthMode::Chatgpt) AND (image_generation feature)
+  // AND (모델 멀티모달) 3중 게이트다. qgrid 는 OAuth 전용이고 feature 는 thread 에서
+  // 켜므로, dispatcher 가 사전 검증할 남은 조건은 capability(provider) + 모델 멀티모달이다.
+
+  private async loadCapabilities(): Promise<ModelProviderCapabilitiesReadResponse> {
+    if (!this.rpc || !this.ready) throw new Error("worker not ready");
+    if (!this.cachedCapabilities) {
+      this.cachedCapabilities = await this.rpc.request<ModelProviderCapabilitiesReadResponse>(
+        "modelProvider/capabilities/read",
+        {},
+      );
+    }
+    return this.cachedCapabilities;
+  }
+
+  private async loadModels(): Promise<Map<string, Model>> {
+    if (!this.rpc || !this.ready) throw new Error("worker not ready");
+    if (!this.cachedModels) {
+      const res = await this.rpc.request<ModelListResponse>("model/list", {});
+      this.cachedModels = new Map(res.data.map((m) => [m.model, m]));
+    }
+    return this.cachedModels;
+  }
+
+  // 주어진 모델(미지정이면 thread 기본 모델)로 이미지 생성이 가능한지 검증.
+  // 불가 사유를 문자열로 반환하고, 가능하면 null 을 반환한다.
+  async checkImageGenerationSupport(model?: string): Promise<string | null> {
+    if (!this.rpc || !this.ready) return "worker not ready";
+    const caps = await this.loadCapabilities();
+    if (!caps.imageGeneration) return "provider does not support image generation";
+    // 모델 멀티모달 검증. model 미지정이면 provider capability 만으로 통과시키고,
+    // 실제 적용 모델의 멀티모달 여부는 turn 실행 결과(이미지 0개 → U3 실패 분류)가 잡는다.
+    if (model) {
+      const models = await this.loadModels();
+      const info = models.get(model);
+      if (info && !info.inputModalities.includes("image")) {
+        return `model ${model} is not multimodal (no image input modality)`;
+      }
+    }
+    return null;
   }
 
   // ── Server-request delegation ───────────────────────────────────
