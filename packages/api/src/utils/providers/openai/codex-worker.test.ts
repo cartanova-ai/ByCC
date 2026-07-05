@@ -309,3 +309,44 @@ describe("CodexAppServerWorker prompt prefix", () => {
     expect(schemaTurnStart).toEqual(expect.objectContaining({ outputSchema }));
   });
 });
+
+describe("CodexAppServerWorker image generation thread", () => {
+  type WorkerInternals = {
+    createThread(req: unknown): Promise<{ threadId: string; model: string }>;
+  };
+
+  function threadStartParams(spy: ReturnType<typeof createWorkerWithRequestSpy>) {
+    return spy.request.mock.calls.find(([method]) => method === "thread/start")?.[1] as
+      | { baseInstructions?: string; config?: Record<string, unknown> }
+      | undefined;
+  }
+
+  it("enables image_generation feature and swaps base instructions for image requests", async () => {
+    const spy = createWorkerWithRequestSpy();
+    await (spy.worker as unknown as WorkerInternals).createThread({
+      input: [{ type: "text", text: "draw a red circle", text_elements: [] }],
+      imageGeneration: true,
+    });
+
+    const params = threadStartParams(spy);
+    expect(params?.config).toEqual(
+      expect.objectContaining({ "features.image_generation": true }),
+    );
+    // "text only" 억제기가 이미지 허용 instruction 으로 교체돼야 tool 이 실제로 호출된다.
+    expect(params?.baseInstructions).toContain("image_generation tool");
+    expect(params?.baseInstructions).not.toContain("Respond with text only");
+  });
+
+  it("leaves tool config and instructions untouched when the flag is absent", async () => {
+    const spy = createWorkerWithRequestSpy();
+    await (spy.worker as unknown as WorkerInternals).createThread({
+      input: [{ type: "text", text: "hello", text_elements: [] }],
+    });
+
+    const params = threadStartParams(spy);
+    // 회귀 가드: 이미지 플래그 없는 요청은 image_generation override 를 싣지 않고,
+    // 텍스트 전용 instruction 을 유지한다(플래그 없는 경로 무변화).
+    expect(params?.config).not.toHaveProperty("features.image_generation");
+    expect(params?.baseInstructions).toContain("Respond with text only");
+  });
+});

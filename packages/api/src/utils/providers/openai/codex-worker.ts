@@ -39,6 +39,10 @@ export interface TurnRequest {
   verbosity?: string;
   reasoningSummary?: string;
   serviceTier?: string;
+  // 이 turn 에서 codex 내장 image_generation tool 을 켠다.
+  // thread 단위로만 활성화되며(전역 config 는 image_generation=false 유지),
+  // 플래그 없는 요청은 tool 구성이 현행과 동일하다.
+  imageGeneration?: boolean;
 }
 
 export interface TurnResult {
@@ -65,6 +69,12 @@ const THREAD_DEFAULTS = {
 
 const BASE_INSTRUCTIONS =
   "You are a helpful assistant. Do not use any tools such as shell, file operations, or web search. Respond with text only.";
+
+// 이미지 생성 thread 전용 instruction. 기본 BASE_INSTRUCTIONS 의 "text only" 지시가
+// 실질 억제기이므로(codex image_generation feature 는 default-on), 이미지 모드에서는
+// image_generation tool 사용을 명시적으로 허용한다. shell/web 등 나머지 tool 은 여전히 금지.
+const IMAGE_BASE_INSTRUCTIONS =
+  "You are a helpful assistant. When asked to create an image, use the image_generation tool to produce it. Do not use any other tools such as shell, file operations, or web search.";
 
 // codex가 매 요청에 자동 주입하는 내장 tool(shell/web_search/spawn_agent 등 14개)과
 // instruction 블록(permissions/environment_context/skills, ~10KB)을 비활성화
@@ -331,13 +341,17 @@ export class CodexAppServerWorker {
     const threadConfig: ThreadStartParams["config"] = {
       ...THREAD_DEFAULTS.config,
       ...(req.verbosity ? { model_verbosity: req.verbosity } : {}),
+      // 이미지 모드: thread 단위로만 image_generation feature 를 켠다.
+      // 전역 config.toml 은 image_generation=false 유지(텍스트 thread 이중 차단),
+      // dotted CLI-스타일 override 키로 이 thread 에서만 활성화(실측 확인).
+      ...(req.imageGeneration ? { "features.image_generation": true } : {}),
     };
     const { thread, model: threadModel } = await this.rpc.request<ThreadStartResponse>(
       "thread/start",
       {
         ephemeral: true,
         cwd: `${this.codexHome}/cwd`,
-        baseInstructions: BASE_INSTRUCTIONS,
+        baseInstructions: req.imageGeneration ? IMAGE_BASE_INSTRUCTIONS : BASE_INSTRUCTIONS,
         developerInstructions: req.developerInstructions ?? "",
         sandbox: THREAD_DEFAULTS.sandbox,
         approvalPolicy: THREAD_DEFAULTS.approvalPolicy,
