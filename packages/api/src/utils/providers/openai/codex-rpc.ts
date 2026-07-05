@@ -15,6 +15,7 @@ import { type AccountLoginCompletedNotification } from "../../../codex-protocol/
 import { type AgentMessageDeltaNotification } from "../../../codex-protocol/v2/AgentMessageDeltaNotification";
 import { type ErrorNotification } from "../../../codex-protocol/v2/ErrorNotification";
 import { type ItemCompletedNotification } from "../../../codex-protocol/v2/ItemCompletedNotification";
+import { type ItemStartedNotification } from "../../../codex-protocol/v2/ItemStartedNotification";
 import { type ThreadTokenUsageUpdatedNotification } from "../../../codex-protocol/v2/ThreadTokenUsageUpdatedNotification";
 import { type TurnCompletedNotification } from "../../../codex-protocol/v2/TurnCompletedNotification";
 
@@ -26,6 +27,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export type NotificationMap = {
   "turn/completed": TurnCompletedNotification;
+  "item/started": ItemStartedNotification;
   "item/completed": ItemCompletedNotification;
   "item/agentMessage/delta": AgentMessageDeltaNotification;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification;

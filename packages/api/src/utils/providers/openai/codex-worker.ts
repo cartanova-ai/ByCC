@@ -45,12 +45,23 @@ export interface TurnRequest {
   imageGeneration?: boolean;
 }
 
+// 한 turn 에서 생성된 이미지 하나. codex imageGeneration item 에서 파생.
+export interface TurnImage {
+  data: string; // base64 PNG (item.result)
+  revisedPrompt: string | null;
+}
+
 export interface TurnResult {
   text: string;
   usage: TokenUsageBreakdown;
   durationMs: number;
   ttftMs: number | null;
   model: string;
+  // 이미지 turn 에서만 채워짐. 완성 이미지가 없으면 빈 배열/undefined.
+  images?: TurnImage[];
+  // 이미지 tool 호출이 관측됐는지(item/started 또는 hasResult 있는 completed).
+  // 이미지 0개일 때 재시도 가능 실패("시도 후 미완성")와 재시도 무익("tool 미호출")을 구분.
+  imageAttempted?: boolean;
 }
 
 export type StreamCallbacks = CommonStreamCallbacks<TurnResult>;
@@ -75,6 +86,15 @@ const BASE_INSTRUCTIONS =
 // image_generation tool 사용을 명시적으로 허용한다. shell/web 등 나머지 tool 은 여전히 금지.
 const IMAGE_BASE_INSTRUCTIONS =
   "You are a helpful assistant. When asked to create an image, use the image_generation tool to produce it. Do not use any other tools such as shell, file operations, or web search.";
+
+// base64 로 인코딩된 PNG 시그니처(\x89PNG...) 의 표준 접두사.
+// 실측상 완료 item 의 status 는 "generating" 으로 와도 result 에 완성 base64 가 실린다.
+// 따라서 완성 판정은 status 문자열이 아니라 result 의 유효성(비어있지 않고 PNG 시그니처)으로 한다.
+const PNG_BASE64_PREFIX = "iVBORw0KGgo";
+
+function isCompletedImageResult(result: unknown): result is string {
+  return typeof result === "string" && result.startsWith(PNG_BASE64_PREFIX);
+}
 
 // codex가 매 요청에 자동 주입하는 내장 tool(shell/web_search/spawn_agent 등 14개)과
 // instruction 블록(permissions/environment_context/skills, ~10KB)을 비활성화
@@ -366,7 +386,12 @@ export class CodexAppServerWorker {
         items: req.history,
       } satisfies ThreadInjectItemsParams);
     }
-    this.threadMeta.set(threadId, { lastUsedAt: Date.now() });
+    // 이미지 turn 은 재사용에서 제외(R8): base64 가 thread 메모리·캐시 prefix 에
+    // 상주하는 것을 막고, 이미지 thread 를 1 회용으로 둔다. threadMeta 미등록 →
+    // 후속 reuse 조회에서 이 thread 는 후보가 되지 않는다.
+    if (!req.imageGeneration) {
+      this.threadMeta.set(threadId, { lastUsedAt: Date.now() });
+    }
 
     return { threadId, model: req.model ?? threadModel };
   }
@@ -512,11 +537,14 @@ export class CodexAppServerWorker {
         reasoningOutputTokens: 0,
       };
       let durationMs = 0;
+      const images = new Map<string, TurnImage>(); // item.id → 이미지 (dedup)
+      let imageAttempted = false;
 
       const cleanup = () => {
         clearTimeout(timeout);
         if (this.activeTurnAbort === abort) this.activeTurnAbort = undefined;
         for (const n of [
+          "item/started",
           "item/completed",
           "item/agentMessage/delta",
           "turn/completed",
@@ -544,9 +572,23 @@ export class CodexAppServerWorker {
       abort = finishWithError;
       this.activeTurnAbort = abort;
 
+      // 이미지 tool 호출 관측(재시도 판정용). started 는 result 없이 오므로
+      // attempted 신호로만 쓰고, 완성 이미지는 completed 에서 result 유효성으로 판정한다.
+      this.rpc!.onNotification("item/started", (p) => {
+        if (p.threadId !== threadId) return;
+        if (p.item.type === "imageGeneration") imageAttempted = true;
+      });
+
       this.rpc!.onNotification("item/completed", (p) => {
         if (p.threadId !== threadId) return;
-        if (p.item.type === "agentMessage") text = p.item.text;
+        if (p.item.type === "agentMessage") {
+          text = p.item.text;
+        } else if (p.item.type === "imageGeneration") {
+          imageAttempted = true;
+          if (isCompletedImageResult(p.item.result)) {
+            images.set(p.item.id, { data: p.item.result, revisedPrompt: p.item.revisedPrompt });
+          }
+        }
       });
 
       this.rpc!.onNotification("item/agentMessage/delta", (p) => {
@@ -567,8 +609,17 @@ export class CodexAppServerWorker {
         if (p.threadId !== threadId) return;
         durationMs = p.turn.durationMs ?? 0;
         if (p.turn.status === "completed") {
-          finishWithResult({ text, usage, durationMs, ttftMs: ttftTracker.value(), model });
+          finishWithResult({
+            text,
+            usage,
+            durationMs,
+            ttftMs: ttftTracker.value(),
+            model,
+            images: images.size > 0 ? [...images.values()] : undefined,
+            imageAttempted,
+          });
         } else {
+          // turn 실패/중단 시 부분 이미지는 폐기(성공으로 승격하지 않음).
           finishWithError(new Error(`turn failed: ${JSON.stringify(p.turn.error)}`));
         }
       });
@@ -603,11 +654,14 @@ export class CodexAppServerWorker {
         cachedInputTokens: 0,
         reasoningOutputTokens: 0,
       };
+      const images = new Map<string, TurnImage>(); // item.id → 이미지 (dedup)
+      let imageAttempted = false;
 
       const cleanup = () => {
         clearTimeout(timeout);
         if (this.activeTurnAbort === abort) this.activeTurnAbort = undefined;
         for (const n of [
+          "item/started",
           "item/completed",
           "item/agentMessage/delta",
           "turn/completed",
@@ -644,9 +698,21 @@ export class CodexAppServerWorker {
         cb.onDelta(p.delta);
       });
 
+      this.rpc!.onNotification("item/started", (p) => {
+        if (p.threadId !== threadId) return;
+        if (p.item.type === "imageGeneration") imageAttempted = true;
+      });
+
       this.rpc!.onNotification("item/completed", (p) => {
         if (p.threadId !== threadId) return;
-        if (p.item.type === "agentMessage") text = p.item.text;
+        if (p.item.type === "agentMessage") {
+          text = p.item.text;
+        } else if (p.item.type === "imageGeneration") {
+          imageAttempted = true;
+          if (isCompletedImageResult(p.item.result)) {
+            images.set(p.item.id, { data: p.item.result, revisedPrompt: p.item.revisedPrompt });
+          }
+        }
       });
 
       this.rpc!.onNotification("thread/tokenUsage/updated", (p) => {
@@ -666,6 +732,8 @@ export class CodexAppServerWorker {
             durationMs: p.turn.durationMs ?? 0,
             ttftMs: ttftTracker.value(),
             model,
+            images: images.size > 0 ? [...images.values()] : undefined,
+            imageAttempted,
           });
         } else {
           finishWithError(new Error(`turn ${p.turn.status}: ${JSON.stringify(p.turn.error)}`));

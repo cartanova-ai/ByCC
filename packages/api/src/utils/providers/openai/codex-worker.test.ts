@@ -310,6 +310,185 @@ describe("CodexAppServerWorker prompt prefix", () => {
   });
 });
 
+describe("CodexAppServerWorker image generation capture", () => {
+  // 유효 PNG base64 (\x89PNG... 시그니처). 완성 이미지 판정 기준.
+  const PNG_B64 = "iVBORw0KGgoBAgMEBQYHCA==";
+
+  function imageItem(id: string, result: string, revisedPrompt: string | null = null) {
+    return { type: "imageGeneration", id, status: "generating", result, revisedPrompt };
+  }
+
+  it("captures multiple completed image items into the images array in order", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        handlers.get("item/completed")?.({
+          threadId: "t1",
+          item: imageItem("img-a", PNG_B64, "a red circle"),
+        } as never);
+        handlers.get("item/completed")?.({
+          threadId: "t1",
+          item: imageItem("img-b", PNG_B64, "a blue square"),
+        } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "completed", durationMs: 100 },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    const result = await worker.executeTurn({
+      input: [{ type: "text", text: "two images", text_elements: [] }],
+      imageGeneration: true,
+    });
+
+    expect(result.images).toHaveLength(2);
+    expect(result.images?.map((i) => i.revisedPrompt)).toEqual(["a red circle", "a blue square"]);
+    expect(result.images?.[0]?.data).toBe(PNG_B64);
+    expect(result.imageAttempted).toBe(true);
+  });
+
+  it("treats status='generating' completed item with valid PNG as a finished image", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        // 실측: 완료 item 의 status 가 "generating" 으로 와도 result 는 완성 base64.
+        handlers.get("item/completed")?.({
+          threadId: "t1",
+          item: imageItem("img-a", PNG_B64),
+        } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "completed", durationMs: 50 },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    const result = await worker.executeTurn({
+      input: [{ type: "text", text: "img", text_elements: [] }],
+      imageGeneration: true,
+    });
+    expect(result.images).toHaveLength(1);
+  });
+
+  it("dedups repeated completed events for the same item id", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("dup", PNG_B64) } as never);
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("dup", PNG_B64) } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "completed", durationMs: 50 },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    const result = await worker.executeTurn({
+      input: [{ type: "text", text: "img", text_elements: [] }],
+      imageGeneration: true,
+    });
+    expect(result.images).toHaveLength(1);
+  });
+
+  it("marks imageAttempted but returns no images when only item/started fires (tool called, not finished)", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        handlers.get("item/started")?.({
+          threadId: "t1",
+          item: { type: "imageGeneration", id: "img-a", status: "in_progress", result: "", revisedPrompt: null },
+        } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "completed", durationMs: 50 },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    const result = await worker.executeTurn({
+      input: [{ type: "text", text: "img", text_elements: [] }],
+      imageGeneration: true,
+    });
+    expect(result.images).toBeUndefined();
+    expect(result.imageAttempted).toBe(true);
+  });
+
+  it("does not count an empty or non-PNG result as a finished image", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("empty", "") } as never);
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("junk", "notbase64png") } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "completed", durationMs: 50 },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    const result = await worker.executeTurn({
+      input: [{ type: "text", text: "img", text_elements: [] }],
+      imageGeneration: true,
+    });
+    expect(result.images).toBeUndefined();
+    expect(result.imageAttempted).toBe(true);
+  });
+
+  it("discards partial images when the turn fails (no promotion to success)", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("img-a", PNG_B64) } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "failed", error: { message: "boom" } },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    await expect(
+      worker.executeTurn({
+        input: [{ type: "text", text: "img", text_elements: [] }],
+        imageGeneration: true,
+      }),
+    ).rejects.toThrow(/turn failed/);
+  });
+
+  it("does not register an image turn thread for reuse (threadMeta excluded)", async () => {
+    const spy = createWorkerWithRequestSpy();
+    type WorkerInternals = { createThread(req: unknown): Promise<{ threadId: string; model: string }> };
+    const { threadId } = await (spy.worker as unknown as WorkerInternals).createThread({
+      input: [{ type: "text", text: "img", text_elements: [] }],
+      imageGeneration: true,
+    });
+    const threadMeta = (spy.worker as unknown as { threadMeta: Map<string, unknown> }).threadMeta;
+    expect(threadMeta.has(threadId)).toBe(false);
+  });
+
+  it("still registers a normal text thread for reuse (regression guard)", async () => {
+    const spy = createWorkerWithRequestSpy();
+    type WorkerInternals = { createThread(req: unknown): Promise<{ threadId: string; model: string }> };
+    const { threadId } = await (spy.worker as unknown as WorkerInternals).createThread({
+      input: [{ type: "text", text: "hi", text_elements: [] }],
+    });
+    const threadMeta = (spy.worker as unknown as { threadMeta: Map<string, unknown> }).threadMeta;
+    expect(threadMeta.has(threadId)).toBe(true);
+  });
+});
+
 describe("CodexAppServerWorker image generation thread", () => {
   type WorkerInternals = {
     createThread(req: unknown): Promise<{ threadId: string; model: string }>;
