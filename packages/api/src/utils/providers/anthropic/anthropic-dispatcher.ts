@@ -278,6 +278,11 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     onDelta: (t: string) => void,
     opts?: { includePartialMessages?: boolean },
   ): Promise<GenerateResult> {
+    // 이미지 생성은 OpenAI(codex) 경로 전용. Anthropic 라우팅에 이미지 플래그가
+    // 도달하면 조용히 텍스트로 폴백하지 않고 명시적으로 거부한다.
+    if (req.imageGeneration) {
+      throw new Error("image generation is not supported on the Anthropic route");
+    }
     // model 정규화를 dispatcher 진입점에서 한 번 한다: result.model / runClaudeSession 전부
     // canonical(prefix 없는 cost 키) 을 쓰게 통일. 미지정이면 ANTHROPIC_DEFAULT_MODEL — qgrid.dispatcher
     // 의 "sonnet" 별칭 우회 차단. 정규화 규칙은 fallback 경로와 공유(canonicalAnthropicModel).

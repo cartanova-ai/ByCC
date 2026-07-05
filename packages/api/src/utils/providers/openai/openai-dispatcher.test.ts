@@ -505,3 +505,21 @@ describe("OpenAIDispatcher image generation gate and failure classification", ()
     expect((worker as unknown as { checkImageGenerationSupport: ReturnType<typeof vi.fn> }).checkImageGenerationSupport).not.toHaveBeenCalled();
   });
 });
+
+describe("OpenAIDispatcher image generation routing", () => {
+  it("rejects image requests on the streaming path", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const cb = { onDelta: vi.fn(), onComplete: vi.fn(), onError: vi.fn() };
+    await expect(
+      dispatcher.generateStream(baseReq({ imageGeneration: true }), cb),
+    ).rejects.toBeInstanceOf(ImageGenerationError);
+  });
+
+  it("forces cold thread for image requests even when a reuse coordinate is present", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = await dispatcher.acquireReuseWorker(
+      baseReq({ imageGeneration: true, reuse: { workerId: 10, threadId: "t1", epoch: 1 } }),
+    );
+    expect(worker).toBeNull();
+  });
+});

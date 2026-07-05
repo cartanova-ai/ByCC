@@ -270,6 +270,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async generateStream(req: GenerateRequest, cb: GenerateStreamCallbacks): Promise<void> {
+    // 이미지 생성은 non-stream 전용(R2): codex 가 이미지 델타를 주지 않고 완성 base64 를
+    // 한 번에 준다. 스트리밍 경로로 이미지 요청이 오면 명시적 에러.
+    if (req.imageGeneration) {
+      throw new ImageGenerationError("gate", "image generation is not supported on the streaming path");
+    }
     const excludedTokenIds = new Set<number>();
     const reuseWorker = await this.acquireReuseWorker(req, excludedTokenIds);
     if (reuseWorker) {
@@ -297,6 +302,9 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     req: GenerateRequest,
     excludedTokenIds = new Set<number>(),
   ): Promise<CodexAppServerWorker | null> {
+    // 이미지 요청은 항상 cold thread(R8): 재사용 좌표가 있어도 건너뛴다.
+    // base64 가 thread 메모리·캐시 prefix 에 상주하는 것을 막는다.
+    if (req.imageGeneration) return null;
     if (!THREAD_REUSE_ENABLED || !req.reuse) return null;
     const { workerId, threadId, epoch } = req.reuse;
 
