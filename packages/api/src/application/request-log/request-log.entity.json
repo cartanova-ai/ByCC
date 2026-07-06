@@ -44,6 +44,19 @@
     { "name": "duration_ms", "type": "integer", "desc": "응답 소요시간(ms)", "dbDefault": "0" },
     { "name": "ttft_ms", "type": "integer", "desc": "first gen TTFT(ms)", "dbDefault": "0" },
     { "name": "cost_usd", "type": "integer", "nullable": true, "desc": "API 비용" },
+    {
+      "name": "image_cost_usd",
+      "type": "integer",
+      "nullable": true,
+      "desc": "이미지 생성 추정 비용"
+    },
+    {
+      "name": "image_cost_method",
+      "type": "string",
+      "length": 100,
+      "nullable": true,
+      "desc": "이미지 비용 추정 방식"
+    },
     { "name": "effort", "type": "string", "length": 10, "nullable": true, "desc": "effort level" },
     {
       "name": "history",
@@ -60,7 +73,13 @@
       "dbDefault": "\"succeeded\""
     },
     { "name": "error_message", "type": "string", "nullable": true, "desc": "에러 메시지" },
-    { "name": "tool_call_count", "type": "integer", "desc": "tool call 횟수", "dbDefault": "0" }
+    { "name": "tool_call_count", "type": "integer", "desc": "tool call 횟수", "dbDefault": "0" },
+    {
+      "name": "is_image_generation",
+      "type": "boolean",
+      "desc": "이미지 생성 turn 여부 (quota 귀속용)",
+      "dbDefault": "false"
+    }
   ],
   "indexes": [
     {
@@ -77,57 +96,64 @@
     }
   ],
   "subsets": {
-    "A": {
-      "fields": [
-        "id",
-        "created_at",
-        "token_name",
-        "project_name",
-        "model_name",
-        "user_prompt",
-        "system_prompt",
-        "response",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_creation_tokens",
-        "duration_ms",
-        "ttft_ms",
-        "cost_usd",
-        "effort",
-        "history",
-        "status",
-        "error_message",
-        "tool_call_count"
-      ]
-    },
-    "P": {
-      "fields": [
-        "id",
-        "created_at",
-        "token_name",
-        "project_name",
-        "model_name",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_creation_tokens",
-        "duration_ms",
-        "ttft_ms",
-        "cost_usd",
-        "effort",
-        "status",
-        "tool_call_count"
-      ]
-    }
+    "A": [
+      "id",
+      "created_at",
+      "token_name",
+      "project_name",
+      "model_name",
+      "user_prompt",
+      "system_prompt",
+      "response",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_creation_tokens",
+      "duration_ms",
+      "ttft_ms",
+      "cost_usd",
+      "image_cost_usd",
+      "image_cost_method",
+      "effort",
+      "history",
+      "status",
+      "error_message",
+      "tool_call_count",
+      "is_image_generation"
+    ],
+    "P": [
+      "id",
+      "created_at",
+      "token_name",
+      "project_name",
+      "model_name",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_creation_tokens",
+      "duration_ms",
+      "ttft_ms",
+      "cost_usd",
+      "image_cost_usd",
+      "image_cost_method",
+      "effort",
+      "status",
+      "tool_call_count",
+      "is_image_generation"
+    ]
   },
   "enums": {
-    "RequestLogOrderBy": { "values": { "id-desc": "ID최신순" } },
+    "RequestLogOrderBy": { "id-desc": "ID최신순" },
     "RequestLogSearchField": {
-      "values": { "id": "ID", "token_name": "토큰이름", "user_prompt": "사용자 프롬프트" }
+      "id": "ID",
+      "token_name": "토큰이름",
+      "user_prompt": "사용자 프롬프트"
     },
     "RequestLogStatus": {
-      "values": { "running": "실행 중", "succeeded": "성공", "error": "에러", "aborted": "중단" }
+      "running": "실행 중",
+      "succeeded": "성공",
+      "error": "에러",
+      "aborted": "중단"
     }
   }
 }
