@@ -516,4 +516,126 @@ describe("qgrid AI SDK provider", () => {
     expect(secondQuery?.body.args).not.toHaveProperty("runContext");
     expect(secondQuery?.body.args).toMatchObject({ logMode: "run" });
   });
+
+  it("sends imageGeneration flag and maps image content to a file part", async () => {
+    let queryBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [
+                { type: "text", text: "here is your image" },
+                { type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "a red circle" },
+              ],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const result = await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "draw a red circle" }] }],
+      providerOptions: { qgrid: { imageGeneration: true } },
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args).toMatchObject({
+      imageGeneration: true,
+    });
+    // image → LanguageModelV3File 파트로 매핑, tool-call 오인 없음.
+    expect(result.content).toEqual([
+      { type: "text", text: "here is your image" },
+      { type: "file", mediaType: "image/png", data: "iVBORw0KGgoBAgM" },
+    ]);
+  });
+
+  it("passes imageGenerationOptions through to qgrid", async () => {
+    let queryBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "a red circle" }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "draw a red circle" }] }],
+      providerOptions: {
+        qgrid: {
+          imageGeneration: true,
+          imageGenerationOptions: { quality: "high", size: "1024x1024" },
+        },
+      },
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args).toMatchObject({
+      imageGeneration: true,
+      imageGenerationOptions: { quality: "high", size: "1024x1024" },
+    });
+  });
+
+  it("throws when imageGeneration is requested but the response has no image (version skew guard)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/query")) {
+          // 구버전 서버: imageGeneration 을 strip 하고 텍스트만 반환.
+          return new Response(
+            JSON.stringify({
+              text: "plain text",
+              content: [{ type: "text", text: "plain text" }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 10,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await expect(
+      qgrid("openai/gpt-5.5").doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "draw a red circle" }] }],
+        providerOptions: { qgrid: { imageGeneration: true } },
+      } as never),
+    ).rejects.toThrow(/no image/i);
+  });
+
+  it("rejects imageGeneration on the streaming path", async () => {
+    await expect(
+      qgrid("openai/gpt-5.5").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "draw a red circle" }] }],
+        providerOptions: { qgrid: { imageGeneration: true } },
+      } as never),
+    ).rejects.toThrow(/not supported with streamText/i);
+  });
 });

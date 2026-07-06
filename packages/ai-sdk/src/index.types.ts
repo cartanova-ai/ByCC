@@ -26,6 +26,20 @@ export type QgridProviderOptions = {
   serviceTier?: string;
   /** @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록. */
   fallbackModels?: string[];
+  /**
+   * codex 내장 image_generation tool 을 켠다. OpenAI/codex route + non-stream 전용.
+   * generateText 결과의 files 로 이미지를 받는다. streaming(streamText)에서는 거부된다.
+   */
+  imageGeneration?: boolean;
+  /**
+   * Image generation hint and cost-estimation basis. The image model is fixed
+   * to gpt-image-2; qgrid accepts supported quality/size pairs from OpenAI's
+   * public calculator table.
+   */
+  imageGenerationOptions?: {
+    quality?: "low" | "medium" | "high";
+    size?: "1024x1024" | "1024x1536" | "1536x1024";
+  };
 };
 
 /**
@@ -66,6 +80,7 @@ export type QueryOutput = {
   content?: Array<
     | { type: "text"; text: string }
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
+    | { type: "image"; data: string; revisedPrompt?: string | null }
   >;
   finishReason?: "stop" | "tool-calls";
   model: string;

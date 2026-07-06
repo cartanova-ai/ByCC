@@ -107,6 +107,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
+      const imageGeneration = qgridOptions.imageGeneration;
+      const imageGenerationOptions = qgridOptions.imageGenerationOptions;
       // 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID)만 넘기면,
       // thread 좌표 보관/회송은 threadCoordStore 가 내부에서 처리한다 → 클라이언트 무부담.
       const sessionKey = qgridOptions.sessionKey;
@@ -178,6 +180,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(logMode ? { logMode } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
+            ...(imageGeneration ? { imageGeneration } : {}),
+            ...(imageGenerationOptions ? { imageGenerationOptions } : {}),
           },
         }),
         signal: options.abortSignal,
@@ -194,19 +198,33 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       let finishReason: LanguageModelV3FinishReason = { unified: "stop", raw: "stop" };
       if (data.content) {
         for (const item of data.content) {
-          if (item.type === "text") content.push({ type: "text", text: item.text });
-          else
+          // 명시 분기: 미지의 variant 를 tool-call 로 오인하지 않는다.
+          if (item.type === "text") {
+            content.push({ type: "text", text: item.text });
+          } else if (item.type === "image") {
+            // qgrid raw image parts are base64-only; AI SDK file parts require a mediaType.
+            content.push({ type: "file", mediaType: "image/png", data: item.data });
+          } else if (item.type === "tool-call") {
             content.push({
               type: "tool-call",
               toolCallId: item.toolCallId,
               toolName: item.toolName,
               input: item.input,
             });
+          }
         }
         if (data.finishReason === "tool-calls")
           finishReason = { unified: "tool-calls", raw: "tool_call" };
       } else {
         content.push({ type: "text", text: data.text });
+      }
+
+      // version skew 방어: imageGeneration 을 요청했는데 응답에 이미지가 없으면(구버전 서버가
+      // 플래그를 strip 해 조용히 텍스트만 반환) 명시적 에러. R6 의 "조용한 폴백 금지"를 wire 경계에서 유지.
+      if (imageGeneration && !content.some((c) => c.type === "file")) {
+        throw new Error(
+          "qgrid: imageGeneration was requested but the response contained no image — the server may be an older version that does not support image generation.",
+        );
       }
 
       // client run state 업데이트
@@ -260,6 +278,12 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
+      // 이미지 생성은 non-stream 전용(R2). 서버 왕복 전에 클라이언트에서 명시적으로 거부한다.
+      if (qgridOptions.imageGeneration) {
+        throw new Error(
+          "qgrid: imageGeneration is not supported with streamText — use generateText instead.",
+        );
+      }
       const sessionKey = qgridOptions.sessionKey;
       const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
 
