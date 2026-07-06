@@ -1,0 +1,205 @@
+# Token Auth Quota Lifecycle
+
+Use this reference before changing token storage, OAuth flows, token activation, token subscriber behavior, quota thresholds, usage APIs, or provider token routing.
+
+## Contents
+
+- Source files
+- Token table contract
+- Token APIs
+- Anthropic OAuth flow
+- OpenAI OAuth and refresh flow
+- Token sync and reconcile
+- Provider runtime consequences
+- Quota threshold semantics
+
+## Source Files
+
+- Token model/types: `packages/api/src/application/token/token.model.ts`, `token.types.ts`, `token.entity.json`.
+- qgrid API frame and OAuth endpoints: `packages/api/src/application/qgrid/qgrid.frame.ts`.
+- Anthropic OAuth utilities and usage API: `packages/api/src/application/qgrid/oauth.ts`.
+- Token DB trigger setup: `packages/api/src/application/qgrid/token-trigger-setup.ts`.
+- Token subscriber: `packages/api/src/application/qgrid/token-subscriber.ts`.
+- OpenAI refresh/quota: `packages/api/src/utils/providers/openai/openai-refresh.ts`, `openai-quota.ts`.
+- Anthropic quota: `packages/api/src/utils/providers/anthropic/anthropic-quota.ts`.
+- Provider token event handlers: `openai-dispatcher.ts`, `anthropic-dispatcher.ts`.
+
+## Token Table Contract
+
+`tokens` stores:
+
+- `provider`: provider string such as `openai` or `anthropic`.
+- `credentials`: JSONB credentials.
+- `name`: display/logging name.
+- `active`: whether provider dispatchers may use it.
+- `ord`: dashboard ordering.
+- `quota_threshold`: nullable integer percentage, validated as 1..100 when present.
+
+On creation, `TokenModel.save` applies default `quota_threshold = 80` unless `id` or `quota_threshold` is already provided.
+
+OpenAI credentials:
+
+```ts
+{
+  accessToken: string;
+  refreshToken: string;
+  idToken?: string;
+  accessTokenExpiresAt: number;
+  idTokenExpiresAt?: number;
+  accountId: string;
+  planType?: string;
+}
+```
+
+Anthropic credentials:
+
+```ts
+{
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  accountUuid: string;
+}
+```
+
+Duplicate account replacement is account-identifier based:
+
+- OpenAI: `credentials.accountId`.
+- Anthropic: `credentials.accountUuid`.
+
+## Token APIs
+
+`QgridFrame` exposes token APIs:
+
+- `addToken(provider, credentials, name)`: saves a token directly.
+- `updateToken(id, name?, quotaThreshold?)`: updates name and/or quota threshold, preserving provider/credentials.
+- `removeToken(id)`: deletes token row.
+- `toggleToken(id)`: flips `active`.
+- `stats()`: reports dispatcher cache stats.
+- `health()`: reports active token cache count and subscriber status.
+- `usage(tokenId?)`: returns provider usage/rate-limit summary.
+
+When updating a token, preserve existing provider and credentials unless intentionally rotating credentials.
+
+## Anthropic OAuth Flow
+
+Anthropic OAuth is implemented directly in qgrid.
+
+1. `oauthStart(name)` generates PKCE verifier/challenge/state.
+2. qgrid builds the Claude OAuth authorize URL with Claude Code-like scopes.
+3. Pending state is cached under `oauth:state:<state>` for 5 minutes.
+4. `/callback` calls `handleOAuthCallback(code, state, reply)`.
+5. qgrid exchanges the code for tokens.
+6. Existing Anthropic tokens with the same `accountUuid` are deleted.
+7. qgrid saves a new `provider: "anthropic"` token.
+
+`QGRID_PUBLIC_BASE_URL` controls the public callback base. If unset, callback defaults to `http://localhost:${PORT}/callback`.
+
+Refresh:
+
+- `refreshToken(token)` uses the stored refresh token and `refreshAccessToken`.
+- Refreshed credentials are saved back through `TokenModel.save`.
+- `usage()` refreshes expired Anthropic access tokens before usage lookup when a refresh token exists.
+- `AnthropicDispatcher` also preemptively refreshes when expiration is within 60 seconds.
+
+Usage/quota:
+
+- Usage API is `https://api.anthropic.com/api/oauth/usage`.
+- qgrid caches Anthropic usage by access-token suffix for 60 seconds.
+- Quota threshold uses `five_hour.utilization`.
+- Usage lookup failure is fail-open for routing.
+
+## OpenAI OAuth And Refresh Flow
+
+OpenAI OAuth is delegated to Codex app-server.
+
+Browser registration:
+
+1. `oauthStartOpenAI(name)` calls `OpenAIDispatcher.startBrowserLogin(name)`.
+2. Dispatcher creates a temporary `CodexAppServerWorker`.
+3. Worker spawns `codex app-server` and calls `account/login/start` with `type: "chatgpt"`.
+4. qgrid returns Codex's `authUrl`.
+5. In the background, dispatcher waits for `account/login/completed`.
+6. Worker reads managed credentials from its `auth.json`.
+7. Existing OpenAI tokens with the same `accountId` are deleted.
+8. qgrid saves a new `provider: "openai"` token.
+9. Temporary worker is killed; pending browser login times out after 5 minutes.
+
+Worker login:
+
+- Normal OpenAI workers call `account/login/start` with `type: "chatgptAuthTokens"`, `accessToken`, `chatgptAccountId`, and optional `chatgptPlanType`.
+
+Refresh:
+
+- Codex can send server-request `account/chatgptAuthTokens/refresh`.
+- qgrid handles it through `handleChatgptAuthTokensRefresh(tokenId)`.
+- Refresh is deduplicated per token with an in-flight promise.
+- Refresh has a 5-second minimum interval; too-soon calls read current DB credentials.
+- Refresh token rotation is saved immediately. If DB save fails after rotation, treat it as token-death risk because the old refresh token may already be invalid.
+
+Usage/quota:
+
+- OpenAI quota threshold uses Codex `account/rateLimits/read`.
+- qgrid reads rate limits through a ready worker.
+- Rate limit data is cached for 60 seconds.
+- Threshold uses primary `usedPercent`.
+- Usage lookup failure is fail-open for routing.
+
+## Token Sync And Reconcile
+
+On server start, qgrid creates PostgreSQL triggers for `tokens_changed`.
+
+Triggers notify on:
+
+- INSERT
+- DELETE
+- UPDATE when `active`, `credentials`, `provider`, `name`, or `quota_threshold` changes.
+
+`TokenSubscriber`:
+
+- connects to PostgreSQL and `LISTEN`s on `tokens_changed`;
+- reconnects with jittered exponential backoff up to 30 seconds;
+- runs periodic reconcile every 10 minutes because LISTEN/NOTIFY can miss changes while disconnected;
+- replaces dispatcher cache from `TokenModel.findActive("A")`.
+
+On DELETE or missing row:
+
+- remove from `QgridDispatcher.tokens`;
+- call OpenAI `onTokenRemoved`;
+- call Anthropic `onTokenRemoved`.
+
+OpenAI row changes:
+
+- active INSERT: `onTokenAdded` spawns workers.
+- active UPDATE: `onTokenUpdated`, then `onTokenActivated`.
+- inactive row: `onTokenDeactivated`.
+- reconcile uses `replaceTokens`, which removes absent tokens, updates existing tokens, adds new tokens, and activates rows present in active DB set.
+
+Anthropic row changes:
+
+- active INSERT: add to in-memory pool.
+- active UPDATE: update in-memory pool.
+- inactive row: remove from pool.
+- reconcile uses active Anthropic rows to replace the in-memory pool.
+
+## Provider Runtime Consequences
+
+OpenAI token changes can create, update, deactivate, or kill persistent Codex workers.
+
+- In-place OpenAI worker update is allowed only when account id and plan type match.
+- Otherwise workers are killed and respawned.
+- If no ready active OpenAI workers remain, queued OpenAI requests are rejected.
+
+Anthropic token changes only affect the in-memory token pool because every request fresh-spawns Claude Code.
+
+## Quota Threshold Semantics
+
+`quota_threshold` is a routing gate, not a hard external-provider guarantee.
+
+- Null means no threshold gate.
+- Lookup failure is fail-open.
+- Individual over-threshold tokens are excluded from selection.
+- If all ready/eligible tokens are over threshold, qgrid throws `QuotaThresholdExceededError`.
+- Log messages use `quota_threshold gate` with reasons such as `over_threshold`, `lookup_fail_open`, and `all_exceeded`.
+
+OpenAI queue items keep an `excludedTokenIds` set so a token found over threshold for a request is not immediately reselected for that same queued request.

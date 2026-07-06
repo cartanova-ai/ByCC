@@ -1,0 +1,4 @@
+interface:
+  display_name: "Qgrid"
+  short_description: "Develop and debug qgrid runtime contracts"
+  default_prompt: "Use $qgrid to implement or debug qgrid provider runtime behavior."
