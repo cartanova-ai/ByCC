@@ -23,6 +23,8 @@ const sections: MenuSection[] = [
   },
 ];
 
+const qgridVersion = __QGRID_CLI_VERSION__;
+
 interface SidebarProps {
   className?: string;
 }
@@ -87,7 +89,7 @@ export default function Sidebar({ className }: SidebarProps) {
       <div className="px-4 py-3 border-t border-sand-200/30">
         <div className="flex items-center gap-2">
           <div className="size-1.5 rounded-full bg-sage-400" />
-          <span className="text-[10px] text-sand-400">v0.1.0</span>
+          <span className="text-[10px] text-sand-400">v{qgridVersion}</span>
         </div>
       </div>
     </aside>

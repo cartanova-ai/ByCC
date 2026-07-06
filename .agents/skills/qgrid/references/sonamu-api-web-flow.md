@@ -19,6 +19,7 @@ qgrid dashboard work is usually a Sonamu API/model/generated-client/web change, 
 - API frame methods for qgrid live in `qgrid.frame.ts`.
 - i18n generated files may change when entity labels or static data change.
 - Web components under `packages/web/src/components/qgrid` consume generated API shapes.
+- The main dashboard sidebar version should stay synced to `packages/cli/package.json`. `packages/web/vite.config.ts` reads that package version and exposes it as `__QGRID_CLI_VERSION__`; `Sidebar.tsx` displays it.
 
 ## Request log dashboard
 

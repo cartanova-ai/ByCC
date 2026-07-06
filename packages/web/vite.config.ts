@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import path from "path";
 
 import tailwindcss from "@tailwindcss/vite";
@@ -9,9 +10,16 @@ import { defineConfig } from "vite";
 
 dotenv.config({ path: ".sonamu.env" });
 
+const qgridCliPackageJson = JSON.parse(
+  readFileSync(path.resolve(__dirname, "../cli/package.json"), "utf-8"),
+) as { version: string };
+
 // https://vitejs.dev/config/
 export default defineConfig(({ command, isSsrBuild }) => ({
   clearScreen: false,
+  define: {
+    __QGRID_CLI_VERSION__: JSON.stringify(qgridCliPackageJson.version),
+  },
   plugins: [
     tanstackRouter({
       autoCodeSplitting: true,

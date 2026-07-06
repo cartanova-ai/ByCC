@@ -26,7 +26,9 @@ Main files:
 - `defaultEffort`: default `low`.
 - `projectName`: default `process.env.QGRID_PROJECT_NAME`.
 
-Strongly recommend setting `projectName` for real workloads even though it is optional. It is stored as `request_logs.project_name` and makes high-volume request logs usable: operators can filter by project/workflow, identify which task produced which request, compare token/cache/cost/TTFT metrics by workload, and debug noisy callers without scanning prompts manually.
+Strongly recommend setting `QGRID_PROJECT_NAME` in the environment for real workloads. The config-level `projectName` override is valid, but the env var is the preferred project-wide default. It is stored as `request_logs.project_name` and makes high-volume request logs usable: operators can filter by project/workflow, identify which task produced which request, compare token/cache/cost/TTFT metrics by workload, and debug noisy callers without scanning prompts manually.
+
+Use camelCase `projectName` in TypeScript and qgrid API payloads. `project_name` is the database/Sonamu request-log field name, not an AI SDK provider option.
 
 ## Provider options
 
@@ -42,7 +44,7 @@ qgrid-specific behavior is controlled through `providerOptions.qgrid`. Explain t
 - `fallbackModels`: reserved for future fallback routing.
 - `imageGeneration`: in progress, OpenAI/Codex non-stream only.
 
-If a per-call project-name option exists in this surface, treat it the same way as config `projectName`: optional but strongly recommended for production or repeated experiments so request logs and metrics can be grouped by task/workload.
+`providerOptions.qgrid` does not currently support `projectName` or `project_name`. Prefer `QGRID_PROJECT_NAME` for the default project label; use config `projectName` only when a caller needs to override that default.
 
 ## Request construction
 
