@@ -93,6 +93,7 @@ Do not double-count cache subfields. This was a real dashboard bug: OpenAI cache
 `packages/api/src/utils/providers/common/model-cost.ts` contains model price fallback.
 
 - OpenAI cost normally uses qgrid's price table.
+- OpenAI image generation stores a separate `image_cost_usd` estimate. It assumes Codex's image tool is priced as `gpt-image-2` for the selected/default quality and size, because qgrid does not receive exact image tool usage from Codex.
 - Anthropic Claude Code may return `total_cost_usd`; qgrid prefers provider cost when present and positive.
 - Anthropic cache creation uses 5-minute cache write price in fallback tables.
 - OpenAI long-context surcharge applies to the whole request when input exceeds the model threshold, not just the excess tokens.

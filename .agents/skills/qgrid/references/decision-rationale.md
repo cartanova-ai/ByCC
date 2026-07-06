@@ -162,14 +162,16 @@ Sources:
 - `docs/brainstorms/2026-07-05-qgrid-image-generation-requirements.md`
 - `docs/plans/2026-07-05-001-feat-codex-image-generation-plan.md`
 - `docs/brainstorms/2026-07-06-qgrid-image-persistence-requirements.md`
+- `docs/brainstorms/2026-07-06-codex-image-cost-estimate.md`
 
 Key decisions:
 
-- Image generation is OpenAI/Codex-only and request-level opt-in. Always-on image tools would change every turn's tool configuration and threaten prompt-cache stability.
+- Image generation is OpenAI/Codex-only and request-level opt-in. It is essentially a Codex-hosted `image_generation` tool call, not qgrid directly calling the OpenAI Images API. Always-on image tools would change every turn's tool configuration and threaten prompt-cache stability.
 - It is non-stream only. Codex returns completed base64 image payloads, not useful image deltas.
 - Image turns are cold one-shot threads and are excluded from thread reuse. This prevents base64 payloads from entering reusable conversation state and cache prefixes.
 - qgrid performs preflight capability/model gates and postflight "image count must be greater than zero" checks. Codex can otherwise silently return text when image generation is unavailable or unused.
-- Returned images are inline base64 content parts for consumers. qgrid does not promise size, quality, aspect ratio, edits, or reference-image control on this path.
-- qgrid does not persist generated image binaries. It is a routing gateway and base64 deliverer; durable asset storage belongs to the consumer, currently deti asset-belt.
-- Request logs mark image-generation turns but must not store or dump base64 payloads.
-- Treat this area as still developing. Inspect current plans, tests, and implementation before changing behavior or documenting it as a stable public contract.
+- Returned images are inline base64 content parts for consumers and AI SDK `file` parts. qgrid does not promise aspect ratio, edits, or reference-image control on this path.
+- `imageGenerationOptions` currently supports quality and size. The worker instruction and request-log pricing assumption use `gpt-image-2`, with defaults `medium` and `1536x1024`.
+- qgrid does not manage generated images as durable assets through a `generated_images` table or object-storage layer. Current request logs can still contain inline image data URLs for inspection and synthetic `image_generation` tool-call steps.
+- Image cost is stored separately in `request_logs.image_cost_usd`; `request_logs.cost_usd` remains the Codex driver model token cost. Because Codex does not expose exact image tool usage, `image_cost_usd` is a price-table estimate and may be inaccurate.
+- Inspect current plans, tests, and implementation before changing behavior; the Codex tool surface can change underneath qgrid.

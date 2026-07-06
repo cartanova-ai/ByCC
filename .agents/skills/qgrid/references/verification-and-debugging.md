@@ -160,6 +160,16 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 - Image generation is OpenAI/Codex-only.
 
+`imageGeneration was requested but the response contained no image`:
+
+- AI SDK version-skew guard. The client requested image generation, but the server returned text-only content. Check server version and the OpenAI image-generation path.
+
+OpenAI `ImageGenerationError` kinds:
+
+- `gate`: capability/model check failed before the turn.
+- `not_called`: model completed but did not call Codex `image_generation`.
+- `incomplete`: image tool was attempted but no completed base64 image was produced.
+
 `worker not ready`:
 
 - OpenAI Codex worker RPC is missing or not initialized.

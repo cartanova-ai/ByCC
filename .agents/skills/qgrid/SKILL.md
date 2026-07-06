@@ -33,7 +33,7 @@ Before changing code, identify the affected path:
 - Route provider models by prefix: `openai/*` goes to the OpenAI Codex runtime, `anthropic/*` goes to the Anthropic Claude Code runtime. Prefix-less model fallback is not implemented.
 - Treat dashboard work as Sonamu API/model/generated-client/web work, not isolated frontend work.
 - Keep OpenAI Codex built-in tools, apps, plugins, skills, web search, shell, and environment instruction blocks disabled unless the user explicitly asks for agentic Codex behavior.
-- Treat image generation as in progress. Inspect the latest plans/brainstorms and current implementation before modifying it, and avoid treating existing behavior as a stable public contract.
+- Treat OpenAI image generation as an opt-in Codex `image_generation` tool path. Inspect current code before modifying it; it is not a direct Images API call and its image cost is an estimate.
 
 ## Verification
 

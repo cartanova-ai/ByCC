@@ -134,15 +134,20 @@ Streaming uses the same worker/thread execution with callbacks:
 - `onTurnId` emits turn id after `turn/start`.
 - qgrid can interrupt OpenAI turns on SSE close by calling `turn/interrupt` across ready workers.
 
-## Image generation status
+## Image generation
 
-Image generation is in progress and OpenAI/Codex-only.
+Image generation is OpenAI/Codex-only and implemented as an opt-in Codex `image_generation` tool call. It is not a direct OpenAI Images API call from qgrid.
 
 - It is opt-in through `imageGeneration`.
+- `imageGenerationOptions` carries quality/size hints and the cost-estimation basis.
 - It is non-stream only; streaming path rejects it.
 - It always uses a cold one-shot thread and does not issue a reusable coordinate.
 - It enables `features.image_generation` only on that thread; global config remains disabled.
+- It swaps the normal "text only" base instruction for an image-permitting instruction on that thread.
 - It gates on provider capability and model multimodality.
 - Failure kinds are `gate`, `not_called`, and `incomplete`.
+- Codex notifications expose image items through `item/started` and `item/completed`; qgrid treats non-empty base64 `result` as the completion signal, not the item `status` string.
+- Completed images are surfaced as qgrid `image` content parts and AI SDK `file` parts with `mediaType: "image/png"`.
+- qgrid uses `gpt-image-2` as the image-tool pricing/model assumption. Codex does not expose exact image tool token usage, so `image_cost_usd` is an estimate from the public price table, not exact billing.
 
 Before modifying this area, inspect latest docs/plans/brainstorms and current tests.

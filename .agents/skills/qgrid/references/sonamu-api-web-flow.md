@@ -35,6 +35,8 @@ Request log changes usually touch:
 
 Check list and detail views. Avoid loading large text columns in list views unless intentionally needed.
 
+Image-generation request logs add `is_image_generation`, `image_cost_usd`, and `image_cost_method`. The list view displays driver plus image cost as the total cost cell; the detail view shows driver cost and image cost separately and renders generated image data URLs from response/tool-step content.
+
 ## Verification
 
 After API shape changes:

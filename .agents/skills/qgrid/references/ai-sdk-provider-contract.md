@@ -42,7 +42,8 @@ qgrid-specific behavior is controlled through `providerOptions.qgrid`. Explain t
 - `reasoningSummary`: OpenAI/Codex route only.
 - `serviceTier`: OpenAI/Codex route only.
 - `fallbackModels`: reserved for future fallback routing.
-- `imageGeneration`: in progress, OpenAI/Codex non-stream only.
+- `imageGeneration`: OpenAI/Codex non-stream only. Enables Codex's built-in `image_generation` tool for that request.
+- `imageGenerationOptions`: optional image quality/size hints and cost-estimation basis. Current supported values are `quality: "low" | "medium" | "high"` and `size: "1024x1024" | "1024x1536" | "1536x1024"`.
 
 `providerOptions.qgrid` does not currently support `projectName` or `project_name`. Prefer `QGRID_PROJECT_NAME` for the default project label; use config `projectName` only when a caller needs to override that default.
 
@@ -60,10 +61,13 @@ Payload responsibilities:
 - Use `logMode: "run"` for tool-call loops.
 - Preserve and resend `runContext` for tool-call follow-ups.
 - Store/resend OpenAI `threadCoord` by `sessionKey`.
+- Send `imageGeneration` and `imageGenerationOptions` when configured.
 
 Tools and `jsonSchema` cannot be used together at qgrid dispatcher level.
 
 When tools are present, qgrid sends tool definitions to the server as `tools`; it does not send them to OpenAI or Anthropic as native provider tools. The server converts them into a strict structured-output schema and maps the model's structured result back into AI SDK `tool-call` content.
+
+Image generation is different from AI SDK client tools: it is an opt-in Codex-hosted tool exposed by qgrid through `providerOptions.qgrid.imageGeneration`. Use `generateText`; `streamText` rejects image generation before opening the stream.
 
 ## Response mapping
 
@@ -74,6 +78,8 @@ qgrid response content maps to AI SDK content:
 - qgrid `image` -> AI SDK file content with `mediaType: "image/png"`.
 
 `finishReason` maps `tool-calls` when qgrid returns tool calls.
+
+When `imageGeneration` was requested and the server returns no image part, the AI SDK provider throws a version-skew/error guard instead of silently accepting text-only output.
 
 Usage maps qgrid standard usage into AI SDK V3 usage:
 

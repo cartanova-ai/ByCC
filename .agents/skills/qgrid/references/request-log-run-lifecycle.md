@@ -25,7 +25,8 @@ For `logMode: "run"`:
 For `auto`:
 
 - qgrid saves a single request log row after the provider returns.
-- It records token name, project name, model, prompts, text response, usage, duration, TTFT, cost, effort, history, status, tool-call count, and image-generation flag.
+- It records token name, project name, model, prompts, response, usage, duration, TTFT, driver cost, image cost estimate, effort, history, status, tool-call count, and image-generation flag.
+- Image results are also appended as synthetic `image_generation` tool-call steps so the detail page can inspect the generated image and pricing assumption.
 
 ## Tool-call loop
 
@@ -48,10 +49,14 @@ Stored request log usage uses qgrid-standard semantics:
 - `cache_creation_tokens`: prompt cache write input.
 - `output_tokens`: output tokens.
 - `cost_usd`: integer micro-USD in DB; displayed USD is `cost_usd / 1_000_000`.
+- `image_cost_usd`: integer micro-USD estimate for Codex image generation output.
+- `image_cost_method`: string such as `assumed:gpt-image-2:medium:1536x1024:png`.
 
 OpenAI/Codex: use per-turn `.last` usage from `thread/tokenUsage/updated`.
 
 Anthropic: normalize native mutually exclusive categories by summing input + cache creation + cache read into total input.
+
+For image requests, keep `cost_usd` as the Codex driver model token cost. Image output cost is separate because qgrid observes Codex's `image_generation` result, not the OpenAI Images API usage object. Treat `image_cost_usd` as a price-table estimate that may be inaccurate if Codex changes its underlying image accounting.
 
 ## Legacy normalization
 
