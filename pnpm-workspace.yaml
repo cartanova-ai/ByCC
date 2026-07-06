@@ -218,15 +218,16 @@ catalog:
   "zod": ^4.3.6
   "zx": ^8.8.5
 
-onlyBuiltDependencies:
-  - "@parcel/watcher"
-  - "@swc/core"
-  - bcrypt
-  - esbuild
-  - libpq
-  - sharp
-  - sodium-native
-  - unrs-resolver
+allowBuilds:
+  "@parcel/watcher": true
+  "@swc/core": true
+  bcrypt: true
+  esbuild: true
+  libpq: true
+  msw: false
+  sharp: true
+  sodium-native: true
+  unrs-resolver: true
 
 overrides:
   axios@<0.30.0: ">=0.30.0"
