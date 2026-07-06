@@ -10,15 +10,19 @@
 
 ## 다른 구독 프록시와 다른점
 
-기존 구독 토큰 프록시(claude-proxy 등)는 CLI를 한 번 호출하고 텍스트를 반환하는 **single-turn 텍스트 프록시**입니다. 구독 토큰은 공식 API가 아니라 CLI/앱을 통해서만 사용 가능하고, CLI는 tool-call이나 structured output 같은 API 기능을 지원하지 않기 때문입니다.
+기존 구독 토큰 프록시(claude-proxy 등)는 CLI를 한 번 호출하고 텍스트를 반환하는 **single-turn 텍스트 프록시**입니다. 구독 토큰은 공식 API가 아니라 CLI/앱을 통해서만 사용 가능하고, 단순 CLI 호출로는 tool-call, structured output, multi-turn agent loop 같은 API 기능을 쓸 수 없기 때문입니다.
 
-> **참고:** `claude -p`에서 structured output emulation으로 tool-call 형태를 흉내낼 수는 있지만, `claude -p`는 매 호출이 독립된 single-turn이라 **multi-turn을 지원하지 않습니다.** tool-call → tool 실행 → 결과를 다음 턴에 전달하는 agent loop가 근본적으로 불가능합니다. 또한 Anthropic은 2026-06-18부로 `claude -p`의 서드파티 사용을 제한할 예정입니다.
+Qgrid는 두 개의 CLI 런타임 위에 AI SDK `LanguageModelV3` custom provider를 구현하여 이 문제를 해결합니다:
 
-Qgrid는 이 문제를 **codex app-server를 백엔드로 사용**하여 해결합니다. codex app-server는 OpenAI의 Responses API를 구독 토큰으로 사용할 수 있는 JSON-RPC 서버이고, Qgrid가 이 위에 AI SDK `LanguageModelV3` custom provider를 구현했습니다. 덕분에:
+- **OpenAI** — [codex app-server](https://github.com/openai/codex). 구독 토큰으로 Responses API를 쓸 수 있는 JSON-RPC 서버입니다. Qgrid는 토큰당 persistent worker 프로세스를 유지하고, 대화 thread를 재사용해 prompt cache를 적중시킵니다.
+- **Anthropic** — Claude Code `stream-json` 모드. 요청마다 격리된 프로세스를 fresh spawn하고 전체 대화 히스토리를 재주입하므로, persistent session 없이도 multi-turn이 동작합니다.
 
-- **Tool Calling** — AI SDK의 `tools` 옵션이 그대로 동작. 서버가 structured output emulation으로 tool-call 형태를 만들고, AI SDK가 tool 실행을 관리.
+덕분에:
+
+- **Tool Calling** — AI SDK의 `tools` 옵션이 양쪽 provider 모두에서 그대로 동작. 서버가 structured output emulation으로 tool-call 형태를 만들고, AI SDK가 tool 실행을 관리.
 - **Multi-step Agent Loop** — `stopWhen`, `maxSteps`로 tool-call → tool 실행 → 다음 턴을 자동 반복. 구독 토큰으로 agent를 만들 수 있음.
-- **Structured Output** — `Output.object({ schema })` 로 JSON schema 강제. 파싱 실패 없음.
+- **Structured Output** — `Output.object({ schema })` 로 JSON schema 강제. OpenAI는 codex structured output으로, Anthropic은 Claude Code `--json-schema` + 후검증으로 처리하며 검증 실패 시 깨진 JSON 대신 명시적 에러 반환.
+- **Prompt Caching** — `sessionKey`만 넘기면 멀티턴 대화가 같은 codex thread로 라우팅되어 prompt cache 적중 (OpenAI).
 - **Streaming** — [Sonamu Framework](https://github.com/cartanova-ai/sonamu)의 SSE 기반 실시간 텍스트 스트리밍.
 
 ---
@@ -31,8 +35,9 @@ Qgrid는 이 문제를 **codex app-server를 백엔드로 사용**하여 해결�
   ```ts
   model: qgrid("openai/gpt-5.4-mini")  // 이것만 바꾸면 됨
   ```
-- **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. 토큰당 worker N개로 동시 요청 분산.
-- **Request Log 대시보드** — 매 요청의 토큰 사용량, 비용, tool-call 내역, reasoning을 웹 UI에서 실시간 확인.
+- **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. 토큰당 worker N개로 동시 요청 분산. 토큰별 quota threshold로 사용률 초과 토큰은 라우팅에서 자동 제외.
+- **Request Log 대시보드** — 매 요청의 토큰 사용량, 비용, 캐시 적중, TTFT, tool-call 내역, reasoning을 웹 UI에서 실시간 확인.
+- **이미지 생성** — 요청 단위로 codex `image_generation` tool을 켜고 표준 AI SDK 응답으로 PNG 파일 수신.
 - **OpenAI + Anthropic** — 양쪽 구독 토큰 모두 등록 가능. OAuth 원클릭 로그인.
 
 ---
@@ -105,9 +110,10 @@ pnpm add @cartanova/qgrid-ai-sdk
 
 ![Qgrid architecture](./assets/qgrid-architecture.ko.svg)
 
-- **OpenAI** — codex app-server 프로세스를 토큰당 N개 spawn. JSON-RPC로 통신. 병렬 요청 처리 + 요청 큐잉.
-- **Anthropic** — claude CLI를 통한 호출. OAuth 토큰 자동 refresh.
-- **Request Log** — 매 요청의 generate step, tool-call step, reasoning, 토큰 사용량, 비용을 DB에 기록. 대시보드에서 확인.
+- **OpenAI** — persistent codex app-server 프로세스를 토큰당 N개 spawn. JSON-RPC로 통신. idle worker에 round-robin 라우팅, 전부 busy면 큐 대기(60초 타임아웃). `sessionKey`가 있는 멀티턴 대화는 같은 thread로 재라우팅되어 prompt cache 적중.
+- **Anthropic** — 요청마다 격리된 Claude Code 프로세스를 fresh spawn (`stream-json` 입출력, 토큰별 config 격리). 대화 히스토리는 매 턴 재주입. OAuth 토큰 자동 refresh.
+- **Quota threshold** — 토큰별 사용률 임계값(기본 80%). 임계값을 넘은 토큰은 rolling window가 회복될 때까지 라우팅에서 제외.
+- **Request Log** — 매 요청의 generate step, tool-call step, reasoning, 토큰 사용량, 캐시 지표, TTFT, 비용을 DB에 기록. 대시보드에서 확인.
 
 > **codex 내장 하네스 제거:** codex app-server는 매 요청마다 내장 tool(shell, web_search, apply_patch 등 14개)과 instruction 블록(permissions, environment_context, skills, ~10KB)을 자동 주입합니다. Qgrid는 worker의 `config.toml`로 이를 전부 비활성화하고 최소 system prompt + no environment로 실행합니다. 덕분에 codex가 **coding agent가 아니라 순수 텍스트 생성 엔드포인트**처럼 동작하며, 불필요한 input token 오버헤드와 엉뚱한 내장 tool 호출이 없습니다. 모델이 보는 tool은 AI SDK로 넘긴 것뿐입니다.
 
@@ -115,7 +121,7 @@ pnpm add @cartanova/qgrid-ai-sdk
 
 ## SDK 사용법
 
-자세한 사용법은 [`@cartanova/qgrid-ai-sdk` README](./packages/ai-sdk/README.md)를 참조하세요.
+자세한 사용법은 [`@cartanova/qgrid-ai-sdk` README](./packages/ai-sdk/README.ko.md)를 참조하세요.
 
 ### 텍스트 생성
 
@@ -172,6 +178,30 @@ const { text } = await generateText({
 });
 ```
 
+### Prompt Caching (sessionKey)
+
+```typescript
+// 멀티턴 대화를 같은 codex thread로 라우팅 → prompt cache 적중 (OpenAI)
+const { text } = await generateText({
+  model: qgrid("openai/gpt-5.4-mini"),
+  prompt: nextTurn,
+  providerOptions: { qgrid: { sessionKey: "chat-room-42" } },
+});
+```
+
+### 이미지 생성
+
+```typescript
+// OpenAI 경로 + generateText 전용 — 해당 요청에만 codex image_generation tool 활성화
+const result = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  prompt: "우주를 나는 고래 일러스트",
+  providerOptions: { qgrid: { imageGeneration: true } },
+});
+
+const image = result.files[0]; // mediaType: "image/png", base64
+```
+
 ---
 
 ## CLI
@@ -182,6 +212,8 @@ npm i -g @cartanova/qgrid-cli
 qgrid --db postgres://user:password@host:port/dbname
 qgrid --db postgres://... -p 3000  # 포트 지정
 ```
+
+CLI 설치 시 코딩 에이전트용 qgrid skill이 자동 동기화됩니다 — global 설치는 `~/.codex/skills/qgrid`, `~/.claude/skills/qgrid`, 프로젝트 설치는 `.agents/skills`, `.claude/skills`. 자세한 내용은 [`@cartanova/qgrid-cli` README](./packages/cli/README.ko.md)를 참조하세요.
 
 환경변수로 DB 설정 가능:
 
@@ -206,9 +238,10 @@ qgrid --db postgres://user:pw@dev.example.com:5432/qgrid
 
 # 각 팀원 프로젝트에서
 QGRID_URL=http://localhost:44900
+QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 ```
 
-대시보드에서 전체 팀의 request log를 프로젝트별로 필터링하여 확인할 수 있습니다.
+대시보드에서 전체 팀의 request log를 프로젝트별로 필터링하여 확인할 수 있습니다. 트래픽이 늘어도 워크로드를 구분할 수 있도록 각 프로젝트에 `QGRID_PROJECT_NAME`을 설정하세요.
 
 ---
 
@@ -216,8 +249,10 @@ QGRID_URL=http://localhost:44900
 
 | Provider | 모델 |
 |---|---|
-| OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, `openai/gpt-5.3-codex` |
-| Anthropic | `anthropic/claude-sonnet-4-7`, `anthropic/claude-opus-4-7`, `anthropic/claude-haiku-4-5` 등 |
+| OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
+| Anthropic | `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
+
+> `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8`은 자동으로 1M 토큰 컨텍스트로 실행됩니다.
 
 ---
 
@@ -226,10 +261,15 @@ QGRID_URL=http://localhost:44900
 | 변수 | 설명 | 기본값 |
 |---|---|---|
 | `QGRID_URL` | qgrid 서버 주소 (SDK) | `http://localhost:44900` |
+| `QGRID_PROJECT_NAME` | request log 프로젝트 이름 (SDK/logger). 대시보드 프로젝트별 필터링에 사용 | (없음) |
 | `QGRID_DB_HOST` | PostgreSQL 호스트 | `localhost` |
 | `QGRID_DB_PORT` | PostgreSQL 포트 | `5432` |
+| `QGRID_DB_USER` | PostgreSQL 사용자 | `postgres` |
+| `QGRID_DB_PASSWORD` | PostgreSQL 비밀번호 | `postgres` |
 | `QGRID_DB_NAME` | 데이터베이스 이름 | `qgrid` |
 | `QGRID_WORKERS_PER_TOKEN` | OpenAI 토큰당 worker 수 | `3` (최대 5) |
+| `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL | `http://localhost:<port>` |
+| `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
 
 ---
 
@@ -259,5 +299,6 @@ packages/
 ## 주의사항
 
 - **OpenAI 모델**: codex app-server 기반. `temperature`, `maxOutputTokens` 등 sampling 파라미터는 지원하지 않습니다.
-- **Anthropic 모델**: claude CLI 기반. OAuth 로그인 필요.
-- **쿼터 관리**: 구독 rate limit (5시간/7일 rolling window) 적용. 소진된 토큰은 대시보드에서 비활성화.
+- **Anthropic 모델**: Claude Code 기반. OAuth 로그인 필요. tool calling과 structured output은 OpenAI와 동일하게 동작하지만, 요청마다 fresh process로 실행되므로 `sessionKey` thread reuse는 적용되지 않습니다.
+- **Anthropic structured output**: codex(constrained decoding)와 달리 Claude Code의 `--json-schema`는 생성을 강제하지 않고 가이드+사후 검증하므로, 복잡한 schema는 간헐적으로 검증에 실패할 수 있습니다. qgrid는 내부 재시도를 기본 차단하고 1회만 시도하며, 실패 시 깨진 JSON 대신 명시적 에러를 반환합니다.
+- **쿼터 관리**: 구독 rate limit (5시간/7일 rolling window) 적용. 토큰별 quota threshold(기본 80%) 초과 시 라우팅에서 자동 제외되며, 대시보드에서 수동 비활성화도 가능합니다.

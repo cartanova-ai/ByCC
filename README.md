@@ -10,15 +10,19 @@ Call GPT-5.5, Claude Opus, and more on a **flat-rate subscription** instead of p
 
 ## How it differs from other subscription proxies
 
-Existing subscription-token proxies (claude-proxy and the like) are **single-turn text proxies** — they invoke a CLI once and return text. Subscription tokens aren't usable through an official API, only through the CLI/app, and the CLI doesn't support API features like tool calls or structured output.
+Existing subscription-token proxies (claude-proxy and the like) are **single-turn text proxies** — they invoke a CLI once and return text. Subscription tokens aren't usable through an official API, only through the CLI/app, and a bare CLI invocation doesn't support API features like tool calls, structured output, or multi-turn agent loops.
 
-> **Note:** While `claude -p` can mimic tool-call shapes through structured output emulation, each `claude -p` call is an independent single-turn invocation, so it **does not support multi-turn.** The agent loop of tool-call → tool execution → feeding the result into the next turn is fundamentally impossible. Anthropic also plans to restrict third-party use of `claude -p` as of 2026-06-18.
+Qgrid solves this by implementing an AI SDK `LanguageModelV3` custom provider on top of two CLI runtimes:
 
-Qgrid solves this by **using codex app-server as the backend.** codex app-server is a JSON-RPC server that lets you use OpenAI's Responses API with a subscription token, and Qgrid implements an AI SDK `LanguageModelV3` custom provider on top of it. As a result:
+- **OpenAI** — [codex app-server](https://github.com/openai/codex), a JSON-RPC server that exposes the Responses API on a subscription token. Qgrid keeps persistent worker processes per token and reuses conversation threads for prompt caching.
+- **Anthropic** — Claude Code in `stream-json` mode. Qgrid spawns a fresh, isolated process per request and replays the full conversation history, so multi-turn works without persistent sessions.
 
-- **Tool Calling** — The AI SDK's `tools` option works as-is. The server produces tool-call shapes through structured output emulation, and the AI SDK manages tool execution.
+As a result:
+
+- **Tool Calling** — The AI SDK's `tools` option works as-is on both providers. The server produces tool-call shapes through structured output emulation, and the AI SDK manages tool execution.
 - **Multi-step Agent Loop** — `stopWhen` and `maxSteps` automatically repeat tool-call → tool execution → next turn. You can build agents on a subscription token.
-- **Structured Output** — Enforce a JSON schema with `Output.object({ schema })`. No parse failures.
+- **Structured Output** — Enforce a JSON schema with `Output.object({ schema })`. OpenAI enforces it through codex structured output; Anthropic goes through Claude Code `--json-schema` with post-validation that fails honestly instead of returning broken JSON.
+- **Prompt Caching** — Pass a `sessionKey` and multi-turn conversations are routed back to the same codex thread, hitting the provider prompt cache (OpenAI).
 - **Streaming** — Real-time text streaming over SSE via the [Sonamu Framework](https://github.com/cartanova-ai/sonamu).
 
 ---
@@ -31,8 +35,9 @@ Qgrid solves this by **using codex app-server as the backend.** codex app-server
   ```ts
   model: qgrid("openai/gpt-5.4-mini")  // just change this
   ```
-- **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Distribute concurrent requests across N workers per token.
-- **Request Log dashboard** — Inspect token usage, cost, tool-call traces, and reasoning for every request in real time through a web UI.
+- **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Distribute concurrent requests across N workers per token, with per-token quota thresholds that automatically exclude overloaded tokens from routing.
+- **Request Log dashboard** — Inspect token usage, cost, cache hits, TTFT, tool-call traces, and reasoning for every request in real time through a web UI.
+- **Image generation** — Opt into Codex's `image_generation` tool per request and receive PNG files through the standard AI SDK response.
 - **OpenAI + Anthropic** — Register subscription tokens for both. One-click OAuth login.
 
 ---
@@ -105,9 +110,10 @@ If you're already using the google/openai provider directly, **add one line** to
 
 ![Qgrid architecture](./assets/qgrid-architecture.en.svg)
 
-- **OpenAI** — Spawns N codex app-server processes per token. Communicates over JSON-RPC. Handles parallel requests with queuing.
-- **Anthropic** — Calls through the claude CLI. OAuth tokens are refreshed automatically.
-- **Request Log** — Records each request's generate steps, tool-call steps, reasoning, token usage, and cost in the DB. View them in the dashboard.
+- **OpenAI** — Spawns N persistent codex app-server processes per token. Communicates over JSON-RPC. Routes requests round-robin across idle workers and queues when all are busy (60s timeout). Multi-turn conversations with a `sessionKey` are routed back to the same thread for prompt-cache hits.
+- **Anthropic** — Spawns a fresh, isolated Claude Code process per request (`stream-json` in/out) with per-token config isolation. Conversation history is replayed each turn; OAuth tokens are refreshed automatically.
+- **Quota threshold** — Each token has a utilization threshold (default 80%). Tokens over the threshold are excluded from routing until their rolling window recovers.
+- **Request Log** — Records each request's generate steps, tool-call steps, reasoning, token usage, cache metrics, TTFT, and cost in the DB. View them in the dashboard.
 
 > **Stripping the Codex built-in harness:** codex app-server auto-injects built-in tools (shell, web_search, apply_patch, and 14 others) and instruction blocks (permissions, environment_context, skills, ~10KB) on every request. Qgrid disables all of these via the worker's `config.toml` and runs with a minimal system prompt and no environment. As a result, codex behaves like a **plain text-generation endpoint rather than a coding agent**, with no unnecessary input-token overhead and no stray built-in tool calls. The only tools the model sees are the ones you pass through the AI SDK.
 
@@ -172,6 +178,30 @@ const { text } = await generateText({
 });
 ```
 
+### Prompt caching (sessionKey)
+
+```typescript
+// Route multi-turn conversations to the same codex thread → prompt cache hits (OpenAI)
+const { text } = await generateText({
+  model: qgrid("openai/gpt-5.4-mini"),
+  prompt: nextTurn,
+  providerOptions: { qgrid: { sessionKey: "chat-room-42" } },
+});
+```
+
+### Image generation
+
+```typescript
+// OpenAI route, generateText only — enables Codex's image_generation tool for this request
+const result = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  prompt: "An illustration of a whale flying through space",
+  providerOptions: { qgrid: { imageGeneration: true } },
+});
+
+const image = result.files[0]; // mediaType: "image/png", base64
+```
+
 ---
 
 ## CLI
@@ -182,6 +212,8 @@ npm i -g @cartanova/qgrid-cli
 qgrid --db postgres://user:password@host:port/dbname
 qgrid --db postgres://... -p 3000  # specify port
 ```
+
+Installing the CLI also syncs the qgrid agent skill for coding agents — into `~/.codex/skills/qgrid` and `~/.claude/skills/qgrid` on a global install, or into the project's `.agents/skills` and `.claude/skills` on a project install. See the [`@cartanova/qgrid-cli` README](./packages/cli/README.md) for details.
 
 You can configure the DB with environment variables:
 
@@ -206,9 +238,10 @@ qgrid --db postgres://user:pw@dev.example.com:5432/qgrid
 
 # In each teammate's project
 QGRID_URL=http://localhost:44900
+QGRID_PROJECT_NAME=my-service   # labels request logs per project
 ```
 
-In the dashboard you can filter the whole team's request logs by project.
+In the dashboard you can filter the whole team's request logs by project — set `QGRID_PROJECT_NAME` in each project so workloads stay distinguishable as traffic grows.
 
 ---
 
@@ -216,8 +249,10 @@ In the dashboard you can filter the whole team's request logs by project.
 
 | Provider | Models |
 |---|---|
-| OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, `openai/gpt-5.3-codex` |
-| Anthropic | `anthropic/claude-sonnet-4-7`, `anthropic/claude-opus-4-7`, `anthropic/claude-haiku-4-5`, and more |
+| OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
+| Anthropic | `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
+
+> `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-8` automatically run with a 1M-token context window.
 
 ---
 
@@ -226,10 +261,15 @@ In the dashboard you can filter the whole team's request logs by project.
 | Variable | Description | Default |
 |---|---|---|
 | `QGRID_URL` | Qgrid server address (SDK) | `http://localhost:44900` |
+| `QGRID_PROJECT_NAME` | Request log project name (SDK/logger). Enables per-project filtering in the dashboard | (empty) |
 | `QGRID_DB_HOST` | PostgreSQL host | `localhost` |
 | `QGRID_DB_PORT` | PostgreSQL port | `5432` |
+| `QGRID_DB_USER` | PostgreSQL user | `postgres` |
+| `QGRID_DB_PASSWORD` | PostgreSQL password | `postgres` |
 | `QGRID_DB_NAME` | Database name | `qgrid` |
 | `QGRID_WORKERS_PER_TOKEN` | Workers per OpenAI token | `3` (max 5) |
+| `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
+| `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
 
 ---
 
@@ -259,5 +299,6 @@ packages/
 ## Notes
 
 - **OpenAI models**: codex app-server based. Sampling parameters like `temperature` and `maxOutputTokens` are not supported.
-- **Anthropic models**: claude CLI based. Requires OAuth login.
-- **Quota management**: Subscription rate limits apply (5-hour / 7-day rolling window). Exhausted tokens can be disabled in the dashboard.
+- **Anthropic models**: Claude Code based. Requires OAuth login. Tool calling and structured output work the same as OpenAI; `sessionKey` thread reuse does not apply because every request runs in a fresh process.
+- **Structured output on Anthropic**: unlike codex (constrained decoding), Claude Code's `--json-schema` guides rather than constrains generation, so complex schemas can occasionally fail validation. Qgrid runs a single attempt (internal retries disabled by default) and surfaces an explicit error instead of returning broken JSON.
+- **Quota management**: Subscription rate limits apply (5-hour / 7-day rolling window). Each token has a quota threshold (default 80%) that excludes it from routing when exceeded; tokens can also be disabled manually in the dashboard.

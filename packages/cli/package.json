@@ -12,7 +12,8 @@
     "dist",
     "bundle",
     "postinstall.mjs",
-    "skills"
+    "skills",
+    "README.ko.md"
   ],
   "type": "module",
   "scripts": {
