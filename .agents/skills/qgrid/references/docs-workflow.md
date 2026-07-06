@@ -28,3 +28,5 @@ Before changing runtime-sensitive areas, search `docs/diagnosis`, `docs/solution
 - token isolation and auth env leaks.
 
 Do not copy stale docs blindly. Use docs to identify decisions and then verify against current code.
+
+When a repo doc establishes or changes durable rationale for a qgrid feature, reflect the stable decision in `references/decision-rationale.md`. Keep the skill reference as a compact index of why the decision exists and where the source docs live; do not copy full plans or brainstorms into the skill.

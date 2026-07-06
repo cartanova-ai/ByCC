@@ -19,6 +19,7 @@ Before changing code, identify the affected path:
 - Provider comparisons, routing, or cross-provider bugs: read `references/provider-runtime-differences.md`.
 - Tool calling, AI SDK multi-step loops, or tool-call request logs: read `references/tool-calling-and-multiturn.md`.
 - `sessionKey`, `threadCoord`, prompt cache metrics, usage accounting, or cost: read `references/prompt-cache-and-usage.md`.
+- Design rationale, prior decisions, or "why is this feature shaped this way?": read `references/decision-rationale.md`.
 - Dashboard changes: read `references/sonamu-api-web-flow.md`.
 - Request log lifecycle, tool-call steps, telemetry/logger behavior: read `references/request-log-run-lifecycle.md`.
 - Choosing tests, smoke scripts, or debugging common runtime errors: read `references/verification-and-debugging.md`.
