@@ -9,6 +9,7 @@ import ArrowLeftIcon from "~icons/lucide/arrow-left";
 import CheckIcon from "~icons/lucide/check";
 import ChevronDownIcon from "~icons/lucide/chevron-down";
 import CopyIcon from "~icons/lucide/copy";
+import XIcon from "~icons/lucide/x";
 
 import { cacheHitRate, formatMicroUsd } from "@/lib/cost";
 import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
@@ -86,23 +87,114 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function FormattedContent({ text, markdown }: { text: string; markdown?: boolean }) {
-  const parsed = tryParseJson(text);
-  const [mode, setMode] = useState<"pretty" | "plain">("pretty");
+type ImageSegment =
+  | { type: "text"; text: string }
+  | { type: "image"; src: string; alt: string };
 
-  if (!parsed.ok) {
-    if (markdown) {
-      return (
-        <div className="prose prose-sm prose-qgrid max-w-none">
-          <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
-        </div>
-      );
-    }
-    return (
+const DATA_IMAGE_TAG_RE =
+  /<img\s+[^>]*src=["'](data:image\/[^"']+;base64,[^"']+)["'][^>]*(?:alt=["']([^"']*)["'][^>]*)?\/?>/gi;
+
+function parseImageSegments(text: string): ImageSegment[] {
+  const segments: ImageSegment[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(DATA_IMAGE_TAG_RE)) {
+    const index = match.index ?? 0;
+    if (index > cursor) segments.push({ type: "text", text: text.slice(cursor, index) });
+    segments.push({ type: "image", src: match[1]!, alt: match[2] ?? "generated image" });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) segments.push({ type: "text", text: text.slice(cursor) });
+  return segments.filter((segment) => segment.type === "image" || segment.text.trim().length > 0);
+}
+
+function ImageAwareContent({ text, markdown }: { text: string; markdown?: boolean }) {
+  const [viewerSrc, setViewerSrc] = useState<string | null>(null);
+  const segments = parseImageSegments(text);
+  const hasImage = segments.some((segment) => segment.type === "image");
+  if (!hasImage) {
+    return markdown ? (
+      <div className="prose prose-sm prose-qgrid max-w-none">
+        <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+      </div>
+    ) : (
       <pre className="text-sm text-sand-800 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed">
         {text}
       </pre>
     );
+  }
+
+  return (
+    <div className="space-y-3">
+      {segments.map((segment, index) =>
+        segment.type === "text" ? (
+          markdown ? (
+            <div key={`text-${index}`} className="prose prose-sm prose-qgrid max-w-none">
+              <Markdown remarkPlugins={[remarkGfm]}>{segment.text}</Markdown>
+            </div>
+          ) : (
+            <pre
+              key={`text-${index}`}
+              className="text-sm text-sand-800 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed"
+            >
+              {segment.text}
+            </pre>
+          )
+        ) : (
+          <button
+            key={`image-${index}`}
+            type="button"
+            className="block max-w-full rounded-md border border-sand-200 overflow-hidden bg-white hover:border-sienna-300 transition-colors"
+            onClick={() => setViewerSrc(segment.src)}
+            title="Open image"
+          >
+            <img
+              src={segment.src}
+              alt={segment.alt}
+              className="max-h-[520px] max-w-full object-contain"
+              loading="lazy"
+            />
+          </button>
+        ),
+      )}
+      {viewerSrc && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center"
+          onClick={() => setViewerSrc(null)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/90 text-sand-700 hover:bg-white"
+            onClick={() => setViewerSrc(null)}
+            title="Close image"
+          >
+            <XIcon className="size-5" />
+          </button>
+          <img
+            src={viewerSrc}
+            alt="generated image preview"
+            className="max-h-full max-w-full object-contain rounded-md bg-white"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FormattedContent({ text, markdown }: { text: string; markdown?: boolean }) {
+  const parsed = tryParseJson(text);
+  const [mode, setMode] = useState<"pretty" | "plain">("pretty");
+
+  const canRenderJsonView =
+    parsed.ok &&
+    parsed.value !== null &&
+    (Array.isArray(parsed.value) || typeof parsed.value === "object");
+
+  if (!parsed.ok || !canRenderJsonView) {
+    if (markdown) {
+      return <ImageAwareContent text={text} markdown />;
+    }
+    return <ImageAwareContent text={parsed.ok ? JSON.stringify(parsed.value, null, 2) : text} />;
   }
 
   return (
@@ -237,7 +329,14 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
             tokensPerSecEnabled,
           )}
         />
-        <Metric label="Cost" value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"} />
+        <Metric
+          label="Driver Cost"
+          value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"}
+        />
+        <Metric
+          label="Image Cost"
+          value={data.image_cost_usd !== null ? formatMicroUsd(data.image_cost_usd) : "—"}
+        />
         <Metric label="Tool Calls" value={`${toolCallCount}회`} />
       </div>
       <div className="border-t border-sand-100/60 pt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3">

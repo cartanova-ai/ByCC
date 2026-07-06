@@ -33,11 +33,14 @@ export const requestLogSubsetQueries = {
       duration_ms: "request_logs.duration_ms",
       ttft_ms: "request_logs.ttft_ms",
       cost_usd: "request_logs.cost_usd",
+      image_cost_usd: "request_logs.image_cost_usd",
+      image_cost_method: "request_logs.image_cost_method",
       effort: "request_logs.effort",
       history: "request_logs.history",
       status: "request_logs.status",
       error_message: "request_logs.error_message",
       tool_call_count: "request_logs.tool_call_count",
+      is_image_generation: "request_logs.is_image_generation",
     });
   },
   P: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
@@ -54,9 +57,12 @@ export const requestLogSubsetQueries = {
       duration_ms: "request_logs.duration_ms",
       ttft_ms: "request_logs.ttft_ms",
       cost_usd: "request_logs.cost_usd",
+      image_cost_usd: "request_logs.image_cost_usd",
+      image_cost_method: "request_logs.image_cost_method",
       effort: "request_logs.effort",
       status: "request_logs.status",
       tool_call_count: "request_logs.tool_call_count",
+      is_image_generation: "request_logs.is_image_generation",
     });
   },
 };

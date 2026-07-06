@@ -33,6 +33,16 @@ import {
   finishRunAborted,
   finishRunWithError,
 } from "./qgrid-run-lifecycle";
+import {
+  formatImagePartForLog,
+  formatResponseForLog,
+  getImageParts,
+  imageGenerationToolArgs,
+} from "./qgrid-response-format";
+import {
+  estimateImageGenerationCostMicroUsd,
+  imageGenerationCostMethod,
+} from "./qgrid-image-generation";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type QueryInput,
@@ -90,6 +100,13 @@ function getOAuthRedirectUri(): string {
   return `http://localhost:${serverPort}/callback`;
 }
 
+function rejectImageGenerationStream(args: QueryInput): void {
+  if (!args.imageGeneration) return;
+  throw new BadRequestException(
+    "qgrid: imageGeneration is not supported with streaming; use query/generateText instead." as LocalizedString,
+  );
+}
+
 const logger = getLogger(["qgrid"]);
 const oauthLogger = getLogger(["qgrid", "oauth"]);
 
@@ -132,11 +149,13 @@ class QgridFrameClass extends BaseFrameClass {
   // logMode "auto" 단일 요청 로깅: run lifecycle(step 분해) 없이 request_log 1건만 남긴다.
   // query와 queryStream 양쪽에서 사용.
   private saveAutoRequestLog(args: QueryInput, result: QueryOutput): void {
+    const imageParts = getImageParts(result);
+    const imageCostMicroUsd = estimateImageGenerationCostMicroUsd(
+      result,
+      args.imageGenerationOptions,
+    );
     const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
-    const responseText = result.content
-      .filter((item) => item.type === "text")
-      .map((item) => item.text)
-      .join("\n");
+    const responseText = formatResponseForLog(result);
 
     RequestLogModel.save([
       {
@@ -153,6 +172,9 @@ class QgridFrameClass extends BaseFrameClass {
         duration_ms: result.durationMs,
         ttft_ms: result.ttftMs,
         cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
+        image_cost_usd: imageCostMicroUsd,
+        image_cost_method:
+          imageCostMicroUsd !== null ? imageGenerationCostMethod(args.imageGenerationOptions) : null,
         effort: args.effort ?? null,
         // malformed history가 와도 성공한 턴(특히 stream sse.end())을 깨지 않도록 방어.
         history: ((): { type: string }[] | null => {
@@ -164,12 +186,32 @@ class QgridFrameClass extends BaseFrameClass {
         })(),
         status: "succeeded",
         tool_call_count: toolCallCount,
+        // 이미지 turn 식별(R13): quota 소모를 이미지 워크로드에 귀속.
+        is_image_generation: args.imageGeneration ?? false,
       },
-    ]).catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
+    ])
+      .then(async (ids) => {
+        const requestLogId = ids[0];
+        if (!requestLogId || imageParts.length === 0) return;
+        for (let i = 0; i < imageParts.length; i++) {
+          const image = imageParts[i]!;
+          await RequestLogModel.appendStep(requestLogId, {
+            step_index: 0,
+            type: "tool_call",
+            tool_call_index: i,
+            tool_call_id: `image_generation:0:${i}`,
+            tool_name: "image_generation",
+            tool_args: imageGenerationToolArgs(args),
+            tool_result: formatImagePartForLog(image),
+          });
+        }
+      })
+      .catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async prepareStream(args: QueryInput): Promise<{ streamId: string }> {
+    rejectImageGenerationStream(args);
     const streamId = crypto.randomUUID();
     pendingStreams.set(streamId, args);
     setTimeout(() => pendingStreams.delete(streamId), 30_000);
@@ -181,6 +223,7 @@ class QgridFrameClass extends BaseFrameClass {
     const args = pendingStreams.get(streamId);
     pendingStreams.delete(streamId);
     if (!args) throw new Error("invalid or expired streamId");
+    rejectImageGenerationStream(args);
 
     const effectiveLogMode = args.logMode ?? (args.isStep ? "run" : "auto");
     const shouldLog = effectiveLogMode === "run";

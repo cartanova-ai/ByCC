@@ -209,6 +209,7 @@ class RequestLogModelClass extends BaseModelClass<
     effort?: string | null;
     project_name?: string | null;
     history?: unknown;
+    is_image_generation?: boolean;
   }): Promise<number> {
     const wdb = this.getPuri("w");
     wdb.ubRegister("request_logs", {
@@ -225,6 +226,8 @@ class RequestLogModelClass extends BaseModelClass<
       cache_creation_tokens: 0,
       duration_ms: 0,
       tool_call_count: 0,
+      // 이미지 turn 식별(R13). run 경로(tools+image 조합)도 auto 경로와 동일하게 마킹.
+      is_image_generation: params.is_image_generation ?? false,
       ...(params.history !== undefined ? { history: params.history as { type: string }[] } : {}),
     });
     return wdb.transaction(async (trx) => {
@@ -259,6 +262,8 @@ class RequestLogModelClass extends BaseModelClass<
       history?: unknown;
       error_message?: string;
       tool_call_count?: number;
+      image_cost_usd?: number | null;
+      image_cost_method?: string | null;
     },
   ): Promise<void> {
     if (params.status === "succeeded" && !params.token_name) {
@@ -275,6 +280,8 @@ class RequestLogModelClass extends BaseModelClass<
       "duration_ms",
       "error_message",
       "tool_call_count",
+      "image_cost_usd",
+      "image_cost_method",
     ] as const;
     for (const key of fields) {
       if (params[key] !== undefined) update[key] = params[key];

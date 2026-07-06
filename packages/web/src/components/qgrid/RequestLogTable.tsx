@@ -219,7 +219,11 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                       {row.tool_call_count > 0 ? row.tool_call_count : "—"}
                     </td>
                     <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
-                      {row.cost_usd !== null ? formatMicroUsd(row.cost_usd) : "—"}
+                      {row.image_cost_usd !== null
+                        ? formatMicroUsd((row.cost_usd ?? 0) + row.image_cost_usd)
+                        : row.cost_usd !== null
+                          ? formatMicroUsd(row.cost_usd)
+                          : "—"}
                     </td>
                     <td className="px-2 py-1.5">
                       <ChevronRightIcon className="size-4 text-sand-400" />

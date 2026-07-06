@@ -93,4 +93,109 @@ describe("qgrid run lifecycle TTFT", () => {
       }),
     );
   });
+
+  it("finishes runs with image data-url img tags in response", async () => {
+    await afterQuery(
+      10,
+      2,
+      { prompt: "draw", imageGeneration: true },
+      queryOutput({
+        text: "image ready",
+        content: [
+          { type: "text", text: "image ready" },
+          { type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "green triangle" },
+        ],
+      }),
+    );
+
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        response:
+          'image ready\n<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
+      }),
+    );
+  });
+
+  it("records image generation as a completed synthetic tool call step", async () => {
+    await afterQuery(
+      10,
+      2,
+      { prompt: "draw a green triangle", model: "openai/gpt-5.5", imageGeneration: true },
+      queryOutput({
+        text: "image ready",
+        content: [
+          { type: "text", text: "image ready" },
+          { type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "green triangle" },
+        ],
+      }),
+    );
+
+    expect(appendStepMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        step_index: 2,
+        type: "tool_call",
+        tool_call_index: 0,
+        tool_call_id: "image_generation:2:0",
+        tool_name: "image_generation",
+        tool_args: JSON.stringify({
+          prompt: "draw a green triangle",
+          driverModel: "openai/gpt-5.5",
+          tool: {
+            type: "image_generation",
+            outputFormat: "png",
+          },
+          pricingAssumption: {
+            model: "gpt-image-2",
+            quality: "medium",
+            size: "1536x1024",
+          },
+        }),
+        tool_result: '<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
+      }),
+    );
+  });
+
+  it("passes configured image generation cost estimate into finishRun", async () => {
+    await afterQuery(
+      10,
+      2,
+      { prompt: "draw", imageGeneration: true },
+      queryOutput({
+        content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "green triangle" }],
+      }),
+    );
+
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        image_cost_usd: 41000,
+        image_cost_method: "assumed:gpt-image-2:medium:1536x1024:png",
+      }),
+    );
+  });
+
+  it("uses requested image quality and size for cost estimate", async () => {
+    await afterQuery(
+      10,
+      2,
+      {
+        prompt: "draw",
+        imageGeneration: true,
+        imageGenerationOptions: { quality: "high", size: "1024x1024" },
+      },
+      queryOutput({
+        content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "green triangle" }],
+      }),
+    );
+
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        image_cost_usd: 211000,
+        image_cost_method: "assumed:gpt-image-2:high:1024x1024:png",
+      }),
+    );
+  });
 });

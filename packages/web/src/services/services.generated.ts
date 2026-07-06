@@ -513,6 +513,11 @@ export namespace QgridService {
                 toolCallId: string;
                 toolName: string;
                 input: string;
+              }
+            | {
+                type: "image";
+                data: string;
+                revisedPrompt?: string | null;
               }[];
           runContext?: {
             requestLogId?: number;
@@ -564,6 +569,11 @@ export namespace QgridService {
               toolCallId: string;
               toolName: string;
               input: string;
+            }
+          | {
+              type: "image";
+              data: string;
+              revisedPrompt?: string | null;
             }[];
         runContext?: {
           requestLogId?: number;

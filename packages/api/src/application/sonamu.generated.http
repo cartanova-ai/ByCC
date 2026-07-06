@@ -182,11 +182,14 @@ Content-Type: application/json
       "duration_ms": 0,
       "ttft_ms": 0,
       "cost_usd": null,
+      "image_cost_usd": null,
+      "image_cost_method": null,
       "effort": null,
       "history": null,
       "status": "running",
       "error_message": null,
-      "tool_call_count": 0
+      "tool_call_count": 0,
+      "is_image_generation": false
     }
   ]
 }
@@ -245,7 +248,12 @@ Content-Type: application/json
         "output": "OUTPUT",
         "isError": false
       }
-    ]
+    ],
+    "imageGeneration": false,
+    "imageGenerationOptions": {
+      "quality": "low",
+      "size": "1024x1024"
+    }
   }
 }
 
@@ -292,7 +300,12 @@ Content-Type: application/json
         "output": "OUTPUT",
         "isError": false
       }
-    ]
+    ],
+    "imageGeneration": false,
+    "imageGenerationOptions": {
+      "quality": "low",
+      "size": "1024x1024"
+    }
   }
 }
 

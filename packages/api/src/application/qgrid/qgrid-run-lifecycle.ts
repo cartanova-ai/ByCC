@@ -7,6 +7,16 @@ import {
   type QueryInput,
   type QueryOutput,
 } from "./qgrid.types";
+import {
+  formatImagePartForLog,
+  formatResponseForLog,
+  getImageParts,
+  imageGenerationToolArgs,
+} from "./qgrid-response-format";
+import {
+  estimateImageGenerationCostMicroUsd,
+  imageGenerationCostMethod,
+} from "./qgrid-image-generation";
 
 const logger = getLogger(["qgrid", "run-lifecycle"]);
 const STALE_RUN_THRESHOLD_MS = 30 * 60 * 1000;
@@ -64,6 +74,7 @@ export async function beforeQuery(args: QueryInput): Promise<{
       model_name: args.model,
       effort: args.effort,
       project_name: args.projectName,
+      is_image_generation: args.imageGeneration,
     });
   }
 
@@ -89,6 +100,24 @@ export async function afterQuery(
     finish_reason: result.finishReason,
   });
 
+  const imageParts = getImageParts(result);
+  const imageCostMicroUsd = estimateImageGenerationCostMicroUsd(
+    result,
+    args.imageGenerationOptions,
+  );
+  for (let i = 0; i < imageParts.length; i++) {
+    const image = imageParts[i]!;
+    await RequestLogModel.appendStep(requestLogId, {
+      step_index: stepIndex,
+      type: "tool_call",
+      tool_call_index: i,
+      tool_call_id: `image_generation:${stepIndex}:${i}`,
+      tool_name: "image_generation",
+      tool_args: imageGenerationToolArgs(args),
+      tool_result: formatImagePartForLog(image),
+    });
+  }
+
   if (result.finishReason === "tool-calls") {
     // tool-call step 즉시 기록 (result는 나중에 completeToolCall로 채움)
     const toolCalls = result.content.filter((c) => c.type === "tool-call");
@@ -98,7 +127,7 @@ export async function afterQuery(
       await RequestLogModel.appendStep(requestLogId, {
         step_index: stepIndex,
         type: "tool_call",
-        tool_call_index: i,
+        tool_call_index: imageParts.length + i,
         tool_call_id: tc.toolCallId,
         tool_name: tc.toolName,
         tool_args: tc.input,
@@ -112,13 +141,16 @@ export async function afterQuery(
   const agg = await RequestLogModel.aggregateStepUsage(requestLogId);
   await RequestLogModel.finishRun(requestLogId, {
     status: "succeeded",
-    response: result.text,
+    response: formatResponseForLog(result),
     token_name: result.tokenName,
     input_tokens: agg.input_tokens,
     output_tokens: agg.output_tokens,
     cache_read_tokens: agg.cache_read_tokens,
     cache_creation_tokens: agg.cache_creation_tokens,
     duration_ms: agg.duration_ms,
+    image_cost_usd: imageCostMicroUsd,
+    image_cost_method:
+      imageCostMicroUsd !== null ? imageGenerationCostMethod(args.imageGenerationOptions) : null,
     history: filterHistoryForStorage(args.history),
   });
 

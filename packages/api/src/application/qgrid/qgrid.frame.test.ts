@@ -7,6 +7,7 @@ const {
   findManyMock,
   saveMock,
   requestLogSaveMock,
+  appendStepMock,
   dispatcherQueryMock,
   getRateLimitsByTokenIdMock,
 } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const {
   findManyMock: vi.fn(),
   saveMock: vi.fn(),
   requestLogSaveMock: vi.fn(),
+  appendStepMock: vi.fn(),
   dispatcherQueryMock: vi.fn(),
   getRateLimitsByTokenIdMock: vi.fn(),
 }));
@@ -22,6 +24,7 @@ vi.mock("../request-log/request-log.model", () => ({
   MICRO_USD: 1_000_000,
   RequestLogModel: {
     save: requestLogSaveMock,
+    appendStep: appendStepMock,
   },
 }));
 
@@ -65,6 +68,8 @@ describe("QgridFrame.updateToken", () => {
     saveMock.mockResolvedValue([1]);
     requestLogSaveMock.mockReset();
     requestLogSaveMock.mockResolvedValue([1]);
+    appendStepMock.mockReset();
+    appendStepMock.mockResolvedValue(1);
     dispatcherQueryMock.mockReset();
   });
 
@@ -137,6 +142,79 @@ describe("QgridFrame.query auto logging", () => {
     expect(requestLogSaveMock).toHaveBeenCalledWith([
       expect.objectContaining({ ttft_ms: 0 }),
     ]);
+  });
+
+  it("persists image parts in response as data-url img tags", async () => {
+    dispatcherQueryMock.mockResolvedValueOnce({
+      ...queryOutput(39),
+      text: "image ready",
+      content: [
+        { type: "text", text: "image ready" },
+        { type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "green triangle" },
+      ],
+    });
+
+    await QgridFrame.query({
+      prompt: "draw",
+      model: "openai/gpt-5-codex",
+      logMode: "auto",
+      imageGeneration: true,
+    });
+
+    expect(requestLogSaveMock).toHaveBeenCalledWith([
+      expect.objectContaining({
+        response:
+          'image ready\n<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
+        tool_call_count: 0,
+        is_image_generation: true,
+        image_cost_usd: 41000,
+        image_cost_method: "assumed:gpt-image-2:medium:1536x1024:png",
+      }),
+    ]);
+    expect(appendStepMock).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        step_index: 0,
+        type: "tool_call",
+        tool_call_index: 0,
+        tool_call_id: "image_generation:0:0",
+        tool_name: "image_generation",
+        tool_args: JSON.stringify({
+          prompt: "draw",
+          driverModel: "openai/gpt-5-codex",
+          tool: {
+            type: "image_generation",
+            outputFormat: "png",
+          },
+          pricingAssumption: {
+            model: "gpt-image-2",
+            quality: "medium",
+            size: "1536x1024",
+          },
+        }),
+        tool_result: '<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
+      }),
+    );
+  });
+});
+
+describe("QgridFrame.prepareStream", () => {
+  beforeEach(() => {
+    dispatcherQueryMock.mockReset();
+    requestLogSaveMock.mockReset();
+  });
+
+  it("rejects imageGeneration before creating an SSE stream", async () => {
+    await expect(
+      QgridFrame.prepareStream({
+        prompt: "draw",
+        model: "openai/gpt-5-codex",
+        imageGeneration: true,
+      }),
+    ).rejects.toThrow(/imageGeneration is not supported with streaming/);
+
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    expect(requestLogSaveMock).not.toHaveBeenCalled();
   });
 });
 

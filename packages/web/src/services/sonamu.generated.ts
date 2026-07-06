@@ -103,11 +103,14 @@ export const RequestLogBaseSchema = z.object({
   duration_ms: z.int(),
   ttft_ms: z.int(),
   cost_usd: z.int().nullable(),
+  image_cost_usd: z.int().nullable(),
+  image_cost_method: z.string().max(100).nullable(),
   effort: z.string().max(10).nullable(),
   history: HistoryItems.nullable(),
   status: RequestLogStatus,
   error_message: z.string().nullable(),
   tool_call_count: z.int(),
+  is_image_generation: z.boolean(),
 });
 export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
   readonly __hasDefault__: readonly [
@@ -125,11 +128,14 @@ export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
     "duration_ms",
     "ttft_ms",
     "cost_usd",
+    "image_cost_usd",
+    "image_cost_method",
     "effort",
     "history",
     "status",
     "error_message",
     "tool_call_count",
+    "is_image_generation",
     "id",
   ];
 };
@@ -262,11 +268,14 @@ export const RequestLogSubsetA = z.object({
   duration_ms: z.int(),
   ttft_ms: z.int(),
   cost_usd: z.int().nullable(),
+  image_cost_usd: z.int().nullable(),
+  image_cost_method: z.string().max(100).nullable(),
   effort: z.string().max(10).nullable(),
   history: HistoryItems.nullable(),
   status: RequestLogStatus,
   error_message: z.string().nullable(),
   tool_call_count: z.int(),
+  is_image_generation: z.boolean(),
 });
 export type RequestLogSubsetA = z.infer<typeof RequestLogSubsetA>;
 export const RequestLogSubsetP = z.object({
@@ -282,9 +291,12 @@ export const RequestLogSubsetP = z.object({
   duration_ms: z.int(),
   ttft_ms: z.int(),
   cost_usd: z.int().nullable(),
+  image_cost_usd: z.int().nullable(),
+  image_cost_method: z.string().max(100).nullable(),
   effort: z.string().max(10).nullable(),
   status: RequestLogStatus,
   tool_call_count: z.int(),
+  is_image_generation: z.boolean(),
 });
 export type RequestLogSubsetP = z.infer<typeof RequestLogSubsetP>;
 export type RequestLogSubsetMapping = {
