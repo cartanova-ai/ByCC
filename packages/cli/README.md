@@ -8,6 +8,13 @@ Qgrid 서버를 한 줄로 실행. OpenAI/Anthropic 구독 크레딧을 HTTP API
 npm i -g @cartanova/qgrid-cli
 ```
 
+설치 시 qgrid skills가 자동 동기화됨:
+
+- global install: `~/.codex/skills/qgrid`, `~/.claude/skills/qgrid`
+- project install: `.agents/skills/qgrid`, `.claude/skills/qgrid`
+
+project install에서는 symlink를 만들고, symlink가 실패하면 copy로 fallback함.
+
 ## PostgreSQL 준비
 
 Qgrid는 OAuth 토큰과 request log를 저장하기 위해 PostgreSQL이 필요함.

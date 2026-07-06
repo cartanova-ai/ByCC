@@ -10,12 +10,15 @@
   },
   "files": [
     "dist",
-    "bundle"
+    "bundle",
+    "postinstall.mjs",
+    "skills"
   ],
   "type": "module",
   "scripts": {
     "bundle": "cd ../api && pnpm build && cd ../cli && rm -rf bundle && mkdir -p bundle/public && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
     "build": "tsdown",
+    "postinstall": "node postinstall.mjs",
     "prepublishOnly": "pnpm run bundle"
   },
   "dependencies": {
