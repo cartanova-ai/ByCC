@@ -8,6 +8,8 @@ Use this reference for qgrid startup, configuration, and runtime-facing environm
 - `-p, --port <port>`: server port. Default `44900`. The CLI validates the port and refuses to start if it is already in use.
 - `--skip-update`: skip qgrid CLI self-update check.
 
+The self-update check is strict: when npm reports a newer `@cartanova/qgrid-cli`, including patch releases, the CLI installs that exact resolved version and restarts from the updated binary. Do not use a moving `@latest` install target for this path; exact versions avoid stale pnpm global project ranges.
+
 The CLI also ensures runtime CLIs are installed/current enough:
 
 - `codex` from `@openai/codex`, required for OpenAI tokens.

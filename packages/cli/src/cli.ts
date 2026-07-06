@@ -6,6 +6,14 @@ import { fileURLToPath } from "node:url";
 
 import { Command } from "commander";
 
+import {
+  detectSelfUpdatePackageManager,
+  pnpmGlobalBinDir,
+  resolveQgridRestartCommand,
+  selfUpdateInstallCommand,
+  withPrependedPath,
+} from "./self-update";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
@@ -26,9 +34,9 @@ const RUNTIME_CLI_DEPENDENCIES = [
 
 type RuntimeCliDependency = (typeof RUNTIME_CLI_DEPENDENCIES)[number];
 
-function commandVersion(command: string): string | null {
+function commandVersion(command: string, env: NodeJS.ProcessEnv = process.env): string | null {
   try {
-    return execFileSync(command, ["--version"], { encoding: "utf-8", stdio: "pipe" }).trim();
+    return execFileSync(command, ["--version"], { encoding: "utf-8", env, stdio: "pipe" }).trim();
   } catch {
     return null;
   }
@@ -43,6 +51,14 @@ function packageLatestVersion(packageName: string): string {
 
 function parseVersion(output: string | null): string | null {
   return output?.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/)?.[0] ?? null;
+}
+
+function commandPath(command: string): string {
+  try {
+    return execFileSync("which", [command], { encoding: "utf-8", stdio: "pipe" }).trim();
+  } catch {
+    return "";
+  }
 }
 
 function warnMissingRuntimeCliDependency(dep: RuntimeCliDependency): void {
@@ -121,18 +137,34 @@ program
       const shouldUpdate = latest !== pkg.version;
 
       if (shouldUpdate) {
-        // pnpm으로 설치됐으면 pnpm, 아니면 npm
-        const isPnpm =
-          process.env.npm_config_user_agent?.includes("pnpm") ||
-          execSync("which qgrid", { encoding: "utf-8" }).includes("pnpm");
-        const installCmd = isPnpm
-          ? "pnpm add -g @cartanova/qgrid-cli@latest"
-          : "npm i -g @cartanova/qgrid-cli@latest";
+        const packageManager = detectSelfUpdatePackageManager(commandPath("qgrid"));
+        const globalBinDir = packageManager === "pnpm" ? pnpmGlobalBinDir() : null;
+        const updateEnv = withPrependedPath(process.env, globalBinDir);
+        const installCmd = selfUpdateInstallCommand(packageManager, "@cartanova/qgrid-cli", latest);
         console.log(`Updating qgrid-cli: ${pkg.version} → ${latest}`);
-        execSync(installCmd, { stdio: "inherit" });
+        const updated = spawnSync(installCmd.command, installCmd.args, {
+          env: updateEnv,
+          stdio: "inherit",
+        });
+        if (updated.status !== 0) {
+          console.error(`Failed to update qgrid-cli to ${latest}.`);
+          console.error(`Fix the global ${packageManager} installation and run qgrid again.`);
+          process.exit(updated.status ?? 1);
+        }
+
+        const restartCommand = resolveQgridRestartCommand(packageManager, globalBinDir);
+        const updatedVersion = parseVersion(commandVersion(restartCommand, updateEnv));
+        if (updatedVersion !== latest) {
+          console.error(
+            `Failed to run updated qgrid-cli. Expected ${latest}, found ${updatedVersion ?? "unknown"}.`,
+          );
+          console.error(`Check PATH and global ${packageManager} bin configuration.`);
+          process.exit(1);
+        }
+
         console.log("Updated. Restarting...\n");
         const args = process.argv.slice(2).concat("--skip-update");
-        const restarted = spawnSync("qgrid", args, { stdio: "inherit" });
+        const restarted = spawnSync(restartCommand, args, { env: updateEnv, stdio: "inherit" });
         process.exit(restarted.status ?? 0);
       }
     }

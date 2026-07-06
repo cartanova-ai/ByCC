@@ -70,8 +70,8 @@ qgrid [options]
   -h, --help         Help
 ```
 
-On startup the CLI checks the latest version on npm and self-updates only when the major/minor version has increased.
-Patch-level differences are not treated as auto-update targets.
+On startup the CLI checks the latest version on npm and self-updates whenever the installed version differs, including patch releases.
+The updater installs the exact published version it just resolved and restarts from the updated binary.
 
 ## Environment variables
 
