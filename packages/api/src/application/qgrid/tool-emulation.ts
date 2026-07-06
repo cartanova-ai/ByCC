@@ -16,6 +16,27 @@ type ToolCallResponse = {
   toolCalls?: Array<{ toolName: string; args: string }> | null;
 };
 
+// dispatcher 가 넘기는 이미지 결과. qgrid 는 base64 payload 만 전달하고 포맷은 보장하지 않는다.
+export interface EmulationImage {
+  data: string;
+  revisedPrompt?: string | null;
+}
+
+// 조립된 content 뒤에 이미지 파트를 append 한다. 모든 반환 분기가 공유.
+function appendImages(content: QgridContent[], images?: EmulationImage[]): QgridContent[] {
+  if (!images?.length) return content;
+  return [
+    ...content,
+    ...images.map(
+      (img): QgridContent => ({
+        type: "image",
+        data: img.data,
+        revisedPrompt: img.revisedPrompt ?? null,
+      }),
+    ),
+  ];
+}
+
 export function buildToolCallSchema(tools: QgridTool[]): JsonValue {
   const toolDescriptions = tools
     .map((tool) => {
@@ -72,13 +93,15 @@ export function applyToolCallEmulation(
   result: Omit<QueryOutput, "content" | "finishReason" | "runContext">,
   tools?: QgridTool[],
   threadCoord?: QgridThreadCoord,
+  images?: EmulationImage[],
 ): QueryOutput {
   // thread 재사용 좌표를 runContext 로 실어 올린다 (auto 모드는 requestLogId 없이 threadCoord 만).
   const runContext = threadCoord ? { threadCoord } : undefined;
+  // 이미지는 finishReason 과 직교하는 content 파트. 조립된 content 뒤에 append 한다.
 
   if (!tools?.length) {
     const content: QgridContent[] = [{ type: "text", text: result.text }];
-    return { ...result, content, finishReason: "stop", runContext };
+    return { ...result, content: appendImages(content, images), finishReason: "stop", runContext };
   }
 
   let parsed: ToolCallResponse;
@@ -88,7 +111,7 @@ export function applyToolCallEmulation(
     logger.warn(`tool-call emulation parse failed, falling back to text: ${(e as Error).message}`);
     return {
       ...result,
-      content: [{ type: "text", text: result.text }],
+      content: appendImages([{ type: "text", text: result.text }], images),
       finishReason: "stop",
       runContext,
     };
@@ -108,14 +131,14 @@ export function applyToolCallEmulation(
         input: toolCall.args,
       };
     });
-    return { ...result, content, finishReason: "tool-calls", runContext };
+    return { ...result, content: appendImages(content, images), finishReason: "tool-calls", runContext };
   }
 
   const text = parsed.answer ?? result.text;
   return {
     ...result,
     text,
-    content: [{ type: "text", text }],
+    content: appendImages([{ type: "text", text }], images),
     finishReason: "stop",
     runContext,
   };

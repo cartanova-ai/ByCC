@@ -153,6 +153,22 @@ describe("QgridDispatcherClass", () => {
     expect(req.coldInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
   });
 
+  it("Anthropic query 에도 imageGeneration 플래그를 전달해 provider 가 명시적으로 거부하게 한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (_req: GenerateRequest) =>
+      providerResult({ model: "claude-sonnet-4-6" }),
+    );
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "draw",
+      model: "anthropic/claude-sonnet-4-6",
+      imageGeneration: true,
+    });
+
+    expect(generate.mock.calls[0]![0].imageGeneration).toBe(true);
+  });
+
   it("Anthropic queryStream 도 reuse/reuseInput 을 provider 로 전달하지 않고 delta/complete 를 보존한다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generateStream = vi.fn(async (_req, cb) => {
@@ -193,6 +209,23 @@ describe("QgridDispatcherClass", () => {
         }),
       }),
     );
+  });
+
+  it("Anthropic queryStream 에도 imageGeneration 플래그를 전달해 provider 가 명시적으로 거부하게 한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generateStream = vi.fn(async (_req, _cb) => {});
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    await dispatcher.queryStream(
+      {
+        prompt: "draw",
+        model: "anthropic/claude-sonnet-4-6",
+        imageGeneration: true,
+      },
+      { onDelta: vi.fn(), onComplete: vi.fn(), onError: vi.fn() },
+    );
+
+    expect(generateStream.mock.calls[0]![0].imageGeneration).toBe(true);
   });
 
   it("jsonSchema 를 required + additionalProperties:false 로 strictify 한다", () => {

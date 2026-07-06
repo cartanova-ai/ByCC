@@ -311,8 +311,7 @@ describe("CodexAppServerWorker prompt prefix", () => {
 });
 
 describe("CodexAppServerWorker image generation capture", () => {
-  // 유효 PNG base64 (\x89PNG... 시그니처). 완성 이미지 판정 기준.
-  const PNG_B64 = "iVBORw0KGgoBAgMEBQYHCA==";
+  const IMAGE_B64 = "iVBORw0KGgoBAgMEBQYHCA==";
 
   function imageItem(id: string, result: string, revisedPrompt: string | null = null) {
     return { type: "imageGeneration", id, status: "generating", result, revisedPrompt };
@@ -324,11 +323,11 @@ describe("CodexAppServerWorker image generation capture", () => {
       if (method === "turn/start") {
         handlers.get("item/completed")?.({
           threadId: "t1",
-          item: imageItem("img-a", PNG_B64, "a red circle"),
+          item: imageItem("img-a", IMAGE_B64, "a red circle"),
         } as never);
         handlers.get("item/completed")?.({
           threadId: "t1",
-          item: imageItem("img-b", PNG_B64, "a blue square"),
+          item: imageItem("img-b", IMAGE_B64, "a blue square"),
         } as never);
         handlers.get("turn/completed")?.({
           threadId: "t1",
@@ -346,18 +345,18 @@ describe("CodexAppServerWorker image generation capture", () => {
 
     expect(result.images).toHaveLength(2);
     expect(result.images?.map((i) => i.revisedPrompt)).toEqual(["a red circle", "a blue square"]);
-    expect(result.images?.[0]?.data).toBe(PNG_B64);
+    expect(result.images?.[0]?.data).toBe(IMAGE_B64);
     expect(result.imageAttempted).toBe(true);
   });
 
-  it("treats status='generating' completed item with valid PNG as a finished image", async () => {
+  it("treats status='generating' completed item with valid base64 as a finished image", async () => {
     const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
       if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
       if (method === "turn/start") {
         // 실측: 완료 item 의 status 가 "generating" 으로 와도 result 는 완성 base64.
         handlers.get("item/completed")?.({
           threadId: "t1",
-          item: imageItem("img-a", PNG_B64),
+          item: imageItem("img-a", IMAGE_B64),
         } as never);
         handlers.get("turn/completed")?.({
           threadId: "t1",
@@ -379,8 +378,8 @@ describe("CodexAppServerWorker image generation capture", () => {
     const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
       if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
       if (method === "turn/start") {
-        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("dup", PNG_B64) } as never);
-        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("dup", PNG_B64) } as never);
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("dup", IMAGE_B64) } as never);
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("dup", IMAGE_B64) } as never);
         handlers.get("turn/completed")?.({
           threadId: "t1",
           turn: { status: "completed", durationMs: 50 },
@@ -422,12 +421,12 @@ describe("CodexAppServerWorker image generation capture", () => {
     expect(result.imageAttempted).toBe(true);
   });
 
-  it("does not count an empty or non-PNG result as a finished image", async () => {
+  it("does not count an empty or invalid base64 result as a finished image", async () => {
     const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
       if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
       if (method === "turn/start") {
         handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("empty", "") } as never);
-        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("junk", "notbase64png") } as never);
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("junk", "not-base64") } as never);
         handlers.get("turn/completed")?.({
           threadId: "t1",
           turn: { status: "completed", durationMs: 50 },
@@ -449,7 +448,7 @@ describe("CodexAppServerWorker image generation capture", () => {
     const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
       if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
       if (method === "turn/start") {
-        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("img-a", PNG_B64) } as never);
+        handlers.get("item/completed")?.({ threadId: "t1", item: imageItem("img-a", IMAGE_B64) } as never);
         handlers.get("turn/completed")?.({
           threadId: "t1",
           turn: { status: "failed", error: { message: "boom" } },

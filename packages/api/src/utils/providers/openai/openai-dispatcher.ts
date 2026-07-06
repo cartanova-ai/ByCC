@@ -506,6 +506,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       reasoningSummary: req.reasoningSummary,
       serviceTier: req.serviceTier,
       imageGeneration: req.imageGeneration,
+      imageGenerationOptions: req.imageGenerationOptions,
     };
   }
 

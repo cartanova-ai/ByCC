@@ -23,6 +23,12 @@ export const QgridContent = z.discriminatedUnion("type", [
     toolName: z.string(),
     input: z.string(),
   }),
+  z.object({
+    type: z.literal("image"),
+    // Codex image_generation result base64. qgrid 는 포맷/확장자 책임을 지지 않는다.
+    data: z.string(),
+    revisedPrompt: z.string().nullish(),
+  }),
 ]);
 export type QgridContent = z.infer<typeof QgridContent>;
 
@@ -37,6 +43,18 @@ export type ReasoningSummary = z.infer<typeof ReasoningSummary>;
 
 export const ServiceTier = z.enum(["fast", "flex"]);
 export type ServiceTier = z.infer<typeof ServiceTier>;
+
+export const ImageGenerationQuality = z.enum(["low", "medium", "high"]);
+export type ImageGenerationQuality = z.infer<typeof ImageGenerationQuality>;
+
+export const ImageGenerationSize = z.enum(["1024x1024", "1024x1536", "1536x1024"]);
+export type ImageGenerationSize = z.infer<typeof ImageGenerationSize>;
+
+export const ImageGenerationOptions = z.object({
+  quality: ImageGenerationQuality.optional(),
+  size: ImageGenerationSize.optional(),
+});
+export type ImageGenerationOptions = z.infer<typeof ImageGenerationOptions>;
 
 // ─── Run Lifecycle Context (SDK ↔ Server contract) ───
 
@@ -86,6 +104,10 @@ export const QueryInput = z.object({
   logMode: QgridLogMode.optional(),
   runContext: QgridRunContext.optional(),
   toolResults: z.array(QgridToolResultInput).optional(),
+  // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in, non-stream).
+  imageGeneration: z.boolean().optional(),
+  // qgrid 가격 추정 및 Codex 이미지 요청 힌트. 이미지 모델은 gpt-image-2 로 고정 가정한다.
+  imageGenerationOptions: ImageGenerationOptions.optional(),
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 

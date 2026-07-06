@@ -87,13 +87,17 @@ export class QgridDispatcherClass {
         coldHistory: decision.coldHistory,
         reuse: decision.reuse,
         reuseInput: decision.reuseInput,
+        imageGeneration: input.imageGeneration,
+        imageGenerationOptions: input.imageGenerationOptions,
       });
 
-      return applyToolCallEmulation(
-        toEmulationResult(result),
-        input.tools,
-        issueConvContext(result.threadCoord, decision),
-      );
+      // 이미지 요청은 cold-only(R8)라 재사용 좌표를 발급하지 않는다. 좌표를 실으면
+      // sessionKey 소비자의 warm 좌표를 죽은 좌표로 덮어써 다음 텍스트 turn 이 cold 로 떨어진다.
+      const coord = input.imageGeneration
+        ? undefined
+        : issueConvContext(result.threadCoord, decision);
+
+      return applyToolCallEmulation(toEmulationResult(result), input.tools, coord, result.images);
     } else if (route.provider === "anthropic") {
       if (!this.anthropicDispatcher) throw new QuotaError("Anthropic dispatcher not initialized");
 
@@ -106,6 +110,8 @@ export class QgridDispatcherClass {
         effort: input.effort,
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
+        imageGeneration: input.imageGeneration,
+        imageGenerationOptions: input.imageGenerationOptions,
       });
 
       return applyToolCallEmulation(
@@ -144,6 +150,9 @@ export class QgridDispatcherClass {
           reuse: decision.reuse,
           reuseInput: decision.reuseInput,
           abortSignal,
+          // 이미지 플래그를 전달해야 generateStream 의 non-stream 전용 거부(R2)가 발동한다.
+          imageGeneration: input.imageGeneration,
+          imageGenerationOptions: input.imageGenerationOptions,
         },
         {
           onDelta: cb.onDelta,
@@ -175,6 +184,8 @@ export class QgridDispatcherClass {
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
           abortSignal,
+          imageGeneration: input.imageGeneration,
+          imageGenerationOptions: input.imageGenerationOptions,
         },
         {
           onDelta: cb.onDelta,

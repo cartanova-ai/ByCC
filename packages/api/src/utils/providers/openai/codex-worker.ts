@@ -12,6 +12,11 @@ import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStart
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
 import { type TurnStartResponse } from "../../../codex-protocol/v2/TurnStartResponse";
+import {
+  CODEX_IMAGE_GENERATION_MODEL,
+  resolveImageGenerationOptions,
+} from "../../../application/qgrid/qgrid-image-generation";
+import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
 import { type StreamCallbacks as CommonStreamCallbacks } from "../common/provider-dispatcher";
 import { createTtftTracker } from "../common/ttft";
 import { CodexRpcClient } from "./codex-rpc";
@@ -46,11 +51,12 @@ export interface TurnRequest {
   // thread 단위로만 활성화되며(전역 config 는 image_generation=false 유지),
   // 플래그 없는 요청은 tool 구성이 현행과 동일하다.
   imageGeneration?: boolean;
+  imageGenerationOptions?: ImageGenerationOptions;
 }
 
 // 한 turn 에서 생성된 이미지 하나. codex imageGeneration item 에서 파생.
 export interface TurnImage {
-  data: string; // base64 PNG (item.result)
+  data: string; // base64 image payload (item.result)
   revisedPrompt: string | null;
 }
 
@@ -90,13 +96,19 @@ const BASE_INSTRUCTIONS =
 const IMAGE_BASE_INSTRUCTIONS =
   "You are a helpful assistant. When asked to create an image, use the image_generation tool to produce it. Do not use any other tools such as shell, file operations, or web search.";
 
-// base64 로 인코딩된 PNG 시그니처(\x89PNG...) 의 표준 접두사.
-// 실측상 완료 item 의 status 는 "generating" 으로 와도 result 에 완성 base64 가 실린다.
-// 따라서 완성 판정은 status 문자열이 아니라 result 의 유효성(비어있지 않고 PNG 시그니처)으로 한다.
-const PNG_BASE64_PREFIX = "iVBORw0KGgo";
+function imageBaseInstructions(options: ImageGenerationOptions | undefined): string {
+  const resolved = resolveImageGenerationOptions(options);
+  return `${IMAGE_BASE_INSTRUCTIONS} Requested image output: model ${CODEX_IMAGE_GENERATION_MODEL}, quality ${resolved.quality}, size ${resolved.size}, format png.`;
+}
 
+// 실측상 완료 item 의 status 는 "generating" 으로 와도 result 에 완성 base64 가 실린다.
+// 따라서 완성 판정은 status 문자열이 아니라 result 의 유효성(비어있지 않고 표준 base64 인지)으로 한다.
 function isCompletedImageResult(result: unknown): result is string {
-  return typeof result === "string" && result.startsWith(PNG_BASE64_PREFIX);
+  if (typeof result !== "string") return false;
+  const trimmed = result.trim();
+  if (trimmed.length === 0 || trimmed.startsWith("data:")) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed) || trimmed.length % 4 !== 0) return false;
+  return true;
 }
 
 // codex가 매 요청에 자동 주입하는 내장 tool(shell/web_search/spawn_agent 등 14개)과
@@ -424,7 +436,9 @@ export class CodexAppServerWorker {
       {
         ephemeral: true,
         cwd: `${this.codexHome}/cwd`,
-        baseInstructions: req.imageGeneration ? IMAGE_BASE_INSTRUCTIONS : BASE_INSTRUCTIONS,
+        baseInstructions: req.imageGeneration
+          ? imageBaseInstructions(req.imageGenerationOptions)
+          : BASE_INSTRUCTIONS,
         developerInstructions: req.developerInstructions ?? "",
         sandbox: THREAD_DEFAULTS.sandbox,
         approvalPolicy: THREAD_DEFAULTS.approvalPolicy,

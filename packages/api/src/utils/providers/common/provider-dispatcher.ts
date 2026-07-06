@@ -7,6 +7,7 @@
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
 
 // qgrid provider 내부 표준 usage. codex-protocol 의 TokenUsageBreakdown 은 생성 파일이므로
 // provider 전용 cache write 세부 필드는 여기서 확장해 보존한다.
@@ -52,6 +53,7 @@ export interface GenerateRequest {
   // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in).
   // 이 플래그가 있으면 dispatcher 는 항상 cold thread 로 실행하고 재사용 라우팅을 건너뛴다.
   imageGeneration?: boolean;
+  imageGenerationOptions?: ImageGenerationOptions;
 }
 
 export interface GenerateResult {
