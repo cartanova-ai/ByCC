@@ -15,6 +15,12 @@ The caller-supplied string qgrid uses as a logical request-affinity hint. On the
 
 Distinct call kinds (different output schemas) must use distinct sessionKeys when the route can reuse a thread: the output schema sits in the cacheable prefix, so mixing schemas on one thread breaks the cache for all of them. Callers should not branch on provider-specific reuse rules; they pass qgrid provider options, and qgrid decides how each model route applies them.
 
+### Conversation fingerprint
+The server-computed identity of a conversation prefix: a hash over the system prompt, the output schema, the caller's declared project name (a best-effort caller boundary, not an authentication boundary), the model, the verbosity setting, and the canonically normalized declared history. Two requests belong to the same logical conversation exactly when their fingerprints match — identity is defined by full declared-history equality, never guessed from partial signals. A registered fingerprint is always the *next-turn* expectation and therefore includes the previous assistant response, so an empty-history request, a retry, or a reroll can never collide with a live conversation's key. Normalization is fail-closed: history content the normalizer does not recognize yields no fingerprint at all rather than a lossy one.
+
+### Thread registry
+The server-side map from a conversation's next-turn fingerprint to the thread coordinate holding its accumulated state, enabling thread reuse without any client-side coordinate round-trip. Entries are checked out on match (a synchronous get-and-delete, so one of two concurrent identical requests wins and the other goes cold) and re-registered only when a turn completes successfully; a failed turn discards the entry because its thread may hold a partially applied turn. A thread has at most one live entry (enforced via a threadId reverse index), and starting a turn on a thread through any path — explicit coordinate, synthesized coordinate, or tool follow-up — invalidates that thread's existing entry, so an entry can never describe a thread that has since advanced. Misses and discarded entries fall back to a cold thread with full history injection, so the miss direction is always safe; the hit direction's correctness rests on the fingerprint-equality invariant plus this invalidation rule.
+
 ## Token pool capability
 
 ### 1M context entitlement
@@ -29,6 +35,14 @@ On the Anthropic path, the boundary within which a prompt cache is shared: token
 How a provider makes a model conform to a requested JSON schema, and how strong that guarantee is. The two routes qgrid uses differ in kind, not degree. The OpenAI/codex route uses constrained decoding: the schema constrains token generation itself, so a conforming object is the only thing the model can emit — field omission, placeholder, or refusal cannot escape. The Anthropic/Claude Code route is not constrained decoding: the schema becomes a synthetic output tool whose input the model writes freely, validated against the schema only after generation; the model can therefore produce a non-conforming attempt that is caught (and retried, or failed) after the fact. The practical consequence is that the Anthropic route is inherently less reliable for structured output than the OpenAI route, and that gap lives in the provider, not in qgrid.
 
 Because Anthropic enforcement is a guide-then-validate, the schema's `required` set is load-bearing: a field kept required is reliably filled, while a field made optional is frequently omitted key-and-all — so loosening a schema to "accept" omissions instead induces them. Outputs that exhaust the schema-retry budget or otherwise terminate non-successfully (including degenerate placeholder or refusal text) are treated as honest failures, not rescued, because partial or speculative structured output cannot be safely promoted to success.
+
+## Image generation
+
+### Image turn
+A turn whose request carries the image-generation opt-in flag, enabling codex's built-in image tool for that turn only. Image turns are validated twice — capability before the turn, at-least-one-completed-image after — because codex silently returns text-only when its gates are unmet, and a silent fallback would masquerade as success. Image turns never participate in thread reuse: their payloads would otherwise sit in thread memory and the cacheable prefix. A request without the flag is unchanged in tool surface and cache behavior.
+
+### Image tool model
+The model in a qgrid image request is the Codex/Responses driver model, for example `openai/gpt-5.5`. qgrid does not call the Images API directly; it exposes Codex's hosted `image_generation` Responses tool, whose current local contract only lets qgrid observe/control `output_format: "png"`. Codex returns the generated image payload but not the image tool's usage tokens or exact underlying image model. For quota/cost attribution, qgrid records a separate pricing assumption (`gpt-image-2`, caller/default `quality`, caller/default `size`, `png`) in synthetic tool args and stores the image output estimate in `request_logs.image_cost_usd`; `request_logs.cost_usd` remains the driver model token cost.
 
 ## Token accounting
 
