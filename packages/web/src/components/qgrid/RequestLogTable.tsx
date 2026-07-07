@@ -29,9 +29,10 @@ function formatDuration(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-// TTFT 는 보통 1초 미만이라 초 단위로 뭉개면 "0s" 가 된다. ms/s 적응형으로 표기.
-// ttft_ms 는 0-fallback(non-null)이라 duration 과 마찬가지로 0 도 그대로 보여준다.
+// request_logs.ttft_ms stores 0 as the run-level "unknown/no measured TTFT" fallback.
+// Non-zero TTFT is usually sub-second, so use adaptive ms/s formatting.
 function formatTtft(ms: number): string {
+  if (ms <= 0) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 

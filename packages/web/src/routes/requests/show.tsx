@@ -87,9 +87,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-type ImageSegment =
-  | { type: "text"; text: string }
-  | { type: "image"; src: string; alt: string };
+type ImageSegment = { type: "text"; text: string } | { type: "image"; src: string; alt: string };
 
 const DATA_IMAGE_TAG_RE =
   /<img\s+[^>]*src=["'](data:image\/[^"']+;base64,[^"']+)["'][^>]*(?:alt=["']([^"']*)["'][^>]*)?\/?>/gi;
@@ -171,7 +169,7 @@ function ImageAwareContent({ text, markdown }: { text: string; markdown?: boolea
           </button>
           <img
             src={viewerSrc}
-            alt="generated image preview"
+            alt="generated preview"
             className="max-h-full max-w-full object-contain rounded-md bg-white"
             onClick={(e) => e.stopPropagation()}
           />
@@ -319,7 +317,7 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
     <div className="panel overflow-hidden px-5 py-3 space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3">
         <Metric label="Duration" value={`${(data.duration_ms / 1000).toFixed(1)}s`} />
-        <Metric label="TTFT" value={formatDurationMs(data.ttft_ms)} />
+        <Metric label="TTFT" value={formatRunTtftMs(data.ttft_ms)} />
         <Metric
           label="Tokens/sec"
           value={formatTokensPerSec(
@@ -360,6 +358,13 @@ type ToolCallEntry = {
   error: string | null;
 };
 
+type ToolInputImage = {
+  mediaType?: string;
+  data?: string;
+  url?: string;
+  byteSize?: number;
+};
+
 type GenerateStepEntry = {
   id: number;
   stepIndex: number;
@@ -382,6 +387,11 @@ type StepTreeEntry = {
 function formatDurationMs(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function formatRunTtftMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms <= 0) return "—";
+  return formatDurationMs(ms);
 }
 
 function detectTokenRateProvider(source: {
@@ -422,7 +432,8 @@ function formatTokensPerSec(
     durationMs === null ||
     durationMs === undefined ||
     ttftMs === null ||
-    ttftMs === undefined
+    ttftMs === undefined ||
+    ttftMs <= 0
   ) {
     return "—";
   }
@@ -440,6 +451,97 @@ function CompactMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function readToolInputImages(args: unknown): unknown[] | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return [];
+  const inputImages = (args as { inputImages?: unknown }).inputImages;
+  return Array.isArray(inputImages) ? inputImages : undefined;
+}
+
+function getToolInputImages(args: unknown): ToolInputImage[] {
+  return (readToolInputImages(args) ?? []).filter((item): item is ToolInputImage => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const image = item as ToolInputImage;
+    return (
+      (typeof image.url === "string" && image.url.length > 0) ||
+      (typeof image.data === "string" && image.data.length > 0)
+    );
+  });
+}
+
+function hideToolInputImages(args: unknown): unknown {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+  const record = args as Record<string, unknown>;
+  const inputImages = readToolInputImages(record);
+  if (!inputImages) return args;
+  return {
+    ...record,
+    inputImages: inputImages.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const image = item as ToolInputImage;
+      const maskedUrl =
+        typeof image.url === "string" && image.url.toLowerCase().startsWith("data:")
+          ? `[data-url ${image.url.length} chars]`
+          : image.url;
+      return {
+        mediaType: image.mediaType,
+        byteSize: image.byteSize,
+        ...(maskedUrl ? { url: maskedUrl } : {}),
+        ...(image.data ? { data: `[base64 ${image.data.length} chars]` } : {}),
+      };
+    }),
+  };
+}
+
+function ToolInputImages({ images }: { images: ToolInputImage[] }) {
+  const renderableImages = images
+    .map((image, index) => {
+      const urlSrc = image.url && !image.url.startsWith("[") ? image.url : undefined;
+      const dataSrc = image.data
+        ? `data:${image.mediaType ?? "image/png"};base64,${image.data}`
+        : "";
+      const src = urlSrc ?? dataSrc;
+      return src ? { image, index, src } : null;
+    })
+    .filter((item): item is { image: ToolInputImage; index: number; src: string } => item !== null);
+  if (renderableImages.length === 0) return null;
+  return (
+    <div>
+      <span className="text-[10px] uppercase tracking-wider text-sand-400 font-medium px-2">
+        Input Images
+      </span>
+      <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {renderableImages.map(({ image, index, src }) => {
+          return (
+            <div
+              key={`${image.mediaType ?? "image"}-${index}`}
+              className="rounded-md border border-sand-200 bg-white overflow-hidden"
+            >
+              <img
+                src={src}
+                alt={`reference ${index + 1}`}
+                className="max-h-64 w-full object-contain bg-white"
+                loading="lazy"
+              />
+              <div className="px-2 py-1 text-[10px] text-sand-500 font-mono border-t border-sand-100">
+                {image.mediaType ?? "image"} ·{" "}
+                {image.byteSize !== undefined ? `${image.byteSize.toLocaleString()} bytes` : "url"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RequestInputImages({ stepId }: { stepId: number | null }) {
+  const { data: detail } = RequestLogStepService.useRequestLogStep("I", stepId ?? 0, {
+    enabled: stepId !== null,
+  });
+  const args = detail ? safeParseJson(detail.tool_args) : null;
+  return <ToolInputImages images={getToolInputImages(args)} />;
+}
+
 function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
   const hasError = !!entry.error;
   const [opened, setOpened] = useState(false);
@@ -447,6 +549,7 @@ function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
     enabled: opened,
   });
   const args = detail ? safeParseJson(detail.tool_args) : null;
+  const displayArgs = hideToolInputImages(args);
   const result = detail ? safeParseJson(detail.tool_result) : null;
   const error = detail?.error ?? entry.error;
   return (
@@ -478,7 +581,7 @@ function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
               Request
             </span>
             <div className="mt-1 rounded-md bg-sand-50 p-3 overflow-auto">
-              <FormattedContent text={detail ? JSON.stringify(args) : "Loading..."} />
+              <FormattedContent text={detail ? JSON.stringify(displayArgs) : "Loading..."} />
             </div>
           </div>
           {error && (
@@ -594,7 +697,7 @@ function StepTreeItem({
           <div className="rounded-md border border-sand-100 bg-sand-50/70 p-3">
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
               <CompactMetric label="Duration" value={formatDurationMs(generate.durationMs)} />
-              <CompactMetric label="TTFT" value={formatDurationMs(generate.ttftMs)} />
+              <CompactMetric label="TTFT" value={formatRunTtftMs(generate.ttftMs)} />
               <CompactMetric
                 label="Tokens/sec"
                 value={formatTokensPerSec(
@@ -789,6 +892,8 @@ function RequestDetail({ id }: { id: number }) {
     page: 1,
     orderBy: "id-asc" as const,
   });
+  const steps = stepsData?.rows ?? [];
+  const stepTree = buildStepTree(steps);
 
   if (isLoading) {
     return (
@@ -815,10 +920,9 @@ function RequestDetail({ id }: { id: number }) {
     );
   }
 
-  const steps = stepsData?.rows ?? [];
-
-  const stepTree = buildStepTree(steps);
   const toolCalls = stepTree.flatMap((step) => step.toolCalls);
+  const firstImageGenerationStepId =
+    toolCalls.find((toolCall) => toolCall.toolName === "image_generation")?.id ?? null;
   const hasSteps = stepTree.length > 0;
   const tokensPerSecEnabled = isTokensPerSecEnabled(data);
   const history = data.history ?? null;
@@ -833,9 +937,12 @@ function RequestDetail({ id }: { id: number }) {
         </div>
       </Section>
       <Section title="User">
-        <div className="relative">
-          <CopyButton text={data.user_prompt ?? "null"} />
-          <FormattedContent text={data.user_prompt ?? "null"} markdown />
+        <div className="space-y-3">
+          <div className="relative">
+            <CopyButton text={data.user_prompt ?? "null"} />
+            <FormattedContent text={data.user_prompt ?? "null"} markdown />
+          </div>
+          <RequestInputImages stepId={firstImageGenerationStepId} />
         </div>
       </Section>
     </div>
