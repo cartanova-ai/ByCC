@@ -288,6 +288,99 @@ describe("qgrid AI SDK provider", () => {
     expect(result.content).toEqual([{ type: "text", text: "Seoul is 22°C" }]);
   });
 
+  it("keeps parallel tool-call runs isolated on one model instance", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        calls.push({ url, body });
+
+        if (url.includes("/query")) {
+          if (Array.isArray(body.args.toolResults)) {
+            const toolCallId = body.args.toolResults[0]?.toolCallId;
+            return new Response(
+              JSON.stringify({
+                text: `done ${toolCallId}`,
+                content: [{ type: "text", text: `done ${toolCallId}` }],
+                finishReason: "stop",
+                model: "gpt-5.5",
+                usage,
+                durationMs: 80,
+                costUsd: 0.005,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+
+          const prompt = body.args.prompt as string;
+          const suffix = prompt.endsWith("a") ? "a" : "b";
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: `call_${suffix}`,
+                  toolName: "getWeather",
+                  input: JSON.stringify({ city: suffix }),
+                },
+              ],
+              finishReason: "tool-calls",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0.01,
+              runContext: { requestLogId: suffix === "a" ? 101 : 102 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const model = qgrid("openai/gpt-5.5");
+
+    await Promise.all([
+      model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "weather a" }] }],
+        tools: [tool()],
+      } as never),
+      model.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "weather b" }] }],
+        tools: [tool()],
+      } as never),
+    ]);
+
+    await model.doGenerate({
+      prompt: toolPrompt(["call_a"]),
+      tools: [tool()],
+    } as never);
+    await model.doGenerate({
+      prompt: toolPrompt(["call_b"]),
+      tools: [tool()],
+    } as never);
+
+    const queryBodies = calls.filter((c) => c.url.includes("/query")).map((c) => c.body);
+    const followUpA = queryBodies.find((body) =>
+      JSON.stringify(body.args.toolResults ?? []).includes("call_a"),
+    );
+    const followUpB = queryBodies.find((body) =>
+      JSON.stringify(body.args.toolResults ?? []).includes("call_b"),
+    );
+
+    expect(followUpA?.args).toMatchObject({
+      runContext: { requestLogId: 101 },
+      toolResults: [{ toolCallId: "call_a" }],
+    });
+    expect(followUpB?.args).toMatchObject({
+      runContext: { requestLogId: 102 },
+      toolResults: [{ toolCallId: "call_b" }],
+    });
+  });
+
   it("does not send logMode for non-tool doGenerate", async () => {
     let queryBody: unknown;
     vi.stubGlobal(
@@ -465,7 +558,7 @@ describe("qgrid AI SDK provider", () => {
     expect(prepares[1]?.body.args).not.toHaveProperty("runContext");
   });
 
-  it("clears client run state when prompt does not match pending tool calls", async () => {
+  it("does not attach a pending tool run when prompt does not match pending tool calls", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     vi.stubGlobal(

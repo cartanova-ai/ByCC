@@ -41,17 +41,19 @@ When `options.tools` contains function tools:
 When qgrid responds with `finishReason: "tool-calls"`:
 
 1. Map qgrid `content: [{ type: "tool-call" }]` to AI SDK tool-call content.
-2. Store `clientRun` with `runContext` and pending tool-call IDs.
+2. Store the pending run's `runContext` and tool-call IDs in the provider instance registry.
 3. Return finish reason `{ unified: "tool-calls", raw: "tool_call" }`.
 
 On the next AI SDK call, if prompt history contains tool results for all pending IDs:
 
 1. Extract tool results from AI SDK history.
-2. Send previous `runContext`.
-3. Send `toolResults`.
-4. Keep `logMode: "run"`.
+2. Match result IDs against the pending run registry.
+3. Send the matched run's previous `runContext`.
+4. Send `toolResults`.
+5. Keep `logMode: "run"`.
 
-If pending tool calls are not satisfied, qgrid warns and clears `clientRun` instead of attaching stale run context.
+If tool results do not match any pending run, qgrid warns and sends the request without stale `runContext`.
+The registry is keyed per pending run so concurrent `generateText(...tools...)` calls on the same qgrid model instance can finish in any order.
 
 ## Server Schema Emulation
 

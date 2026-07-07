@@ -113,8 +113,56 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
     runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord };
     pendingToolCallIds: Set<string>;
   };
+  type MatchedClientRun = {
+    key: string;
+    runContext: ClientRunState["runContext"];
+    toolResultsPayload: Array<{ toolCallId: string; output: string; isError?: boolean }>;
+  };
 
-  let clientRun: ClientRunState | null = null;
+  const clientRuns = new Map<string, ClientRunState>();
+  let anonymousClientRunId = 0;
+
+  function clientRunKey(runContext: ClientRunState["runContext"]): string {
+    if (runContext.requestLogId !== undefined) return `request:${runContext.requestLogId}`;
+    if (runContext.threadCoord) {
+      const { workerId, epoch, threadId } = runContext.threadCoord;
+      return `thread:${workerId}:${epoch}:${threadId}`;
+    }
+    anonymousClientRunId++;
+    return `anonymous:${anonymousClientRunId}`;
+  }
+
+  function rememberClientRun(runContext: ClientRunState["runContext"], toolCallIds: string[]) {
+    if (toolCallIds.length === 0) return;
+    clientRuns.set(clientRunKey(runContext), {
+      runContext,
+      pendingToolCallIds: new Set(toolCallIds),
+    });
+  }
+
+  function matchClientRun(messages: LanguageModelV3CallOptions["prompt"]): MatchedClientRun | null {
+    const toolResults = extractToolResultsFromHistory(messages);
+    if (toolResults.length === 0) return null;
+
+    const resultIds = new Set(toolResults.map((r) => r.callId));
+    for (const [key, run] of clientRuns) {
+      if (
+        run.pendingToolCallIds.size > 0 &&
+        [...run.pendingToolCallIds].every((id) => resultIds.has(id))
+      ) {
+        return {
+          key,
+          runContext: run.runContext,
+          toolResultsPayload: toolResults
+            .filter((r) => run.pendingToolCallIds.has(r.callId))
+            .map((r) => ({ toolCallId: r.callId, output: r.result })),
+        };
+      }
+    }
+
+    if (clientRuns.size > 0) console.warn(PENDING_TOOL_RESULTS_WARNING);
+    return null;
+  }
 
   return {
     specificationVersion: "v3",
@@ -164,27 +212,16 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         | undefined;
       let logMode: "auto" | "run" | undefined;
 
-      if (clientRun) {
-        const toolResults = extractToolResultsFromHistory(options.prompt);
-        const resultIds = new Set(toolResults.map((r) => r.callId));
-        if (
-          clientRun.pendingToolCallIds.size > 0 &&
-          [...clientRun.pendingToolCallIds].every((id) => resultIds.has(id))
-        ) {
-          // follow-up (tool-call 루프)
-          runContext = clientRun.runContext;
-          toolResultsPayload = toolResults
-            .filter((r) => clientRun!.pendingToolCallIds.has(r.callId))
-            .map((r) => ({ toolCallId: r.callId, output: r.result }));
-          logMode = "run";
-        } else {
-          console.warn(PENDING_TOOL_RESULTS_WARNING);
-          clientRun = null;
-        }
+      const matchedClientRun = matchClientRun(options.prompt);
+      if (matchedClientRun) {
+        // follow-up (tool-call 루프)
+        runContext = matchedClientRun.runContext;
+        toolResultsPayload = matchedClientRun.toolResultsPayload;
+        logMode = "run";
       }
 
       // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송.
-      // clientRun(tool 루프) 과 동시 활성되지 않게, runContext 미설정 시에만 적용.
+      // tool-result follow-up 과 동시 활성되지 않게, runContext 미설정 시에만 적용.
       const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
       if (!runContext && storedCoord) {
         runContext = { threadCoord: storedCoord };
@@ -260,20 +297,17 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       }
 
       // client run state 업데이트
+      if (matchedClientRun) clientRuns.delete(matchedClientRun.key);
       if (data.runContext && finishReason.unified === "tool-calls") {
-        clientRun = {
-          runContext: data.runContext,
-          pendingToolCallIds: new Set(
-            content
-              .filter(
-                (c): c is Extract<LanguageModelV3Content, { type: "tool-call" }> =>
-                  c.type === "tool-call",
-              )
-              .map((c) => c.toolCallId),
-          ),
-        };
-      } else {
-        clientRun = null;
+        rememberClientRun(
+          data.runContext,
+          content
+            .filter(
+              (c): c is Extract<LanguageModelV3Content, { type: "tool-call" }> =>
+                c.type === "tool-call",
+            )
+            .map((c) => c.toolCallId),
+        );
       }
 
       // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
@@ -336,25 +370,14 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         | undefined;
       let logMode: "auto" | "run" | undefined;
 
-      if (clientRun) {
-        const toolResults = extractToolResultsFromHistory(options.prompt);
-        const resultIds = new Set(toolResults.map((r) => r.callId));
-        if (
-          clientRun.pendingToolCallIds.size > 0 &&
-          [...clientRun.pendingToolCallIds].every((id) => resultIds.has(id))
-        ) {
-          runContext = clientRun.runContext;
-          toolResultsPayload = toolResults
-            .filter((r) => clientRun!.pendingToolCallIds.has(r.callId))
-            .map((r) => ({ toolCallId: r.callId, output: r.result }));
-          logMode = "run";
-        } else {
-          console.warn(PENDING_TOOL_RESULTS_WARNING);
-          clientRun = null;
-        }
+      const matchedClientRun = matchClientRun(options.prompt);
+      if (matchedClientRun) {
+        runContext = matchedClientRun.runContext;
+        toolResultsPayload = matchedClientRun.toolResultsPayload;
+        logMode = "run";
       }
 
-      // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송 (clientRun 미설정 시에만).
+      // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송 (tool-result follow-up 미설정 시에만).
       const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
       if (!runContext && storedCoord) {
         runContext = { threadCoord: storedCoord };
@@ -430,24 +453,21 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                 const done = event.data as QueryOutput;
 
                 // client run state 업데이트
+                if (matchedClientRun) clientRuns.delete(matchedClientRun.key);
                 if (done.runContext && done.finishReason === "tool-calls") {
-                  clientRun = {
-                    runContext: done.runContext,
-                    pendingToolCallIds: new Set(
-                      (done.content ?? [])
-                        .filter(
-                          (
-                            c,
-                          ): c is Extract<
-                            NonNullable<QueryOutput["content"]>[number],
-                            { type: "tool-call" }
-                          > => c.type === "tool-call",
-                        )
-                        .map((c) => c.toolCallId),
-                    ),
-                  };
-                } else {
-                  clientRun = null;
+                  rememberClientRun(
+                    done.runContext,
+                    (done.content ?? [])
+                      .filter(
+                        (
+                          c,
+                        ): c is Extract<
+                          NonNullable<QueryOutput["content"]>[number],
+                          { type: "tool-call" }
+                        > => c.type === "tool-call",
+                      )
+                      .map((c) => c.toolCallId),
+                  );
                 }
 
                 // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).

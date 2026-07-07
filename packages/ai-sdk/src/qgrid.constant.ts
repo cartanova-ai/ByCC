@@ -12,4 +12,4 @@ export const TOP_LEVEL_SCHEMA_WARNING =
   'OpenAI structured output requires "object". Falling back to client-side parsing.';
 
 export const PENDING_TOOL_RESULTS_WARNING =
-  "[qgrid] pending tool results not found in prompt, clearing client run state";
+  "[qgrid] tool results did not match any pending qgrid run; sending request without runContext";
