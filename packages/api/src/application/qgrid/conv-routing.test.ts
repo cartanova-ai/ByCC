@@ -57,6 +57,37 @@ describe("decideConvRouting", () => {
     ]);
   });
 
+  it("input 이미지가 있으면 prompt 문자열 대신 multimodal input 을 실행 input 으로 쓴다", () => {
+    const decision = decideConvRouting(
+      input({
+        prompt: "use this as reference",
+        input: [
+          { type: "text", text: "use this as reference", text_elements: [] },
+          { type: "image", url: "data:image/png;base64,iVBORw0KGgoBAgM" },
+        ],
+      }),
+    );
+
+    expect(decision.coldInput).toEqual([
+      { type: "text", text: "use this as reference", text_elements: [] },
+      { type: "image", url: "data:image/png;base64,iVBORw0KGgoBAgM" },
+    ]);
+  });
+
+  it("텍스트 없는 이미지 input 은 prompt 를 실행 input 앞에 보존한다", () => {
+    const decision = decideConvRouting(
+      input({
+        prompt: "use this as reference",
+        input: [{ type: "image", url: "data:image/png;base64,iVBORw0KGgoBAgM" }],
+      }),
+    );
+
+    expect(decision.coldInput).toEqual([
+      { type: "text", text: "use this as reference", text_elements: [] },
+      { type: "image", url: "data:image/png;base64,iVBORw0KGgoBAgM" },
+    ]);
+  });
+
   it("reuse 가능한 tool result follow-up 은 reuseInput 과 coldInput 이 같은 continuation 을 쓴다", () => {
     const decision = decideConvRouting(
       input({

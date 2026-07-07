@@ -1,6 +1,11 @@
 import { type LanguageModelV3FunctionTool, type LanguageModelV3Message } from "@ai-sdk/provider";
 
-import { type AppendStepInput, type CreateRunInput, type FinishRunInput } from "./index.types";
+import {
+  type AppendStepInput,
+  type CreateRunInput,
+  type FinishRunInput,
+  type QgridInputPart,
+} from "./index.types";
 
 // API helpers
 export async function createRun(
@@ -132,12 +137,23 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerato
   }
 }
 
-// Prompt helpers
-export function extractPromptAndHistory(messages: LanguageModelV3Message[]): {
+type ExtractPromptAndHistoryResult = {
   prompt: string;
   system: string | undefined;
   history: unknown[];
-} {
+  input?: QgridInputPart[];
+  imageUrls: string[];
+  droppedImageCount: number;
+};
+
+// Prompt helpers
+export function extractPromptAndHistory(
+  messages: LanguageModelV3Message[],
+  options: { includeImages?: boolean } = {},
+): ExtractPromptAndHistoryResult {
+  const includeImages = options.includeImages ?? true;
+  const imageUrls: string[] = [];
+  let droppedImageCount = 0;
   let system: string | undefined;
   const nonSystem: LanguageModelV3Message[] = [];
 
@@ -149,23 +165,47 @@ export function extractPromptAndHistory(messages: LanguageModelV3Message[]): {
     }
   }
 
-  if (nonSystem.length === 0) return { prompt: "", system, history: [] };
+  if (nonSystem.length === 0) {
+    return { prompt: "", system, history: [], imageUrls, droppedImageCount };
+  }
   if (nonSystem.length === 1 && nonSystem[0].role === "user") {
-    return { prompt: extractTextFromContent(nonSystem[0].content), system, history: [] };
+    const extracted = extractUserContent(nonSystem[0].content, includeImages);
+    imageUrls.push(...extracted.imageUrls);
+    droppedImageCount += extracted.droppedImageCount;
+    return {
+      prompt: extracted.text,
+      system,
+      history: [],
+      imageUrls,
+      droppedImageCount,
+      ...(extracted.input ? { input: extracted.input } : {}),
+    };
   }
 
   const last = nonSystem[nonSystem.length - 1];
-  const prompt = last.role === "user" ? extractTextFromContent(last.content) : "";
+  let prompt = "";
+  let input: QgridInputPart[] | undefined;
+  if (last.role === "user") {
+    const extracted = extractUserContent(last.content, includeImages);
+    prompt = extracted.text;
+    imageUrls.push(...extracted.imageUrls);
+    droppedImageCount += extracted.droppedImageCount;
+    input = extracted.input;
+  }
   const historyEnd = last.role === "user" ? nonSystem.length - 1 : nonSystem.length;
 
   const history: unknown[] = [];
   for (let i = 0; i < historyEnd; i++) {
     const msg = nonSystem[i];
     if (msg.role === "user") {
+      const extracted = extractUserContent(msg.content, includeImages);
+      imageUrls.push(...extracted.imageUrls);
+      droppedImageCount += extracted.droppedImageCount;
+      const content = codexContentItemsFromExtracted(extracted.parts);
       history.push({
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: extractTextFromContent(msg.content) }],
+        content: content.length > 0 ? content : [{ type: "input_text", text: extracted.text }],
       });
     } else if (msg.role === "assistant") {
       for (const part of msg.content) {
@@ -204,7 +244,7 @@ export function extractPromptAndHistory(messages: LanguageModelV3Message[]): {
     }
   }
 
-  return { prompt, system, history };
+  return { prompt, system, history, imageUrls, droppedImageCount, ...(input ? { input } : {}) };
 }
 
 function extractTextFromContent(content: LanguageModelV3Message["content"]): string {
@@ -214,6 +254,123 @@ function extractTextFromContent(content: LanguageModelV3Message["content"]): str
     if ("text" in part && typeof part.text === "string") parts.push(part.text);
   }
   return parts.join("\n");
+}
+
+type ExtractedPromptPart = { kind: "text"; text: string } | { kind: "image"; url: string };
+
+function extractUserContent(
+  content: LanguageModelV3Message["content"],
+  includeImages: boolean,
+): {
+  text: string;
+  parts: ExtractedPromptPart[];
+  input?: QgridInputPart[];
+  imageUrls: string[];
+  droppedImageCount: number;
+} {
+  const extracted = extractMessageParts(content, { includeImages });
+  return {
+    text: extractTextFromContent(content),
+    parts: extracted.parts,
+    input: inputPartsFromExtracted(extracted.parts),
+    imageUrls: extracted.imageUrls,
+    droppedImageCount: extracted.droppedImageCount,
+  };
+}
+
+function extractMessageParts(
+  content: LanguageModelV3Message["content"],
+  options: { includeImages: boolean },
+): { parts: ExtractedPromptPart[]; imageUrls: string[]; droppedImageCount: number } {
+  if (typeof content === "string") {
+    return { parts: [{ kind: "text", text: content }], imageUrls: [], droppedImageCount: 0 };
+  }
+  const parts: ExtractedPromptPart[] = [];
+  const imageUrls: string[] = [];
+  let droppedImageCount = 0;
+  for (const part of content) {
+    if ("text" in part && typeof part.text === "string") {
+      parts.push({ kind: "text", text: part.text });
+      continue;
+    }
+    const url = extractImageUrl(part);
+    if (!url) continue;
+    if (options.includeImages) {
+      parts.push({ kind: "image", url });
+      imageUrls.push(url);
+    } else {
+      droppedImageCount++;
+    }
+  }
+  return { parts, imageUrls, droppedImageCount };
+}
+
+function inputPartsFromExtracted(
+  extractedParts: ExtractedPromptPart[],
+): QgridInputPart[] | undefined {
+  const parts: QgridInputPart[] = [];
+  for (const part of extractedParts) {
+    if (part.kind === "text") {
+      if (part.text.length > 0) parts.push({ type: "text", text: part.text, text_elements: [] });
+    } else {
+      parts.push({ type: "image", url: part.url });
+    }
+  }
+  return parts.some((part) => part.type === "image") ? parts : undefined;
+}
+
+function codexContentItemsFromExtracted(
+  parts: ExtractedPromptPart[],
+): Array<{ type: "input_text"; text: string } | { type: "input_image"; image_url: string }> {
+  const items: Array<
+    { type: "input_text"; text: string } | { type: "input_image"; image_url: string }
+  > = [];
+  for (const part of parts) {
+    if (part.kind === "text") {
+      items.push({ type: "input_text", text: part.text });
+    } else {
+      items.push({ type: "input_image", image_url: part.url });
+    }
+  }
+  return items;
+}
+
+function extractImageUrl(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const record = part as Record<string, unknown>;
+  const type = record.type;
+  if (type !== "file" && type !== "image") return undefined;
+
+  const mediaType = typeof record.mediaType === "string" ? record.mediaType : "image/png";
+  if (type === "file" && !mediaType.toLowerCase().startsWith("image/")) return undefined;
+  const data = record.data ?? record.image;
+  if (typeof data === "string") {
+    if (isSupportedImageUrl(data)) return data;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(data)) return undefined;
+    return `data:${mediaType};base64,${data}`;
+  }
+  if (data instanceof URL) {
+    const url = data.toString();
+    return isSupportedImageUrl(url) ? url : undefined;
+  }
+  if (data instanceof Uint8Array) return `data:${mediaType};base64,${bytesToBase64(data)}`;
+  if (data instanceof ArrayBuffer)
+    return `data:${mediaType};base64,${bytesToBase64(new Uint8Array(data))}`;
+  return undefined;
+}
+
+function isSupportedImageUrl(value: string): boolean {
+  return /^(https?:|data:|blob:)/i.test(value);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 // --- shared helpers (used by both index.ts and logger.ts) ---

@@ -102,6 +102,7 @@ describe("QgridFrame.query auto logging", () => {
   beforeEach(() => {
     requestLogSaveMock.mockReset();
     requestLogSaveMock.mockResolvedValue([1]);
+    appendStepMock.mockReset();
     dispatcherQueryMock.mockReset();
   });
 
@@ -156,6 +157,10 @@ describe("QgridFrame.query auto logging", () => {
 
     await QgridFrame.query({
       prompt: "draw",
+      input: [
+        { type: "text", text: "draw", text_elements: [] },
+        { type: "image", url: "data:image/webp;base64,UklGRg==" },
+      ],
       model: "openai/gpt-5-codex",
       logMode: "auto",
       imageGeneration: true,
@@ -181,6 +186,7 @@ describe("QgridFrame.query auto logging", () => {
         tool_name: "image_generation",
         tool_args: JSON.stringify({
           prompt: "draw",
+          inputImages: [{ mediaType: "image/webp", data: "UklGRg==", byteSize: 4 }],
           driverModel: "openai/gpt-5-codex",
           tool: {
             type: "image_generation",
@@ -195,6 +201,36 @@ describe("QgridFrame.query auto logging", () => {
         tool_result: '<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
       }),
     );
+  });
+
+  it("stores input images only on the first image-generation tool step", async () => {
+    dispatcherQueryMock.mockResolvedValueOnce({
+      ...queryOutput(39),
+      text: "images ready",
+      content: [
+        { type: "image", data: "first", revisedPrompt: "first image" },
+        { type: "image", data: "second", revisedPrompt: "second image" },
+      ],
+    });
+
+    await QgridFrame.query({
+      prompt: "draw two",
+      input: [
+        { type: "text", text: "draw two", text_elements: [] },
+        { type: "image", url: "data:image/webp;base64,UklGRg==" },
+      ],
+      model: "openai/gpt-5-codex",
+      logMode: "auto",
+      imageGeneration: true,
+    });
+
+    const firstToolArgs = JSON.parse(appendStepMock.mock.calls[0]![1].tool_args);
+    const secondToolArgs = JSON.parse(appendStepMock.mock.calls[1]![1].tool_args);
+
+    expect(firstToolArgs.inputImages).toEqual([
+      { mediaType: "image/webp", data: "UklGRg==", byteSize: 4 },
+    ]);
+    expect(secondToolArgs.inputImages).toBeUndefined();
   });
 });
 

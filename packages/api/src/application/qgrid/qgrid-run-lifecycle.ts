@@ -2,21 +2,20 @@ import { getLogger } from "@logtape/logtape";
 
 import { RequestLogModel } from "../request-log/request-log.model";
 import {
+  estimateImageGenerationCostMicroUsd,
+  imageGenerationCostMethod,
+} from "./qgrid-image-generation";
+import {
+  buildImageGenerationToolSteps,
+  formatResponseForLog,
+  getImageParts,
+} from "./qgrid-response-format";
+import {
   type QgridRunContext,
   type QgridToolResultInput,
   type QueryInput,
   type QueryOutput,
 } from "./qgrid.types";
-import {
-  formatImagePartForLog,
-  formatResponseForLog,
-  getImageParts,
-  imageGenerationToolArgs,
-} from "./qgrid-response-format";
-import {
-  estimateImageGenerationCostMicroUsd,
-  imageGenerationCostMethod,
-} from "./qgrid-image-generation";
 
 const logger = getLogger(["qgrid", "run-lifecycle"]);
 const STALE_RUN_THRESHOLD_MS = 30 * 60 * 1000;
@@ -105,17 +104,8 @@ export async function afterQuery(
     result,
     args.imageGenerationOptions,
   );
-  for (let i = 0; i < imageParts.length; i++) {
-    const image = imageParts[i]!;
-    await RequestLogModel.appendStep(requestLogId, {
-      step_index: stepIndex,
-      type: "tool_call",
-      tool_call_index: i,
-      tool_call_id: `image_generation:${stepIndex}:${i}`,
-      tool_name: "image_generation",
-      tool_args: imageGenerationToolArgs(args),
-      tool_result: formatImagePartForLog(image),
-    });
+  for (const step of buildImageGenerationToolSteps(args, imageParts, stepIndex)) {
+    await RequestLogModel.appendStep(requestLogId, step);
   }
 
   if (result.finishReason === "tool-calls") {

@@ -81,6 +81,19 @@ function buildDeltaInput(input: QueryInput): Array<UserInput> {
   if (input.toolResults && input.toolResults.length > 0) {
     return [{ type: "text", text: toolResultsToText(input.toolResults), text_elements: [] }];
   }
+  if (input.input && input.input.length > 0) {
+    const hasText = input.input.some((part) => part.type === "text");
+    const parts: Array<UserInput> = input.input.map((part) => {
+      if (part.type === "text") {
+        return { type: "text", text: part.text, text_elements: part.text_elements };
+      }
+      return { type: "image", url: part.url };
+    });
+    if (!hasText && input.prompt.length > 0) {
+      return [{ type: "text", text: input.prompt, text_elements: [] }, ...parts];
+    }
+    return parts;
+  }
   return [{ type: "text", text: input.prompt, text_elements: [] }];
 }
 

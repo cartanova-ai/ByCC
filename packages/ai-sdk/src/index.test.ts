@@ -599,6 +599,339 @@ describe("qgrid AI SDK provider", () => {
     });
   });
 
+  it("sends reference image file parts as qgrid multimodal input", async () => {
+    let queryBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: null }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "use this as a style reference" },
+            { type: "file", mediaType: "image/png", data: "iVBORw0KGgoBAgM" },
+          ],
+        },
+      ],
+      providerOptions: { qgrid: { imageGeneration: true } },
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args).toMatchObject({
+      prompt: "use this as a style reference",
+      input: [
+        { type: "text", text: "use this as a style reference", text_elements: [] },
+        { type: "image", url: "data:image/png;base64,iVBORw0KGgoBAgM" },
+      ],
+      imageGeneration: true,
+    });
+  });
+
+  it("does not send image input for normal non-image-generation calls", async () => {
+    let queryBody: unknown;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "ok",
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "describe this" },
+            { type: "file", mediaType: "image/png", data: "iVBORw0KGgoBAgM" },
+          ],
+        },
+      ],
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args).toMatchObject({
+      prompt: "describe this",
+    });
+    expect((queryBody as { args: Record<string, unknown> }).args.input).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      "[qgrid] 1 image message part(s) were ignored because providerOptions.qgrid.imageGeneration is not enabled.",
+    );
+  });
+
+  it("does not send history images for normal non-image-generation calls", async () => {
+    let queryBody: unknown;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "ok",
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "earlier" },
+            { type: "file", mediaType: "image/png", data: "iVBORw0KGgoBAgM" },
+          ],
+        },
+        { role: "assistant", content: [{ type: "text", text: "ok" }] },
+        { role: "user", content: [{ type: "text", text: "continue" }] },
+      ],
+    } as never);
+
+    const history = JSON.parse(
+      String((queryBody as { args: Record<string, unknown> }).args.history),
+    );
+    expect(JSON.stringify(history)).not.toContain("input_image");
+    expect(warn).toHaveBeenCalledWith(
+      "[qgrid] 1 image message part(s) were ignored because providerOptions.qgrid.imageGeneration is not enabled.",
+    );
+  });
+
+  it("skips non-image file parts for image-generation input", async () => {
+    let queryBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: null }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "use only image files" },
+            { type: "file", mediaType: "application/pdf", data: "JVBERi0xLjQ=" },
+          ],
+        },
+      ],
+      providerOptions: { qgrid: { imageGeneration: true } },
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args.input).toBeUndefined();
+  });
+
+  it("preserves uppercase URL schemes instead of wrapping them as base64", async () => {
+    let queryBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: null }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "use this as reference" },
+            { type: "file", mediaType: "image/png", data: "HTTPS://example.com/ref.png" },
+          ],
+        },
+      ],
+      providerOptions: { qgrid: { imageGeneration: true } },
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args.input).toEqual([
+      { type: "text", text: "use this as reference", text_elements: [] },
+      { type: "image", url: "HTTPS://example.com/ref.png" },
+    ]);
+  });
+
+  it("drops unsupported image URL schemes instead of forwarding them", async () => {
+    let queryBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryBody = init?.body ? JSON.parse(String(init.body)) : {};
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: null }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.5").doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "use this as reference" },
+            { type: "file", mediaType: "image/png", data: "file:///etc/passwd" },
+          ],
+        },
+      ],
+      providerOptions: { qgrid: { imageGeneration: true } },
+    } as never);
+
+    expect((queryBody as { args: Record<string, unknown> }).args.input).toBeUndefined();
+  });
+
+  it("rejects oversized reference image inputs before sending the request", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      qgrid("openai/gpt-5.5").doGenerate({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "use this as a style reference" },
+              { type: "file", mediaType: "image/png", data: "a".repeat(900_001) },
+            ],
+          },
+        ],
+        providerOptions: { qgrid: { imageGeneration: true } },
+      } as never),
+    ).rejects.toThrow(/reference image input is too large.*WebP\/JPEG/i);
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized history reference image inputs before sending the request", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      qgrid("openai/gpt-5.5").doGenerate({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "earlier" },
+              { type: "file", mediaType: "image/png", data: "a".repeat(900_001) },
+            ],
+          },
+          { role: "assistant", content: [{ type: "text", text: "ok" }] },
+          { role: "user", content: [{ type: "text", text: "continue" }] },
+        ],
+        providerOptions: { qgrid: { imageGeneration: true } },
+      } as never),
+    ).rejects.toThrow(/reference image input is too large.*WebP\/JPEG/i);
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects image inputs whose combined data-url size is too large", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      qgrid("openai/gpt-5.5").doGenerate({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "use these as references" },
+              { type: "file", mediaType: "image/png", data: "a".repeat(460_000) },
+              { type: "file", mediaType: "image/png", data: "b".repeat(460_000) },
+            ],
+          },
+        ],
+        providerOptions: { qgrid: { imageGeneration: true } },
+      } as never),
+    ).rejects.toThrow(/reference image inputs are too large.*total/i);
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("throws when imageGeneration is requested but the response has no image (version skew guard)", async () => {
     vi.stubGlobal(
       "fetch",

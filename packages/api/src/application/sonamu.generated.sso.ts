@@ -120,12 +120,19 @@ export const requestLogStepSubsetQueries = {
       error: "request_log_steps.error",
     });
   },
+  I: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
+    return qbWrapper.from("request_log_steps").select({
+      id: "request_log_steps.id",
+      tool_args: "request_log_steps.tool_args",
+    });
+  },
 };
 
 // LoaderQuery: RequestLogStep
 export const requestLogStepLoaderQueries = {
   A: [],
   T: [],
+  I: [],
 } as const satisfies PuriLoaderQueries<RequestLogStepSubsetKey>;
 
 // SubsetQuery: Token

@@ -36,6 +36,33 @@ import {
 // 클라이언트가 전달한 providerOptions.qgrid.sessionKey의 좌표 발급/보관/회송을 여기서 처리한다
 // 모듈 레벨이라 qgrid() 인스턴스를 매 호출 새로 만들어도 공유
 const threadCoordStore = new Map<string, { coord: QgridThreadCoord; expiresAt: number }>();
+const MAX_IMAGE_INPUT_DATA_URL_CHARS = 900_000;
+const MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL = `${MAX_IMAGE_INPUT_DATA_URL_CHARS / 1000}k`;
+
+function assertImageInputFitsJsonTransport(imageUrls: string[]): void {
+  let totalDataUrlChars = 0;
+  for (const url of imageUrls) {
+    if (!url.toLowerCase().startsWith("data:")) continue;
+    totalDataUrlChars += url.length;
+    if (url.length > MAX_IMAGE_INPUT_DATA_URL_CHARS) {
+      throw new Error(
+        `qgrid: reference image input is too large for JSON transport (${url.length} chars). Compress or resize it before passing it to imageGeneration, for example as WebP/JPEG under ${MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL} total base64 data-url chars.`,
+      );
+    }
+  }
+  if (totalDataUrlChars > MAX_IMAGE_INPUT_DATA_URL_CHARS) {
+    throw new Error(
+      `qgrid: reference image inputs are too large for JSON transport (${totalDataUrlChars} total chars). Compress or resize them before passing them to imageGeneration, for example as WebP/JPEG under ${MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL} total base64 data-url chars.`,
+    );
+  }
+}
+
+function warnDroppedImages(droppedImageCount: number): void {
+  if (droppedImageCount <= 0) return;
+  console.warn(
+    `[qgrid] ${droppedImageCount} image message part(s) were ignored because providerOptions.qgrid.imageGeneration is not enabled.`,
+  );
+}
 
 function getThreadCoord(sessionKey: string): QgridThreadCoord | undefined {
   const entry = threadCoordStore.get(sessionKey);
@@ -100,15 +127,19 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         (t): t is LanguageModelV3FunctionTool => t.type === "function",
       );
       const hasTools = tools && tools.length > 0;
-      const { prompt, system, history } = extractPromptAndHistory(options.prompt);
-
       const qgridOptions = getQgridProviderOptions(options);
+      const imageGeneration = qgridOptions.imageGeneration;
+      const { prompt, system, history, input, imageUrls, droppedImageCount } =
+        extractPromptAndHistory(options.prompt, { includeImages: imageGeneration === true });
+      if (!imageGeneration) warnDroppedImages(droppedImageCount);
       const effectiveEffort = qgridOptions.effort ?? effort;
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
-      const imageGeneration = qgridOptions.imageGeneration;
       const imageGenerationOptions = qgridOptions.imageGenerationOptions;
+      if (imageGeneration) {
+        assertImageInputFitsJsonTransport(imageUrls);
+      }
       // 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID)만 넘기면,
       // thread 좌표 보관/회송은 threadCoordStore 가 내부에서 처리한다 → 클라이언트 무부담.
       const sessionKey = qgridOptions.sessionKey;
@@ -167,6 +198,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         body: JSON.stringify({
           args: {
             prompt,
+            ...(imageGeneration && input ? { input } : {}),
             model: modelId,
             system,
             effort: effectiveEffort,
@@ -271,8 +303,6 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         (t): t is LanguageModelV3FunctionTool => t.type === "function",
       );
       const hasTools = tools && tools.length > 0;
-      const { prompt, system, history } = extractPromptAndHistory(options.prompt);
-
       const qgridOptions = getQgridProviderOptions(options);
       const effectiveEffort = qgridOptions.effort ?? effort;
       const verbosity = qgridOptions.verbosity;
@@ -284,6 +314,11 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           "qgrid: imageGeneration is not supported with streamText — use generateText instead.",
         );
       }
+      const { prompt, system, history, droppedImageCount } = extractPromptAndHistory(
+        options.prompt,
+        { includeImages: false },
+      );
+      warnDroppedImages(droppedImageCount);
       const sessionKey = qgridOptions.sessionKey;
       const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
 

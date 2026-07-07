@@ -54,6 +54,10 @@ export type QgridThreadCoord = {
   systemHash: string;
 };
 
+export type QgridInputPart =
+  | { type: "text"; text: string; text_elements: [] }
+  | { type: "image"; url: string };
+
 export type QgridSupportedModel =
   | "openai/gpt-5.5"
   | "openai/gpt-5.4"

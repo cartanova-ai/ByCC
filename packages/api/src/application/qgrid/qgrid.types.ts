@@ -56,6 +56,19 @@ export const ImageGenerationOptions = z.object({
 });
 export type ImageGenerationOptions = z.infer<typeof ImageGenerationOptions>;
 
+export const QgridInputPart = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text"),
+    text: z.string(),
+    text_elements: z.array(z.never()).default([]),
+  }),
+  z.object({
+    type: z.literal("image"),
+    url: z.string(),
+  }),
+]);
+export type QgridInputPart = z.infer<typeof QgridInputPart>;
+
 // ─── Run Lifecycle Context (SDK ↔ Server contract) ───
 
 export const QgridLogMode = z.enum(["auto", "run", "none"]);
@@ -90,6 +103,7 @@ export type QgridToolResultInput = z.infer<typeof QgridToolResultInput>;
 export const QueryInput = z.object({
   system: z.string().optional(),
   prompt: z.string(),
+  input: z.array(QgridInputPart).optional(),
   model: z.string().optional(),
   timeout: z.number().optional(),
   jsonSchema: z.string().optional(),

@@ -214,6 +214,15 @@ Content-Type: application/json
   "args": {
     "system": "SYSTEM",
     "prompt": "PROMPT",
+    "input": [
+      {
+        "type": "text",
+        "text": "TEXT",
+        "text_elements": [
+          "unknown-never"
+        ]
+      }
+    ],
     "model": "MODEL",
     "timeout": 0,
     "jsonSchema": "JSONSCHEMA",
@@ -266,6 +275,15 @@ Content-Type: application/json
   "args": {
     "system": "SYSTEM",
     "prompt": "PROMPT",
+    "input": [
+      {
+        "type": "text",
+        "text": "TEXT",
+        "text_elements": [
+          "unknown-never"
+        ]
+      }
+    ],
     "model": "MODEL",
     "timeout": 0,
     "jsonSchema": "JSONSCHEMA",

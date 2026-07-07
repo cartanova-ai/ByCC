@@ -130,7 +130,8 @@
       "tool_name",
       "tool_duration_ms",
       "error"
-    ]
+    ],
+    "I": ["id", "tool_args"]
   },
   "enums": {
     "RequestLogStepType": { "generate": "LLM 생성", "tool_call": "Tool 호출" },

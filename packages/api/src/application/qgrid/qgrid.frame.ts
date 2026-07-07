@@ -28,21 +28,20 @@ import {
   refreshAccessToken,
 } from "./oauth";
 import {
+  estimateImageGenerationCostMicroUsd,
+  imageGenerationCostMethod,
+} from "./qgrid-image-generation";
+import {
+  buildImageGenerationToolSteps,
+  formatResponseForLog,
+  getImageParts,
+} from "./qgrid-response-format";
+import {
   afterQuery,
   beforeQuery,
   finishRunAborted,
   finishRunWithError,
 } from "./qgrid-run-lifecycle";
-import {
-  formatImagePartForLog,
-  formatResponseForLog,
-  getImageParts,
-  imageGenerationToolArgs,
-} from "./qgrid-response-format";
-import {
-  estimateImageGenerationCostMicroUsd,
-  imageGenerationCostMethod,
-} from "./qgrid-image-generation";
 import { QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type QueryInput,
@@ -174,7 +173,9 @@ class QgridFrameClass extends BaseFrameClass {
         cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
         image_cost_usd: imageCostMicroUsd,
         image_cost_method:
-          imageCostMicroUsd !== null ? imageGenerationCostMethod(args.imageGenerationOptions) : null,
+          imageCostMicroUsd !== null
+            ? imageGenerationCostMethod(args.imageGenerationOptions)
+            : null,
         effort: args.effort ?? null,
         // malformed history가 와도 성공한 턴(특히 stream sse.end())을 깨지 않도록 방어.
         history: ((): { type: string }[] | null => {
@@ -193,17 +194,8 @@ class QgridFrameClass extends BaseFrameClass {
       .then(async (ids) => {
         const requestLogId = ids[0];
         if (!requestLogId || imageParts.length === 0) return;
-        for (let i = 0; i < imageParts.length; i++) {
-          const image = imageParts[i]!;
-          await RequestLogModel.appendStep(requestLogId, {
-            step_index: 0,
-            type: "tool_call",
-            tool_call_index: i,
-            tool_call_id: `image_generation:0:${i}`,
-            tool_name: "image_generation",
-            tool_args: imageGenerationToolArgs(args),
-            tool_result: formatImagePartForLog(image),
-          });
+        for (const step of buildImageGenerationToolSteps(args, imageParts, 0)) {
+          await RequestLogModel.appendStep(requestLogId, step);
         }
       })
       .catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
