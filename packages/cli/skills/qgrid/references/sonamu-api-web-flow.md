@@ -37,6 +37,8 @@ Check list and detail views. Avoid loading large text columns in list views unle
 
 Image-generation request logs add `is_image_generation`, `image_cost_usd`, and `image_cost_method`. The list view displays driver plus image cost as the total cost cell; the detail view shows driver cost and image cost separately and renders generated image data URLs from response/tool-step content.
 
+Reference input images for image generation render in the detail view under the user prompt from the first synthetic `image_generation` step's `tool_args.inputImages`. Keep the prompt itself text-only, redact large base64 in request JSON views, and avoid rendering duplicate input previews for multi-output image turns.
+
 ## Verification
 
 After API shape changes:

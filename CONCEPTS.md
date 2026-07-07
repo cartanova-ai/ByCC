@@ -2,6 +2,14 @@
 
 Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Seeded with core domain vocabulary, then accretes as ce-compound and ce-compound-refresh process learnings; direct edits are fine. Glossary only, not a spec or catch-all.
 
+## Agent setup and request logging
+
+### qgrid skill sync
+The install-time process that makes qgrid's agent instructions discoverable to local coding agents by placing the same qgrid skill in both Codex and Claude Code skill search locations.
+
+### Request-log project label
+A caller-provided workload identity attached to qgrid request logs so operators can group traffic, metrics, and debugging context by project or workflow instead of inferring ownership from prompts or tokens.
+
 ## Prompt cache & thread reuse
 
 ### Thread reuse

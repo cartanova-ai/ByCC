@@ -145,9 +145,11 @@ Image generation is OpenAI/Codex-only and implemented as an opt-in Codex `image_
 - It enables `features.image_generation` only on that thread; global config remains disabled.
 - It swaps the normal "text only" base instruction for an image-permitting instruction on that thread.
 - It gates on provider capability and model multimodality.
+- AI SDK reference images are accepted only on this image-generation path. They arrive as qgrid `input` image data URLs and should be compressed/resized by callers before JSON transport.
 - Failure kinds are `gate`, `not_called`, and `incomplete`.
 - Codex notifications expose image items through `item/started` and `item/completed`; qgrid treats non-empty base64 `result` as the completion signal, not the item `status` string.
 - Completed images are surfaced as qgrid `image` content parts and AI SDK `file` parts with `mediaType: "image/png"`.
 - qgrid uses `gpt-image-2` as the image-tool pricing/model assumption. Codex does not expose exact image tool token usage, so `image_cost_usd` is an estimate from the public price table, not exact billing.
+- Codex may return multiple completed image outputs. qgrid maps each one to a separate image content part and a synthetic `image_generation` request-log tool step.
 
 Before modifying this area, inspect latest docs/plans/brainstorms and current tests.

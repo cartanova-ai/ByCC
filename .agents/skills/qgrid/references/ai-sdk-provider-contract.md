@@ -64,12 +64,16 @@ Payload responsibilities:
 - Preserve and resend `runContext` for tool-call follow-ups.
 - Store/resend OpenAI `threadCoord` by `sessionKey`.
 - Send `imageGeneration` and `imageGenerationOptions` when configured.
+- Send AI SDK multimodal image/file message parts as qgrid `input` only when `imageGeneration` is enabled. Normal non-image-generation calls keep `user_prompt` text-only and do not forward image input.
+- Reject oversized reference-image data URLs before the request leaves the SDK. Reference images travel as JSON data URLs; callers should compress/resize large photos, preferably to WebP/JPEG.
 
 Tools and `jsonSchema` cannot be used together at qgrid dispatcher level.
 
 When tools are present, qgrid sends tool definitions to the server as `tools`; it does not send them to OpenAI or Anthropic as native provider tools. The server converts them into a strict structured-output schema and maps the model's structured result back into AI SDK `tool-call` content.
 
 Image generation is different from AI SDK client tools: it is an opt-in Codex-hosted tool exposed by qgrid through `providerOptions.qgrid.imageGeneration`. Use `generateText`; `streamText` rejects image generation before opening the stream.
+
+Reference images for image generation use normal AI SDK multimodal message parts. The provider wraps image/file base64 as `data:${mediaType};base64,...` qgrid `input` items. This is intentionally scoped to image-generation requests, not general vision/chat behavior.
 
 ## Response mapping
 

@@ -203,8 +203,27 @@ const result = await generateText({
 const image = result.files[0]; // mediaType: "image/png", base64
 ```
 
+레퍼런스 이미지는 일반 AI SDK multimodal message part로 전달할 수 있습니다:
+
+```typescript
+const result = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "이 이미지를 스타일 레퍼런스로 사용해서 포스터를 만들어줘" },
+        { type: "file", mediaType: "image/png", data: referenceImageBase64 },
+      ],
+    },
+  ],
+  providerOptions: { qgrid: { imageGeneration: true } },
+});
+```
+
 - `streamText`에서는 거부됩니다 (non-stream 전용).
 - 이미지 생성 요청은 항상 cold one-shot thread로 실행되며 thread reuse 대상에서 제외됩니다.
+- 레퍼런스 이미지는 JSON data URL로 전송됩니다. 큰 사진은 압축하거나 리사이즈해서 전달하세요. 과도하게 큰 base64 입력은 SDK가 거부하며, 사진에는 WebP/JPEG를 권장합니다.
 - 이미지 비용은 `gpt-image-2` 공개 단가표 기반 **추정치**로 request log의 `image_cost_usd`에 별도 기록됩니다 (codex가 정확한 이미지 tool 사용량을 노출하지 않음).
 
 ## Telemetry Logger

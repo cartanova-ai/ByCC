@@ -42,6 +42,11 @@ function defaultProjectRoot() {
   return findProjectRoot(cwd);
 }
 
+function isInside(parentDir, childDir) {
+  const relative = path.relative(path.resolve(parentDir), path.resolve(childDir));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function defaultTargets() {
   const isGlobalInstall =
     process.env.npm_config_global === "true" || process.env.npm_config_location === "global";
@@ -61,6 +66,11 @@ function defaultTargets() {
 
   const projectRoot = defaultProjectRoot();
   if (!projectRoot) return null;
+  const isInstalledPackage = packageDir.split(path.sep).includes("node_modules");
+  if (!isInstalledPackage && isInside(projectRoot, sourceSkillsDir)) {
+    console.log("qgrid skill sync skipped: running inside qgrid repository.");
+    return [];
+  }
 
   return [
     {
@@ -104,7 +114,7 @@ async function syncSkill({ label, target, useSymlink }) {
 
 const targetConfigs = defaultTargets();
 
-if (!targetConfigs) {
+if (targetConfigs === null) {
   console.log("qgrid skill sync skipped: project root not found.");
   process.exit(0);
 }
@@ -114,6 +124,8 @@ try {
     await syncSkill(targetConfig);
   }
 } catch (error) {
-  console.error(`qgrid skill sync failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `qgrid skill sync failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 }

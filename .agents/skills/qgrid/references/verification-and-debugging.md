@@ -164,6 +164,10 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 - AI SDK version-skew guard. The client requested image generation, but the server returned text-only content. Check server version and the OpenAI image-generation path.
 
+`reference image input is too large for JSON transport`:
+
+- AI SDK reference-image guard. The client passed a base64 image data URL large enough to likely exceed qgrid's JSON request body transport. Compress or resize the image before calling `generateText`, preferably as WebP/JPEG.
+
 OpenAI `ImageGenerationError` kinds:
 
 - `gate`: capability/model check failed before the turn.

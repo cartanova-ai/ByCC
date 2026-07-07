@@ -203,8 +203,27 @@ const result = await generateText({
 const image = result.files[0]; // mediaType: "image/png", base64
 ```
 
+Reference images can be passed through normal AI SDK multimodal message parts:
+
+```typescript
+const result = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Use this image as a style reference and create a poster" },
+        { type: "file", mediaType: "image/png", data: referenceImageBase64 },
+      ],
+    },
+  ],
+  providerOptions: { qgrid: { imageGeneration: true } },
+});
+```
+
 - Rejected in `streamText` (non-stream only).
 - Image-generation requests always run on a cold one-shot thread and are excluded from thread reuse.
+- Reference images are sent as JSON data URLs. Compress or resize large photos before passing them in; oversized base64 inputs are rejected by the SDK. WebP/JPEG is recommended for photos.
 - The image cost is an **estimate** based on the public `gpt-image-2` price table, recorded separately as `image_cost_usd` on the request log (codex does not expose exact image-tool usage).
 
 ## Telemetry Logger

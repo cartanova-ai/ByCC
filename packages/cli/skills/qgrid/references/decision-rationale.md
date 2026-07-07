@@ -172,8 +172,8 @@ Key decisions:
 - It is non-stream only. Codex returns completed base64 image payloads, not useful image deltas.
 - Image turns are cold one-shot threads and are excluded from thread reuse. This prevents base64 payloads from entering reusable conversation state and cache prefixes.
 - qgrid performs preflight capability/model gates and postflight "image count must be greater than zero" checks. Codex can otherwise silently return text when image generation is unavailable or unused.
-- Returned images are inline base64 content parts for consumers and AI SDK `file` parts. qgrid does not promise aspect ratio, edits, or reference-image control on this path.
+- Returned images are inline base64 content parts for consumers and AI SDK `file` parts. Reference images are accepted through AI SDK multimodal message parts only on the `imageGeneration` path, and are transported as JSON data URLs with SDK-side size guarding.
 - `imageGenerationOptions` currently supports quality and size. The worker instruction and request-log pricing assumption use `gpt-image-2`, with defaults `medium` and `1536x1024`.
-- qgrid does not manage generated images as durable assets through a `generated_images` table or object-storage layer. Current request logs can still contain inline image data URLs for inspection and synthetic `image_generation` tool-call steps.
+- qgrid does not manage generated or reference images as durable assets through a `generated_images` table or object-storage layer. Current request logs can still contain inline image data URLs for inspection and synthetic `image_generation` tool-call steps; reference input images live in the first synthetic step's `tool_args.inputImages`.
 - Image cost is stored separately in `request_logs.image_cost_usd`; `request_logs.cost_usd` remains the Codex driver model token cost. Because Codex does not expose exact image tool usage, `image_cost_usd` is a price-table estimate and may be inaccurate.
 - Inspect current plans, tests, and implementation before changing behavior; the Codex tool surface can change underneath qgrid.

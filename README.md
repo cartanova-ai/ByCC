@@ -202,6 +202,26 @@ const result = await generateText({
 const image = result.files[0]; // mediaType: "image/png", base64
 ```
 
+Reference images are supported through AI SDK multimodal message parts:
+
+```typescript
+const result = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Use this image as a style reference and create a poster" },
+        { type: "file", mediaType: "image/png", data: referenceImageBase64 },
+      ],
+    },
+  ],
+  providerOptions: { qgrid: { imageGeneration: true } },
+});
+```
+
+Reference images are sent as JSON data URLs, so compress or resize large photos before passing them in. The SDK rejects oversized base64 inputs with a clear error; WebP/JPEG is recommended for photos.
+
 ---
 
 ## CLI

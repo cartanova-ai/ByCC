@@ -58,6 +58,8 @@ Anthropic: normalize native mutually exclusive categories by summing input + cac
 
 For image requests, keep `cost_usd` as the Codex driver model token cost. Image output cost is separate because qgrid observes Codex's `image_generation` result, not the OpenAI Images API usage object. Treat `image_cost_usd` as a price-table estimate that may be inaccurate if Codex changes its underlying image accounting.
 
+Reference images for image generation are not stored in `request_logs.user_prompt`; that field remains the text prompt. For inspection in the detail view, qgrid stores reference image metadata/base64 in the synthetic `image_generation` step's `tool_args.inputImages`. If Codex returns multiple image outputs, store `inputImages` only on the first synthetic image tool step so multi-output logs do not duplicate the same input payload on every output.
+
 ## Legacy normalization
 
 `RequestLogModel` normalizes legacy Anthropic rows where stored `input_tokens` may not include cache read/write. Keep this in mind when changing cost or display logic.
