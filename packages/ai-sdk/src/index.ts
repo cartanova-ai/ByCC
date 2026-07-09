@@ -46,13 +46,13 @@ function assertImageInputFitsJsonTransport(imageUrls: string[]): void {
     totalDataUrlChars += url.length;
     if (url.length > MAX_IMAGE_INPUT_DATA_URL_CHARS) {
       throw new Error(
-        `qgrid: reference image input is too large for JSON transport (${url.length} chars). Compress or resize it before passing it to imageGeneration, for example as WebP/JPEG under ${MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL} total base64 data-url chars.`,
+        `qgrid: image input is too large for JSON transport (${url.length} chars). Compress or resize it before passing it to imageGeneration, for example as WebP/JPEG under ${MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL} total base64 data-url chars.`,
       );
     }
   }
   if (totalDataUrlChars > MAX_IMAGE_INPUT_DATA_URL_CHARS) {
     throw new Error(
-      `qgrid: reference image inputs are too large for JSON transport (${totalDataUrlChars} total chars). Compress or resize them before passing them to imageGeneration, for example as WebP/JPEG under ${MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL} total base64 data-url chars.`,
+      `qgrid: image inputs are too large for JSON transport (${totalDataUrlChars} total chars). Compress or resize them before passing them to imageGeneration, for example as WebP/JPEG under ${MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL} total base64 data-url chars.`,
     );
   }
 }

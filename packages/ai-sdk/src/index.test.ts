@@ -973,7 +973,7 @@ describe("qgrid AI SDK provider", () => {
         ],
         providerOptions: { qgrid: { imageGeneration: true } },
       } as never),
-    ).rejects.toThrow(/reference image input is too large.*WebP\/JPEG/i);
+    ).rejects.toThrow(/image input is too large.*WebP\/JPEG/i);
 
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -997,7 +997,7 @@ describe("qgrid AI SDK provider", () => {
         ],
         providerOptions: { qgrid: { imageGeneration: true } },
       } as never),
-    ).rejects.toThrow(/reference image input is too large.*WebP\/JPEG/i);
+    ).rejects.toThrow(/image input is too large.*WebP\/JPEG/i);
 
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -1020,7 +1020,7 @@ describe("qgrid AI SDK provider", () => {
         ],
         providerOptions: { qgrid: { imageGeneration: true } },
       } as never),
-    ).rejects.toThrow(/reference image inputs are too large.*total/i);
+    ).rejects.toThrow(/image inputs are too large.*total/i);
 
     expect(fetch).not.toHaveBeenCalled();
   });
