@@ -3,6 +3,11 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { getLogger } from "@logtape/logtape";
 
+import {
+  CODEX_IMAGE_GENERATION_MODEL,
+  resolveImageGenerationOptions,
+} from "../../../application/qgrid/qgrid-image-generation";
+import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
 import { type Model } from "../../../codex-protocol/v2/Model";
 import { type ModelListResponse } from "../../../codex-protocol/v2/ModelListResponse";
 import { type ModelProviderCapabilitiesReadResponse } from "../../../codex-protocol/v2/ModelProviderCapabilitiesReadResponse";
@@ -12,11 +17,6 @@ import { type ThreadStartResponse } from "../../../codex-protocol/v2/ThreadStart
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type TurnStartParams } from "../../../codex-protocol/v2/TurnStartParams";
 import { type TurnStartResponse } from "../../../codex-protocol/v2/TurnStartResponse";
-import {
-  CODEX_IMAGE_GENERATION_MODEL,
-  resolveImageGenerationOptions,
-} from "../../../application/qgrid/qgrid-image-generation";
-import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
 import { type StreamCallbacks as CommonStreamCallbacks } from "../common/provider-dispatcher";
 import { createTtftTracker } from "../common/ttft";
 import { CodexRpcClient } from "./codex-rpc";
@@ -115,7 +115,7 @@ function isCompletedImageResult(result: unknown): result is string {
 // instruction 블록(permissions/environment_context/skills, ~10KB)을 비활성화
 // $CODEX_HOME/config.toml 로 써넣으면 codex 부팅 시 scan
 // 통제불가: update_plan/request_user_input
-const CODEX_CONFIG_TOML = `web_search = "disabled"
+export const CODEX_CONFIG_TOML = `web_search = "disabled"
 include_permissions_instructions = false
 include_apps_instructions = false
 include_environment_context = false
@@ -134,6 +134,9 @@ view_image = false
 
 [skills]
 include_instructions = false
+
+[skills.bundled]
+enabled = false
 `;
 
 // ── Worker ──────────────────────────────────────────────────────────
@@ -179,6 +182,7 @@ export class CodexAppServerWorker {
     this.cachedCapabilities = undefined;
     this.cachedModels = undefined;
     const cwd = `${this.codexHome}/cwd`;
+    rmSync(this.codexHome, { recursive: true, force: true });
     mkdirSync(cwd, { recursive: true });
     // codex 내장 tool/web_search/instruction 블록 비활성화
     writeFileSync(`${this.codexHome}/config.toml`, CODEX_CONFIG_TOML);
@@ -583,6 +587,12 @@ export class CodexAppServerWorker {
     abort?.(error);
   }
 
+  private cleanupGeneratedImages(): void {
+    try {
+      rmSync(`${this.codexHome}/generated_images`, { recursive: true, force: true });
+    } catch {}
+  }
+
   private consumeTurnNotifications(
     threadId: string,
     model: string,
@@ -633,6 +643,7 @@ export class CodexAppServerWorker {
         if (settled) return;
         settled = true;
         cleanup();
+        if (result.imageAttempted) this.cleanupGeneratedImages();
         resolve(result);
       };
 
@@ -751,6 +762,7 @@ export class CodexAppServerWorker {
         if (settled) return;
         settled = true;
         cleanup();
+        if (result.imageAttempted) this.cleanupGeneratedImages();
         cb.onComplete(result);
         resolve();
       };

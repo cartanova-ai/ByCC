@@ -1,6 +1,10 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { CodexAppServerWorker, type StreamCallbacks } from "./codex-worker";
+import { CODEX_CONFIG_TOML, CodexAppServerWorker, type StreamCallbacks } from "./codex-worker";
 
 function createWorkerWithFakeRpc() {
   const worker = new CodexAppServerWorker({
@@ -349,6 +353,40 @@ describe("CodexAppServerWorker image generation capture", () => {
     expect(result.imageAttempted).toBe(true);
   });
 
+  it("removes generated image artifacts after a successful image turn", async () => {
+    const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
+      if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+      if (method === "turn/start") {
+        handlers.get("item/completed")?.({
+          threadId: "t1",
+          item: imageItem("img-a", IMAGE_B64, "a red circle"),
+        } as never);
+        handlers.get("turn/completed")?.({
+          threadId: "t1",
+          turn: { status: "completed", durationMs: 100 },
+        } as never);
+        return { turn: { id: "turn-1" } };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    const codexHome = mkdtempSync(join(tmpdir(), "qgrid-codex-worker-test-"));
+    const generatedImages = join(codexHome, "generated_images", "session");
+    mkdirSync(generatedImages, { recursive: true });
+    writeFileSync(join(generatedImages, "img-a.png"), "image");
+    (worker as unknown as { codexHome: string }).codexHome = codexHome;
+
+    try {
+      await worker.executeTurn({
+        input: [{ type: "text", text: "two images", text_elements: [] }],
+        imageGeneration: true,
+      });
+
+      expect(existsSync(join(codexHome, "generated_images"))).toBe(false);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it("treats status='generating' completed item with valid base64 as a finished image", async () => {
     const { worker } = createWorkerWithNotificationRpc(async (method, _params, handlers) => {
       if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
@@ -485,6 +523,37 @@ describe("CodexAppServerWorker image generation capture", () => {
     });
     const threadMeta = (spy.worker as unknown as { threadMeta: Map<string, unknown> }).threadMeta;
     expect(threadMeta.has(threadId)).toBe(true);
+  });
+});
+
+describe("CodexAppServerWorker CODEX_HOME artifacts", () => {
+  it("disables bundled system skills in the generated Codex config", () => {
+    expect(CODEX_CONFIG_TOML).toContain("[skills.bundled]");
+    expect(CODEX_CONFIG_TOML).toContain("enabled = false");
+  });
+
+  it("removes the generated_images directory without touching other worker files", () => {
+    const worker = new CodexAppServerWorker({
+      tokenId: 1,
+      tokenName: "token",
+      accessToken: "access",
+      accountId: "account",
+    });
+    const codexHome = mkdtempSync(join(tmpdir(), "qgrid-codex-worker-test-"));
+    const generatedImages = join(codexHome, "generated_images", "session");
+    mkdirSync(generatedImages, { recursive: true });
+    writeFileSync(join(generatedImages, "img-a.png"), "image");
+    writeFileSync(join(codexHome, "state_5.sqlite"), "state");
+    (worker as unknown as { codexHome: string }).codexHome = codexHome;
+
+    try {
+      (worker as unknown as { cleanupGeneratedImages(): void }).cleanupGeneratedImages();
+
+      expect(existsSync(join(codexHome, "generated_images"))).toBe(false);
+      expect(existsSync(join(codexHome, "state_5.sqlite"))).toBe(true);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   });
 });
 
