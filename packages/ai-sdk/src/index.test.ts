@@ -967,7 +967,7 @@ describe("qgrid AI SDK provider", () => {
             role: "user",
             content: [
               { type: "text", text: "use this as a style reference" },
-              { type: "file", mediaType: "image/png", data: "a".repeat(900_001) },
+              { type: "file", mediaType: "image/png", data: "a".repeat(9_000_001) },
             ],
           },
         ],
@@ -989,7 +989,7 @@ describe("qgrid AI SDK provider", () => {
             role: "user",
             content: [
               { type: "text", text: "earlier" },
-              { type: "file", mediaType: "image/png", data: "a".repeat(900_001) },
+              { type: "file", mediaType: "image/png", data: "a".repeat(9_000_001) },
             ],
           },
           { role: "assistant", content: [{ type: "text", text: "ok" }] },
@@ -1013,8 +1013,8 @@ describe("qgrid AI SDK provider", () => {
             role: "user",
             content: [
               { type: "text", text: "use these as references" },
-              { type: "file", mediaType: "image/png", data: "a".repeat(460_000) },
-              { type: "file", mediaType: "image/png", data: "b".repeat(460_000) },
+              { type: "file", mediaType: "image/png", data: "a".repeat(4_600_000) },
+              { type: "file", mediaType: "image/png", data: "b".repeat(4_600_000) },
             ],
           },
         ],

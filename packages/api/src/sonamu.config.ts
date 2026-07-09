@@ -94,6 +94,9 @@ export default defineConfig({
   },
   server: {
     listen: { port, host },
+    fastify: {
+      bodyLimit: 10 * 1024 * 1024,
+    },
     plugins: {
       formbody: true,
       qs: true,

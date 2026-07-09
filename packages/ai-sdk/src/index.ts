@@ -36,8 +36,8 @@ import {
 // 클라이언트가 전달한 providerOptions.qgrid.sessionKey의 좌표 발급/보관/회송을 여기서 처리한다
 // 모듈 레벨이라 qgrid() 인스턴스를 매 호출 새로 만들어도 공유
 const threadCoordStore = new Map<string, { coord: QgridThreadCoord; expiresAt: number }>();
-const MAX_IMAGE_INPUT_DATA_URL_CHARS = 900_000;
-const MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL = `${MAX_IMAGE_INPUT_DATA_URL_CHARS / 1000}k`;
+const MAX_IMAGE_INPUT_DATA_URL_CHARS = 9_000_000;
+const MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL = "9M";
 
 function assertImageInputFitsJsonTransport(imageUrls: string[]): void {
   let totalDataUrlChars = 0;
