@@ -160,7 +160,7 @@ const { text } = await generateText({
 | 옵션 | 값 | 적용 범위 | 설명 |
 |---|---|---|---|
 | `sessionKey` | `string` | OpenAI 전용 | 멀티턴 대화 식별자. 같은 key는 같은 codex thread로 라우팅되어 prompt cache 적중 ([아래](#멀티턴-prompt-cache-sessionkey) 참조) |
-| `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` | 공통 | reasoning 모델의 추론 깊이. 기본값은 config의 `defaultEffort` (`"low"`) |
+| `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | 공통 (지원 값은 모델별 상이, 예: `"max"`는 GPT-5.6+) | reasoning 모델의 추론 깊이. 기본값은 config의 `defaultEffort` (`"low"`) |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI 전용 | 응답 텍스트의 상세도 |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI 전용 | 추론 요약 출력 방식 |
 | `serviceTier` | `string` | OpenAI 전용 | OpenAI/codex service tier |
@@ -269,6 +269,9 @@ createQgridLogger({
 ```typescript
 type QgridSupportedModel =
   // OpenAI (based on codex app-server)
+  | "openai/gpt-5.6-sol"
+  | "openai/gpt-5.6-terra"
+  | "openai/gpt-5.6-luna"
   | "openai/gpt-5.5"
   | "openai/gpt-5.4"
   | "openai/gpt-5.2"
@@ -289,6 +292,16 @@ type QgridSupportedModel =
   | "anthropic/claude-opus-4-7"
   | "anthropic/claude-opus-4-8"
 ```
+
+### GPT-5.6 사양
+
+| 모델 | Context (qgrid/codex 런타임) | 최대 출력 | 1M tokens당 input / cached input / output |
+|---|---:|---:|---:|
+| `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
+| `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
+| `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
+
+세 모델 모두 `max` reasoning effort를 지원합니다. OpenAI native API 사양은 1.05M context / 128K 최대 출력이지만, qgrid는 codex app-server 구독 경로로 실행되어 세 모델 모두 context window가 372K(95% effective, 실사용 입력 약 353K)로 보고되며 설정으로 올릴 수 없습니다. 입력이 272K tokens를 넘으면 요청 전체에 input 2x, output 1.5x 장문 컨텍스트 할증이 적용되며, cache write는 uncached input 단가의 1.25x입니다.
 
 ## 설정
 

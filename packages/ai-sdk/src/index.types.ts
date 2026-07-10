@@ -17,7 +17,7 @@ export type QgridProviderOptions = {
    */
   sessionKey?: string;
   /** reasoning 모델의 추론 깊이. 기본값은 qgrid config의 defaultEffort. */
-  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /** 응답 텍스트의 상세도. OpenAI/codex route에서만 적용된다. */
   verbosity?: "low" | "medium" | "high";
   /** reasoning 모델의 추론 요약 출력 방식. OpenAI/codex route에서만 적용된다. */
@@ -59,6 +59,9 @@ export type QgridInputPart =
   | { type: "image"; url: string };
 
 export type QgridSupportedModel =
+  | "openai/gpt-5.6-sol"
+  | "openai/gpt-5.6-terra"
+  | "openai/gpt-5.6-luna"
   | "openai/gpt-5.5"
   | "openai/gpt-5.4"
   | "openai/gpt-5.2"
