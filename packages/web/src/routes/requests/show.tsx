@@ -98,7 +98,7 @@ function parseImageSegments(text: string): ImageSegment[] {
   for (const match of text.matchAll(DATA_IMAGE_TAG_RE)) {
     const index = match.index ?? 0;
     if (index > cursor) segments.push({ type: "text", text: text.slice(cursor, index) });
-    segments.push({ type: "image", src: match[1]!, alt: match[2] ?? "generated image" });
+    segments.push({ type: "image", src: match[1], alt: match[2] ?? "generated image" });
     cursor = index + match[0].length;
   }
   if (cursor < text.length) segments.push({ type: "text", text: text.slice(cursor) });

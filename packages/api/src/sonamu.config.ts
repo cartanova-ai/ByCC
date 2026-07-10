@@ -11,7 +11,6 @@ import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
 import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
-import { TokenModel } from "./application/token/token.model";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
@@ -180,17 +179,6 @@ export default defineConfig({
     lifecycle: {
       onStart: async () => {
         const log = getLogger(["qgrid", "startup"]);
-
-        try {
-          const knex = TokenModel.getDB("w");
-          const migrationsDir = path.join(import.meta.dirname, "../src/migrations");
-          const [batch, migrations] = await knex.migrate.latest({ directory: migrationsDir });
-          if (migrations.length > 0) {
-            log.info(`migration: ${migrations.length} applied (batch ${batch})`);
-          }
-        } catch (e) {
-          log.warn(`migration skipped: ${(e as Error).message}`);
-        }
 
         let triggerReady = true;
         try {
