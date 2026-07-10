@@ -95,6 +95,15 @@ function firstRefreshTokenArg() {
   return call;
 }
 
+async function selectedTokenNames(
+  dispatcher: AnthropicDispatcher,
+  count: number,
+): Promise<string[]> {
+  return Promise.all(
+    Array.from({ length: count }, async () => (await dispatcher.generate(baseReq())).tokenName),
+  );
+}
+
 describe("AnthropicDispatcher", () => {
   beforeEach(() => {
     runClaudeSessionMock.mockReset();
@@ -113,7 +122,7 @@ describe("AnthropicDispatcher", () => {
 
   it("happy: generate → GenerateResult (threadCoord 조립, systemHash 없음)", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ ttftMs: 42 }));
 
     const result = await d.generate(baseReq());
@@ -127,7 +136,7 @@ describe("AnthropicDispatcher", () => {
 
   it("cold 호출: coldInput/coldHistory 를 그대로 전달하고 continuation session id 는 없다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
     await d.generate(
       baseReq({ coldHistory: [{ type: "message", role: "assistant", content: [] }] }),
@@ -141,7 +150,7 @@ describe("AnthropicDispatcher", () => {
 
   it("reuse/reuseInput 이 실려 와도 무시하고 coldInput/coldHistory 로 실행한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
     await d.generate(
       baseReq({
@@ -159,7 +168,7 @@ describe("AnthropicDispatcher", () => {
 
   it("structured(outputSchema): jsonSchema 로 직렬화되어 전달", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     await d.generate(baseReq({ outputSchema: { type: "object", properties: {} } }));
 
     const call = firstRunRequest();
@@ -168,7 +177,7 @@ describe("AnthropicDispatcher", () => {
 
   it("quota 소진 → 에러", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ quotaExhausted: true }));
 
     await expect(d.generate(baseReq())).rejects.toThrow(/quota exhausted/);
@@ -176,7 +185,7 @@ describe("AnthropicDispatcher", () => {
 
   it("claude 에러 → 에러", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ isError: true, text: "boom" }));
 
     await expect(d.generate(baseReq())).rejects.toThrow(/claude error/);
@@ -184,7 +193,7 @@ describe("AnthropicDispatcher", () => {
 
   it("cold 실패는 resume retry 없이 그대로 전파한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     runClaudeSessionMock.mockRejectedValueOnce(new Error("closed without result"));
 
     await expect(
@@ -198,25 +207,46 @@ describe("AnthropicDispatcher", () => {
     expect(runClaudeSessionMock).toHaveBeenCalledTimes(1);
   });
 
-  it("least-used RR: 두 토큰 번갈아 분배", async () => {
+  it("routes Anthropic requests in a 3:1 ratio", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
-    d.onTokenAdded(2, "tok-B", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 3);
+    d.onTokenAdded(2, "tok-B", creds(), null, 1);
 
-    const names = new Set<string>();
-    const r1 = await d.generate(baseReq());
-    const r2 = await d.generate(baseReq());
-    names.add(r1.tokenName);
-    names.add(r2.tokenName);
+    const names = await selectedTokenNames(d, 4);
 
-    expect(names.size).toBe(2);
+    expect(names.filter((name) => name === "tok-A")).toHaveLength(3);
+    expect(names.filter((name) => name === "tok-B")).toHaveLength(1);
     expect(readAnthropicQuotaUsageMock).not.toHaveBeenCalled();
+  });
+
+  it("recomputes weighted selection from quota-eligible tokens", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), 80, 10);
+    d.onTokenAdded(2, "tok-B", creds(), 80, 1);
+    readAnthropicQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(90))
+      .mockResolvedValueOnce(quotaOk(10));
+
+    expect((await d.generate(baseReq())).tokenName).toBe("tok-B");
+  });
+
+  it("resets the schedule when a token weight changes", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+    d.onTokenAdded(2, "tok-B", creds(), null, 1);
+    await d.generate(baseReq());
+
+    d.onTokenUpdated(1, "tok-A", creds(), null, 1);
+    d.onTokenUpdated(2, "tok-B", creds(), null, 3);
+    const names = await selectedTokenNames(d, 4);
+
+    expect(names.filter((name) => name === "tok-B")).toHaveLength(3);
   });
 
   it("threshold 초과 토큰은 후보에서 제외하고 미설정 토큰을 선택한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
-    d.onTokenAdded(2, "tok-B", creds());
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
+    d.onTokenAdded(2, "tok-B", creds(), null, 1);
     readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaOk(85, 1_000));
 
     const result = await d.generate(baseReq());
@@ -239,8 +269,8 @@ describe("AnthropicDispatcher", () => {
 
   it("threshold 경계는 utilization >= threshold 일 때 제외한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
-    d.onTokenAdded(2, "tok-B", creds(), 80);
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
+    d.onTokenAdded(2, "tok-B", creds(), 80, 1);
     readAnthropicQuotaUsageMock
       .mockResolvedValueOnce(quotaOk(80))
       .mockResolvedValueOnce(quotaOk(79));
@@ -252,7 +282,7 @@ describe("AnthropicDispatcher", () => {
 
   it("quota 조회 실패는 fail-open 으로 통과시키고 lookup_fail_open 로그를 남긴다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
     readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaFail("timeout"));
 
     const result = await d.generate(baseReq());
@@ -272,7 +302,7 @@ describe("AnthropicDispatcher", () => {
 
   it("utilization 0 은 정상 조회로 보고 fail-open 로그를 남기지 않는다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
     readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaOk(0));
 
     const result = await d.generate(baseReq());
@@ -286,8 +316,8 @@ describe("AnthropicDispatcher", () => {
 
   it("모든 threshold 설정 토큰이 초과되면 typed error 로 실패한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
-    d.onTokenAdded(2, "tok-B", creds(), 90);
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
+    d.onTokenAdded(2, "tok-B", creds(), 90, 1);
     readAnthropicQuotaUsageMock
       .mockResolvedValueOnce(quotaOk(85, 100))
       .mockResolvedValueOnce(quotaOk(95, 200));
@@ -301,11 +331,11 @@ describe("AnthropicDispatcher", () => {
     );
   });
 
-  it("minCount 는 초과 토큰을 제외한 eligible 집합에서 계산한다", async () => {
+  it("가중 선택은 quota 초과 토큰을 제외한 eligible 집합에서 계산한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
-    d.onTokenAdded(2, "tok-B", creds(), 80);
-    d.onTokenAdded(3, "tok-C", creds(), 80);
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
+    d.onTokenAdded(2, "tok-B", creds(), 80, 1);
+    d.onTokenAdded(3, "tok-C", creds(), 80, 1);
 
     readAnthropicQuotaUsageMock
       .mockResolvedValueOnce(quotaOk(10))
@@ -325,10 +355,10 @@ describe("AnthropicDispatcher", () => {
     expect(new Set(["tok-B", "tok-C"]).has(result.tokenName)).toBe(true);
   });
 
-  it("동시 요청은 quota await 이후 charge 선반영으로 서로 다른 eligible 토큰을 고른다", async () => {
+  it("동시 요청은 quota await 이후 동기 선택으로 서로 다른 eligible 토큰을 고른다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(), 80);
-    d.onTokenAdded(2, "tok-B", creds(), 80);
+    d.onTokenAdded(1, "tok-A", creds(), 80, 1);
+    d.onTokenAdded(2, "tok-B", creds(), 80, 1);
     readAnthropicQuotaUsageMock.mockResolvedValue(quotaOk(0));
 
     const results = await Promise.all([d.generate(baseReq()), d.generate(baseReq())]);
@@ -338,7 +368,7 @@ describe("AnthropicDispatcher", () => {
 
   it("onTokenRemoved 후 그 토큰 미선택", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     d.onTokenRemoved(1);
 
     await expect(d.generate(baseReq())).rejects.toThrow(/No anthropic tokens/);
@@ -346,8 +376,8 @@ describe("AnthropicDispatcher", () => {
 
   it("onTokenUpdated 는 토큰 credentials 를 in-place 갱신한다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(3_600_000, "acc-1"));
-    d.onTokenUpdated(1, "tok-A", creds(7_200_000, "acc-2"));
+    d.onTokenAdded(1, "tok-A", creds(3_600_000, "acc-1"), null, 1);
+    d.onTokenUpdated(1, "tok-A", creds(7_200_000, "acc-2"), null, 1);
 
     await d.generate(baseReq());
 
@@ -357,7 +387,7 @@ describe("AnthropicDispatcher", () => {
 
   it("model prefix 정규화: 'anthropic/claude-opus-4-8' → canonical 로 세션/result.model", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
     const result = await d.generate(baseReq({ model: "anthropic/claude-opus-4-8" }));
 
@@ -368,7 +398,7 @@ describe("AnthropicDispatcher", () => {
 
   it("[1m] suffix 정규화: result/runClaudeSession 에는 base canonical 만 전달", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
     const result = await d.generate(baseReq({ model: "anthropic/claude-sonnet-4-6[1m]" }));
 
@@ -379,7 +409,7 @@ describe("AnthropicDispatcher", () => {
 
   it("unsupported alias + [1m] 은 조용히 다운그레이드하지 않는다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
     await expect(d.generate(baseReq({ model: "sonnet[1m]" }))).rejects.toThrow(
       /Unsupported Anthropic 1M model suffix/,
@@ -388,7 +418,7 @@ describe("AnthropicDispatcher", () => {
 
   it("model 미지정 → ANTHROPIC_DEFAULT_MODEL 적용", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
     const result = await d.generate(baseReq({ model: undefined }));
 
@@ -399,9 +429,9 @@ describe("AnthropicDispatcher", () => {
 
   it("replaceTokens: DB 기준 풀 재동기화 — 없는 토큰 제거, 새 토큰 추가", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
 
-    d.replaceTokens([{ id: 2, name: "tok-B", credentials: creds() }]);
+    d.replaceTokens([{ id: 2, name: "tok-B", credentials: creds(), weight: 1 }]);
     const result = await d.generate(baseReq());
 
     expect(result.tokenName).toBe("tok-B");
@@ -409,7 +439,7 @@ describe("AnthropicDispatcher", () => {
 
   it("generateStream: onDelta/onComplete 호출", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     runClaudeSessionMock.mockImplementationOnce(async (_req, onDelta: (t: string) => void) => {
       onDelta("부분");
       return sessionResult({ text: "부분완성" });
@@ -430,7 +460,7 @@ describe("AnthropicDispatcher", () => {
 
   it("generateStream: Claude server error 는 onError 로 전달하고 complete 하지 않는다", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds());
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
     const serverError = new Error(
       "claude error (anthropic/yds): API Error: 529 Overloaded. This is a server-side issue",
     );
@@ -449,7 +479,7 @@ describe("AnthropicDispatcher", () => {
 
   it("refresh: 만료 임박 토큰은 provider 포함해 refreshToken 호출, 새 access token 으로 세션 진행", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(30_000));
+    d.onTokenAdded(1, "tok-A", creds(30_000), null, 1);
     refreshTokenMock.mockResolvedValueOnce("sk-ant-oat01-refreshed");
 
     await d.generate(baseReq());
@@ -463,7 +493,7 @@ describe("AnthropicDispatcher", () => {
 
   it("refresh: 만료 여유 있으면 refresh 안 함, 기존 access token 사용", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(3_600_000));
+    d.onTokenAdded(1, "tok-A", creds(3_600_000), null, 1);
 
     await d.generate(baseReq());
 
@@ -473,7 +503,7 @@ describe("AnthropicDispatcher", () => {
 
   it("refresh 실패해도 기존 access token 으로 진행 — 요청을 죽이지 않음", async () => {
     const d = new AnthropicDispatcher();
-    d.onTokenAdded(1, "tok-A", creds(30_000));
+    d.onTokenAdded(1, "tok-A", creds(30_000), null, 1);
     refreshTokenMock.mockRejectedValueOnce(new Error("refresh boom"));
 
     const result = await d.generate(baseReq());
