@@ -31,4 +31,15 @@ describe("TokenSaveParams", () => {
     expect(() => TokenSaveParams.parse({ ...baseToken, quota_threshold: 0 })).toThrow();
     expect(() => TokenSaveParams.parse({ ...baseToken, quota_threshold: 101 })).toThrow();
   });
+
+  it("accepts integer weights from 1 through 100", () => {
+    expect(TokenSaveParams.parse({ ...baseToken, weight: 1 }).weight).toBe(1);
+    expect(TokenSaveParams.parse({ ...baseToken, weight: 100 }).weight).toBe(100);
+  });
+
+  it("rejects invalid weights", () => {
+    for (const weight of [0, 101, 1.5]) {
+      expect(() => TokenSaveParams.parse({ ...baseToken, weight })).toThrow();
+    }
+  });
 });

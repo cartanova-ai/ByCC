@@ -14,10 +14,21 @@ import { tokenLoaderQueries, tokenSubsetQueries } from "../sonamu.generated.sso"
 import { type TokenListParams, type TokenSaveParams } from "./token.types";
 
 const DEFAULT_QUOTA_THRESHOLD = 80;
+const DEFAULT_WEIGHT = 1;
+
+export type TokenUpdateFields = {
+  name?: string;
+  quota_threshold?: number | null;
+  weight?: number;
+};
 
 function applyCreateDefaults(sp: TokenSaveParams): TokenSaveParams {
-  if (sp.id !== undefined || sp.quota_threshold !== undefined) return sp;
-  return { ...sp, quota_threshold: DEFAULT_QUOTA_THRESHOLD };
+  if (sp.id !== undefined) return sp;
+  return {
+    ...sp,
+    ...(sp.quota_threshold === undefined ? { quota_threshold: DEFAULT_QUOTA_THRESHOLD } : {}),
+    ...(sp.weight === undefined ? { weight: DEFAULT_WEIGHT } : {}),
+  };
 }
 
 class TokenModelClass extends BaseModelClass<
@@ -155,6 +166,11 @@ class TokenModelClass extends BaseModelClass<
     return wdb.transaction(async (trx) => {
       return trx.ubUpsert("tokens");
     });
+  }
+
+  async updateFields(id: number, fields: TokenUpdateFields): Promise<number> {
+    const wdb = this.getPuri("w");
+    return wdb.transaction((trx) => trx.table("tokens").where("id", id).update(fields));
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })

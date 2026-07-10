@@ -197,9 +197,17 @@ export const TokenBaseSchema = z.object({
   active: z.boolean(),
   ord: z.int(),
   quota_threshold: z.int().nullable(),
+  weight: z.int(),
 });
 export type TokenBaseSchema = z.infer<typeof TokenBaseSchema> & {
-  readonly __hasDefault__: readonly ["created_at", "active", "ord", "quota_threshold", "id"];
+  readonly __hasDefault__: readonly [
+    "created_at",
+    "active",
+    "ord",
+    "quota_threshold",
+    "weight",
+    "id",
+  ];
 };
 
 // BaseListParams: RequestLog
@@ -373,6 +381,7 @@ export const TokenSubsetA = z.object({
   active: z.boolean(),
   ord: z.int(),
   quota_threshold: z.int().nullable(),
+  weight: z.int(),
 });
 export type TokenSubsetA = z.infer<typeof TokenSubsetA>;
 export type TokenSubsetMapping = {

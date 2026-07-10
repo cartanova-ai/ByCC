@@ -1,7 +1,7 @@
 [
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
-    "checksum": "15e96a4c945b6876097c82d2c6daf376448d1d32"
+    "checksum": "7bc91abcca4acd1d070c0be84ebc79fea46fe651"
   },
   {
     "path": "api/src/application/qgrid/qgrid.types.ts",
@@ -37,27 +37,27 @@
   },
   {
     "path": "api/src/application/sonamu.generated.http",
-    "checksum": "d1e577f1ba381cb01a26399c5031bdc419a50cec"
+    "checksum": "911b2f118004a0e2b749765f994cd291c8b43006"
   },
   {
     "path": "api/src/application/sonamu.generated.sso.ts",
-    "checksum": "dc780d92ba1adcc8a0b42acfa20cfdcd01cc53c9"
+    "checksum": "62dab62c7e2f730e54b2da3d8e8eda2217a0d307"
   },
   {
     "path": "api/src/application/sonamu.generated.ts",
-    "checksum": "92ab83bab1fda9edabafbdd048a0ba814b4a73f0"
+    "checksum": "017d9ebb0380a26e5ffdb85acf3589b42b8392b9"
   },
   {
     "path": "api/src/application/token/token.entity.json",
-    "checksum": "05a216c0f3daeb26c6b139f12964ae2064143f55"
+    "checksum": "29430e17b4dd05e60112db00322e9b89fe646fd6"
   },
   {
     "path": "api/src/application/token/token.model.ts",
-    "checksum": "df9fab1704d067d313b8bd45087085e84a499539"
+    "checksum": "918863b5a7ffe881195000972b39897d78d4d2cf"
   },
   {
     "path": "api/src/application/token/token.types.ts",
-    "checksum": "080e3b54d34c34549973db8ab88c70f64e5cac5b"
+    "checksum": "7b6148106235518b2e5258638648437df952e4a0"
   },
   {
     "path": "api/src/i18n/en.ts",
@@ -69,7 +69,7 @@
   },
   {
     "path": "api/src/i18n/sd.generated.ts",
-    "checksum": "bf9ae34b7d2a5c88ae2eeeab1488cbf372c2b53c"
+    "checksum": "14103b10f4cbe2398dff994c4e2dc2bd4bd22099"
   },
   {
     "path": "api/src/sonamu.config.ts",
@@ -85,7 +85,7 @@
   },
   {
     "path": "web/src/i18n/sd.generated.ts",
-    "checksum": "f7ca4a820e95743df7d6aada4a0ff9182e07b4da"
+    "checksum": "bc90e19c6cd8ea37350b22fa86db979d4829632c"
   },
   {
     "path": "web/src/services/qgrid/qgrid.types.ts",
@@ -101,14 +101,14 @@
   },
   {
     "path": "web/src/services/services.generated.ts",
-    "checksum": "50998e7b81ac4469f6bad0483b146856a904762f"
+    "checksum": "4cb4705d5259646de5be5bd22f28d6f3f0a4ade4"
   },
   {
     "path": "web/src/services/sonamu.generated.ts",
-    "checksum": "27848ad77b79dabb30037e467c9d8cfd3f13df5f"
+    "checksum": "1b7093ddd2a6173bfacd45abdcd978ba095e78c3"
   },
   {
     "path": "web/src/services/token/token.types.ts",
-    "checksum": "288455e225c9348646c9846f86f33f9678469f62"
+    "checksum": "0ae73d400779e70081f8d7140ba384c921590f77"
   }
 ]

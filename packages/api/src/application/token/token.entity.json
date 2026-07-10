@@ -20,11 +20,27 @@
       "type": "integer",
       "nullable": true,
       "desc": "quota 사용률 임계치(%). null이면 미설정"
+    },
+    {
+      "name": "weight",
+      "type": "integer",
+      "desc": "가중 라운드로빈 라우팅 가중치 (1..100)",
+      "dbDefault": "1"
     }
   ],
   "indexes": [],
   "subsets": {
-    "A": ["id", "created_at", "provider", "credentials", "name", "active", "ord", "quota_threshold"]
+    "A": [
+      "id",
+      "created_at",
+      "provider",
+      "credentials",
+      "name",
+      "active",
+      "ord",
+      "quota_threshold",
+      "weight"
+    ]
   },
   "enums": {
     "TokenOrderBy": { "id-desc": "ID최신순", "ord-asc": "순서순" },
