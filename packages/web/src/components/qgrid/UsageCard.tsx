@@ -17,6 +17,7 @@ import GripVerticalIcon from "~icons/lucide/grip-vertical";
 import { formatUsd } from "@/lib/cost";
 import { QgridService, TokenService } from "@/services/services.generated";
 import { type TokenSubsetMapping } from "@/services/sonamu.generated";
+import { useUpdateTokenMutation } from "@/services/token/use-update-token-mutation";
 
 type Token = TokenSubsetMapping["A"];
 
@@ -34,6 +35,16 @@ function validateThreshold(
   const n = Number(trimmed);
   if (n > 100) return { ok: false, error: "100 이하여야 합니다" };
   return { ok: true, value: n === 0 ? null : n };
+}
+
+function validateWeight(raw: string): { ok: true; value: number } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return { ok: false, error: "1–100 사이 정수를 입력하세요" };
+  const value = Number(trimmed);
+  if (value < 1 || value > 100) {
+    return { ok: false, error: "1–100 사이 정수를 입력하세요" };
+  }
+  return { ok: true, value };
 }
 
 type ProviderTheme = {
@@ -201,7 +212,7 @@ function ThresholdControl({ token }: { token: Token }) {
   const [value, setValue] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const queryClient = useQueryClient();
-  const updateMutation = QgridService.useUpdateTokenMutation();
+  const updateMutation = useUpdateTokenMutation();
 
   const supported = QUOTA_THRESHOLD_PROVIDERS.has(token.provider);
   const open = pos !== null;
@@ -259,7 +270,6 @@ function ThresholdControl({ token }: { token: Token }) {
     if (!validation.ok) return;
     await updateMutation.mutateAsync({
       id: token.id,
-      name: token.name ?? "",
       quotaThreshold: validation.value,
     });
     await Promise.all([
@@ -358,6 +368,124 @@ function ThresholdControl({ token }: { token: Token }) {
   );
 }
 
+function WeightControl({ token }: { token: Token }) {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [value, setValue] = useState("");
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const queryClient = useQueryClient();
+  const updateMutation = useUpdateTokenMutation();
+  const validation = validateWeight(value);
+
+  const openPopover = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = 240;
+    const height = 150;
+    const margin = 8;
+    const gap = 6;
+    const left = Math.min(
+      Math.max(rect.right - width, margin),
+      Math.max(window.innerWidth - width - margin, margin),
+    );
+    const above = rect.top - gap - height;
+    const top = Math.min(
+      Math.max(above >= margin ? above : rect.bottom + gap, margin),
+      Math.max(window.innerHeight - height - margin, margin),
+    );
+    setValue(String(token.weight));
+    setPos({ left, top });
+  };
+
+  const close = () => setPos(null);
+  const adjust = (delta: number) => {
+    const current = /^\d+$/.test(value.trim()) ? Number(value.trim()) : 1;
+    setValue(String(Math.min(Math.max(current + delta, 1), 100)));
+  };
+
+  const save = async () => {
+    if (!validation.ok) return;
+    await updateMutation.mutateAsync({
+      id: token.id,
+      weight: validation.value,
+    });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["Token"] }),
+      queryClient.invalidateQueries({ queryKey: ["Qgrid"] }),
+    ]);
+    close();
+  };
+
+  return (
+    <div className="inline-flex" onPointerDown={stopDragPropagation} onClick={stopDragPropagation}>
+      <button
+        ref={triggerRef}
+        type="button"
+        title="라우팅 가중치 설정"
+        onClick={pos ? close : openPopover}
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] border border-sand-200/80 text-sand-400 hover:text-sand-600 hover:border-sand-300 transition-colors duration-150"
+      >
+        Weight {token.weight}
+      </button>
+      {pos && (
+        <>
+          <div className="fixed inset-0 z-40" onPointerDown={close} />
+          <div className="fixed z-50 w-60 panel shadow-xl p-3" style={pos}>
+            <label
+              htmlFor={`weight-${token.id}`}
+              className="text-[10px] uppercase tracking-wider text-sand-500 font-medium"
+            >
+              라우팅 가중치
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => adjust(-1)}
+                className="size-9 shrink-0 rounded-md border border-sand-200 text-sand-600"
+              >
+                −
+              </button>
+              <Input
+                id={`weight-${token.id}`}
+                value={value}
+                onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                  setValue(event.target.value)
+                }
+                inputMode="numeric"
+                className={`h-9 w-16 border rounded-md text-center text-sm tabular-nums ${
+                  validation.ok ? "border-sand-200" : "border-red-300"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => adjust(1)}
+                className="size-9 shrink-0 rounded-md border border-sand-200 text-sand-600"
+              >
+                +
+              </button>
+            </div>
+            <p className={`mt-1.5 text-[11px] ${validation.ok ? "text-sand-500" : "text-red-500"}`}>
+              {validation.ok ? "새 요청의 상대 배정 비율입니다." : validation.error}
+            </p>
+            <div className="mt-2 flex items-center justify-end gap-1.5">
+              <button type="button" onClick={close} className="px-2 py-1 text-[11px]">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={updateMutation.isPending || !validation.ok}
+                className="px-2 py-1 text-[11px] rounded-md bg-sienna-400 text-white disabled:opacity-50"
+              >
+                {updateMutation.isPending ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SortableTokenCard({ token }: { token: Token }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: String(token.id),
@@ -405,7 +533,8 @@ function SortableTokenCard({ token }: { token: Token }) {
           </span>
         </div>
         <TokenUsage token={token} theme={theme} />
-        <div className="mt-2 flex items-center justify-end">
+        <div className="mt-2 flex items-center justify-end gap-1.5">
+          <WeightControl token={token} />
           <ThresholdControl token={token} />
         </div>
         <div className="absolute top-2.5 right-3 flex items-center gap-1.5">
