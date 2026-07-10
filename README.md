@@ -269,10 +269,20 @@ In the dashboard you can filter the whole team's request logs by project — set
 
 | Provider | Models |
 |---|---|
-| OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
+| OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
 | Anthropic | `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
 
 > `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-8` automatically run with a 1M-token context window.
+
+### GPT-5.6 specifications
+
+| Model | Context (qgrid/codex runtime) | Max output | Input / cached input / output per 1M tokens |
+|---|---:|---:|---:|
+| `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
+| `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
+| `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
+
+All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec is a 1.05M context window with 128K max output, but qgrid runs on the codex app-server subscription path, where all three models report a 372K context window (95% effective — about 353K of usable input) that cannot be raised by configuration. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
 
 ---
 

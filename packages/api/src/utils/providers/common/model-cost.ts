@@ -43,6 +43,37 @@ const LONG_CONTEXT_272K: NonNullable<ModelCosts["longContext"]> = {
 };
 
 const OPENAI_COSTS: Record<string, ModelCosts> = {
+  // GPT-5.6 Sol, Terra, Luna. OpenAI native API 는 1.05M context / 128K max output 이지만,
+  // qgrid 의 codex app-server 경로는 context_window=372K (max_context_window 도 372K,
+  // effective 95% ≈ 353K) 로 제한된다 — codex 0.144.1 models_cache 실측 (2026-07-10).
+  // cache write 는 uncached input 의 1.25x 로 과금되지만, codex app-server usage
+  // (TokenUsageBreakdown) 에 cache write 토큰 필드가 없어 현재 OpenAI 실행 경로의
+  // cost 계산에서는 항상 0 으로 잡힌다 → 그만큼 과소집계. 단가는 외부 logger/manual
+  // usage 입력과 향후 프로토콜 확장을 위해 유지한다.
+  // @see https://developers.openai.com/api/docs/models/gpt-5.6-sol
+  // @see https://developers.openai.com/api/docs/models/gpt-5.6-terra
+  // @see https://developers.openai.com/api/docs/models/gpt-5.6-luna
+  "gpt-5.6-sol": {
+    inputTokens: 5,
+    outputTokens: 30,
+    cachedInputTokens: 0.5,
+    cacheCreationInputTokens: 6.25,
+    longContext: LONG_CONTEXT_272K,
+  },
+  "gpt-5.6-terra": {
+    inputTokens: 2.5,
+    outputTokens: 15,
+    cachedInputTokens: 0.25,
+    cacheCreationInputTokens: 3.125,
+    longContext: LONG_CONTEXT_272K,
+  },
+  "gpt-5.6-luna": {
+    inputTokens: 1,
+    outputTokens: 6,
+    cachedInputTokens: 0.1,
+    cacheCreationInputTokens: 1.25,
+    longContext: LONG_CONTEXT_272K,
+  },
   // https://openai.com/index/introducing-gpt-5-5/ (2026-04 출시)
   "gpt-5.5": {
     inputTokens: 5,

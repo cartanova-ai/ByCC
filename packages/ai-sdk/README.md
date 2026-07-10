@@ -160,7 +160,7 @@ const { text } = await generateText({
 | Option | Values | Applies to | Description |
 |---|---|---|---|
 | `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier. The same key routes to the same codex thread for prompt-cache hits (see [below](#multi-turn-prompt-cache-sessionkey)) |
-| `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` | both providers | Reasoning depth. Defaults to the config's `defaultEffort` (`"low"`) |
+| `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | both providers (supported values are model-dependent, e.g. `"max"` is GPT-5.6+) | Reasoning depth. Defaults to the config's `defaultEffort` (`"low"`) |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI only | Response text verbosity |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI only | Reasoning summary output mode |
 | `serviceTier` | `string` | OpenAI only | OpenAI/codex service tier |
@@ -269,6 +269,9 @@ The `qgrid()` provider has its own lifecycle, so the logger automatically suppre
 ```typescript
 type QgridSupportedModel =
   // OpenAI (based on codex app-server)
+  | "openai/gpt-5.6-sol"
+  | "openai/gpt-5.6-terra"
+  | "openai/gpt-5.6-luna"
   | "openai/gpt-5.5"
   | "openai/gpt-5.4"
   | "openai/gpt-5.2"
@@ -289,6 +292,16 @@ type QgridSupportedModel =
   | "anthropic/claude-opus-4-7"
   | "anthropic/claude-opus-4-8"
 ```
+
+### GPT-5.6 specifications
+
+| Model | Context (qgrid/codex runtime) | Max output | Input / cached input / output per 1M tokens |
+|---|---:|---:|---:|
+| `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
+| `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
+| `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
+
+All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec is a 1.05M context window with 128K max output, but qgrid runs on the codex app-server subscription path, where all three models report a 372K context window (95% effective — about 353K of usable input) that cannot be raised by configuration. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
 
 ## Configuration
 

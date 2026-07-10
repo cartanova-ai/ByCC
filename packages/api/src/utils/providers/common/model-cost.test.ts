@@ -3,6 +3,60 @@ import { describe, expect, it } from "vitest";
 import { calculateCostUsd, getModelCosts } from "./model-cost";
 
 describe("calculateCostUsd", () => {
+  it.each([
+    ["gpt-5.6-sol", 5, 30, 0.5, 6.25, 3.30625],
+    ["gpt-5.6-terra", 2.5, 15, 0.25, 3.125, 1.653125],
+    ["gpt-5.6-luna", 1, 6, 0.1, 1.25, 0.66125],
+  ])(
+    "%s applies published input, output, cache-read, and cache-write pricing",
+    (model, inputTokens, outputTokens, cachedInputTokens, cacheCreationInputTokens, expectedCost) => {
+      expect(getModelCosts(model)).toMatchObject({
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+        cacheCreationInputTokens,
+      });
+
+      expect(
+        calculateCostUsd(model, {
+          inputTokens: 100_000,
+          outputTokens: 100_000,
+          cachedInputTokens: 50_000,
+          cacheCreationInputTokens: 25_000,
+        }),
+      ).toBeCloseTo(expectedCost, 10);
+    },
+  );
+
+  it.each([
+    ["gpt-5.6-sol", 1.245],
+    ["gpt-5.6-terra", 0.6225],
+    ["gpt-5.6-luna", 0.249],
+  ])("%s applies the published long-context surcharge", (model, expectedCost) => {
+    expect(
+      calculateCostUsd(model, {
+        inputTokens: 300_000,
+        outputTokens: 1_000,
+        cachedInputTokens: 200_000,
+      }),
+    ).toBeCloseTo(expectedCost, 10);
+  });
+
+  it.each([
+    ["gpt-5.6-sol", 1.37],
+    ["gpt-5.6-terra", 0.685],
+    ["gpt-5.6-luna", 0.274],
+  ])("%s applies the long-context input multiplier to cache writes", (model, expectedCost) => {
+    expect(
+      calculateCostUsd(model, {
+        inputTokens: 300_000,
+        outputTokens: 1_000,
+        cachedInputTokens: 200_000,
+        cacheCreationInputTokens: 50_000,
+      }),
+    ).toBeCloseTo(expectedCost, 10);
+  });
+
   it("Anthropic cache read/write 를 전체 입력에서 분리해 각각 단가를 적용한다", () => {
     const cost = calculateCostUsd("claude-sonnet-4-6", {
       inputTokens: 1_917,
