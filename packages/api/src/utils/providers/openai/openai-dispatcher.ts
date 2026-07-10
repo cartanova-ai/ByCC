@@ -18,6 +18,7 @@ import {
   type GenerateStreamCallbacks,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
+import { SmoothWeightedRoundRobin } from "../common/smooth-weighted-round-robin";
 import { CodexAppServerWorker, type StreamCallbacks, type TurnRequest } from "./codex-worker";
 import {
   readOpenAIQuotaUsage,
@@ -92,6 +93,7 @@ type QueueItem = {
 type TokenMetadata = {
   name: string;
   quotaThreshold?: number | null;
+  weight: number;
 };
 
 type TokenEligibility = {
@@ -104,8 +106,9 @@ type TokenEligibility = {
 export class OpenAIDispatcher implements ProviderDispatcher {
   workerPool = new Map<number, CodexAppServerWorker[]>();
   tokenMetadata = new Map<number, TokenMetadata>();
-  rrCursor = 0;
   queue: QueueItem[] = [];
+  private readonly weightedSelector = new SmoothWeightedRoundRobin();
+  private readonly workerCursorByToken = new Map<number, number>();
   private draining = false;
   private drainAgain = false;
 
@@ -123,6 +126,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
           t.name,
           t.credentials as OpenAICredentials,
           t.quota_threshold,
+          t.weight,
         );
         if (!t.active) this.onTokenDeactivated(t.id);
       }),
@@ -133,8 +137,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.rejectAllQueued("DISPATCHER_SHUTDOWN");
     const kills = [...this.workerPool.values()].flat().map((w) => w.kill());
     await Promise.allSettled(kills);
+    for (const id of this.tokenMetadata.keys()) this.weightedSelector.removeToken(id);
     this.workerPool.clear();
     this.tokenMetadata.clear();
+    this.workerCursorByToken.clear();
+    this.weightedSelector.resetScores();
     this.rateLimitsCache.clear();
   }
 
@@ -145,10 +152,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     name: string,
     credentials: OpenAICredentials,
     quotaThreshold?: number | null,
+    weight = 1,
   ): Promise<void> {
-    this.setTokenMetadata(id, name, quotaThreshold);
+    this.setTokenMetadata(id, name, quotaThreshold, weight);
     if (this.workerPool.has(id)) return;
-    await this.spawnWorkers(id, name, credentials, quotaThreshold);
+    await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
   }
 
   async onTokenRemoved(id: number): Promise<void> {
@@ -156,6 +164,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     const tokenName = workers[0]?.tokenName;
     this.workerPool.delete(id);
     this.tokenMetadata.delete(id);
+    this.weightedSelector.removeToken(id);
+    this.workerCursorByToken.delete(id);
     this.rateLimitsCache.delete(id);
     await Promise.allSettled(workers.map((w) => w.kill()));
     if (this.getAllReadyActiveWorkers().length === 0) {
@@ -172,14 +182,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     name: string,
     credentials: OpenAICredentials,
     quotaThreshold?: number | null,
+    weight = 1,
   ): Promise<void> {
     const existing = this.workerPool.get(id) ?? [];
     const renamed = existing.some((w) => w.tokenName !== name);
-    this.setTokenMetadata(id, name, quotaThreshold);
+    this.setTokenMetadata(id, name, quotaThreshold, weight);
     if (renamed) this.rateLimitsCache.delete(id);
 
     if (existing.length === 0) {
-      await this.spawnWorkers(id, name, credentials, quotaThreshold);
+      await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
       return;
     }
 
@@ -193,15 +204,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.workerPool.delete(id);
     this.rateLimitsCache.delete(id);
     await Promise.allSettled(existing.map((w) => w.kill()));
-    await this.spawnWorkers(id, name, credentials, quotaThreshold);
+    await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
   }
 
   onTokenDeactivated(id: number): void {
     const workers = this.workerPool.get(id) ?? [];
     const tokenName = workers[0]?.tokenName;
+    const changed = workers.some((worker) => worker.active);
     workers.forEach((w) => {
       w.active = false;
     });
+    if (changed) this.weightedSelector.resetScores();
     if (this.getAllReadyActiveWorkers().length === 0) {
       this.rejectAllQueued("NO_ACTIVE_WORKERS");
     }
@@ -212,9 +225,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   onTokenActivated(id: number): void {
     const workers = this.workerPool.get(id) ?? [];
     const tokenName = workers[0]?.tokenName;
+    const changed = workers.some((worker) => !worker.active);
     workers.forEach((w) => {
       w.active = true;
     });
+    if (changed) this.weightedSelector.resetScores();
     this.requestDrainQueue();
     const label = tokenName ?? `token ${id}`;
     logger.info(`workers activated: ${label}`);
@@ -226,6 +241,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       name: string;
       credentials: OpenAICredentials;
       quotaThreshold?: number | null;
+      weight: number;
     }>,
   ): Promise<void> {
     const next = new Set(rows.map((r) => r.id));
@@ -235,9 +251,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
     for (const row of rows) {
       if (this.workerPool.has(row.id)) {
-        await this.onTokenUpdated(row.id, row.name, row.credentials, row.quotaThreshold);
+        await this.onTokenUpdated(
+          row.id,
+          row.name,
+          row.credentials,
+          row.quotaThreshold,
+          row.weight,
+        );
       } else {
-        await this.onTokenAdded(row.id, row.name, row.credentials, row.quotaThreshold);
+        await this.onTokenAdded(row.id, row.name, row.credentials, row.quotaThreshold, row.weight);
       }
       this.onTokenActivated(row.id);
     }
@@ -344,8 +366,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   // ── Worker selection ────────────────────────────────────────────
-  //  기본 round-robin
-  // TODO: 추후 다른 알고리즘으로 변경 가능하게 지원
+  // Quota-eligible idle token을 weight로 고른 뒤, 그 token 안에서 worker를 순환한다.
   async acquireIdleWorker(
     excludedTokenIds = new Set<number>(),
   ): Promise<CodexAppServerWorker | null> {
@@ -353,18 +374,29 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     if (eligibility.readyActiveTokenIds.size === 0) return null;
     if (eligibility.eligibleTokenIds.size === 0) this.throwQuotaThresholdExceeded(eligibility);
 
-    const allWorkers = this.getAllReadyActiveWorkers().filter((w) =>
-      eligibility.eligibleTokenIds.has(w.tokenId),
-    );
-    if (allWorkers.length === 0) return null;
-    for (let i = 0; i < allWorkers.length; i++) {
-      const w = allWorkers[(this.rrCursor + i) % allWorkers.length]!;
-      if (w.tryAcquireTurn()) {
-        this.rrCursor = (this.rrCursor + i + 1) % allWorkers.length;
-        return w;
+    const workersByToken = new Map<number, CodexAppServerWorker[]>();
+    for (const worker of this.getAllReadyActiveWorkers()) {
+      if (!eligibility.eligibleTokenIds.has(worker.tokenId) || !worker.hasCapacity) continue;
+      const workers = workersByToken.get(worker.tokenId) ?? [];
+      workers.push(worker);
+      workersByToken.set(worker.tokenId, workers);
+    }
+
+    const selectedTokenId = this.weightedSelector.select(new Set(workersByToken.keys()));
+    if (selectedTokenId === null) return null;
+    const workers = workersByToken.get(selectedTokenId)!;
+    const cursor = this.workerCursorByToken.get(selectedTokenId) ?? 0;
+    for (let offset = 0; offset < workers.length; offset++) {
+      const index = (cursor + offset) % workers.length;
+      const worker = workers[index]!;
+      if (worker.tryAcquireTurn()) {
+        this.workerCursorByToken.set(selectedTokenId, (index + 1) % workers.length);
+        return worker;
       }
     }
-    return null;
+    throw new Error(
+      `weighted token ${selectedTokenId} lost idle capacity during synchronous acquire`,
+    );
   }
 
   getAllReadyActiveWorkers(): CodexAppServerWorker[] {
@@ -426,19 +458,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.queue = [];
   }
 
-  async drainQueue(releasedWorker?: CodexAppServerWorker): Promise<void> {
+  async drainQueue(): Promise<void> {
     if (this.draining) {
       this.drainAgain = true;
       return;
     }
 
     this.draining = true;
-    let worker = releasedWorker;
     try {
       do {
         this.drainAgain = false;
-        await this.drainQueueOnce(worker);
-        worker = undefined;
+        await this.drainQueueOnce();
       } while (this.drainAgain);
     } catch (e) {
       logger.warn(`drainQueue failed: ${(e as Error).message}`);
@@ -447,20 +477,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
   }
 
-  private async drainQueueOnce(releasedWorker?: CodexAppServerWorker): Promise<void> {
-    if (
-      releasedWorker &&
-      this.queue.length > 0 &&
-      releasedWorker.isReady &&
-      releasedWorker.active &&
-      (await this.isWorkerEligibleForQueueItem(releasedWorker, this.queue[0]!)) &&
-      releasedWorker.tryAcquireTurn()
-    ) {
-      const next = this.queue.shift()!;
-      next.resolve(releasedWorker);
-      return;
-    }
-
+  private async drainQueueOnce(): Promise<void> {
     while (this.queue.length > 0) {
       const next = this.queue[0]!;
       let worker: CodexAppServerWorker | null;
@@ -490,7 +507,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       return await execute(worker);
     } finally {
       worker.releaseTurn();
-      this.requestDrainQueue(worker);
+      this.requestDrainQueue();
     }
   }
 
@@ -589,8 +606,9 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     tokenName: string,
     credentials: OpenAICredentials,
     quotaThreshold?: number | null,
+    weight = 1,
   ): Promise<void> {
-    this.setTokenMetadata(tokenId, tokenName, quotaThreshold);
+    this.setTokenMetadata(tokenId, tokenName, quotaThreshold, weight);
     const workers: CodexAppServerWorker[] = [];
     for (let i = 0; i < WORKERS_PER_TOKEN; i++) {
       if (i > 0) await sleep(SPAWN_INTERVAL_MS);
@@ -654,14 +672,18 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     return entry;
   }
 
-  private requestDrainQueue(releasedWorker?: CodexAppServerWorker): void {
-    void this.drainQueue(releasedWorker).catch((e) =>
-      logger.warn(`drainQueue failed: ${(e as Error).message}`),
-    );
+  private requestDrainQueue(): void {
+    void this.drainQueue().catch((e) => logger.warn(`drainQueue failed: ${(e as Error).message}`));
   }
 
-  private setTokenMetadata(id: number, name: string, quotaThreshold?: number | null): void {
-    this.tokenMetadata.set(id, { name, quotaThreshold });
+  private setTokenMetadata(
+    id: number,
+    name: string,
+    quotaThreshold: number | null | undefined,
+    weight: number,
+  ): void {
+    this.tokenMetadata.set(id, { name, quotaThreshold, weight });
+    this.weightedSelector.setToken(id, weight);
   }
 
   private getQuotaThreshold(tokenId: number): number | null | undefined {
@@ -726,14 +748,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     });
 
     return { readyActiveTokenIds, eligibleTokenIds, overThresholdTokens, thresholdedTokenCount };
-  }
-
-  private async isWorkerEligibleForQueueItem(
-    worker: CodexAppServerWorker,
-    item: QueueItem,
-  ): Promise<boolean> {
-    if (item.excludedTokenIds.has(worker.tokenId)) return false;
-    return this.isTokenQuotaEligible(worker.tokenId, worker.tokenName);
   }
 
   private async isTokenQuotaEligible(

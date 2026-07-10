@@ -112,6 +112,9 @@ function fakeWorker(
     get isReady() {
       return options.ready ?? true;
     },
+    get hasCapacity() {
+      return !busy;
+    },
     tryAcquireTurn: vi.fn(() => {
       if (busy) return false;
       busy = true;
@@ -195,7 +198,7 @@ describe("OpenAIDispatcher token updates", () => {
     await dispatcher.onTokenUpdated(1, "token", changedIdentity, null);
 
     expect(worker.kill).toHaveBeenCalledTimes(1);
-    expect(spawnWorkers).toHaveBeenCalledWith(1, "token", changedIdentity, null);
+    expect(spawnWorkers).toHaveBeenCalledWith(1, "token", changedIdentity, null, 1);
   });
 
   it("uses tokenId keyed rate-limit cache", async () => {
@@ -227,7 +230,7 @@ describe("OpenAIDispatcher token updates", () => {
     addWorkers(dispatcher, [workerA, workerB]);
 
     await dispatcher.replaceTokens([
-      { id: 1, name: "tok-A", credentials: credentials(), quotaThreshold: 80 },
+      { id: 1, name: "tok-A", credentials: credentials(), quotaThreshold: 80, weight: 1 },
     ]);
     readOpenAIQuotaUsageMock.mockResolvedValueOnce(quotaOk(85));
 
@@ -235,6 +238,106 @@ describe("OpenAIDispatcher token updates", () => {
       QuotaThresholdExceededError,
     );
     expect(workerB.kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("OpenAIDispatcher weighted routing", () => {
+  it("routes cold OpenAI requests by token weight instead of worker count", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const a0 = fakeWorker({ tokenId: 1, tokenName: "tok-A", workerIndex: 0 });
+    const a1 = fakeWorker({ tokenId: 1, tokenName: "tok-A", workerIndex: 1 });
+    const b0 = fakeWorker({ tokenId: 2, tokenName: "tok-B", workerIndex: 0 });
+    addWorkers(dispatcher, [a0, a1, b0]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 3);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null, 1);
+
+    const names: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const worker = await dispatcher.acquireIdleWorker();
+      names.push(worker!.tokenName);
+      worker!.releaseTurn();
+    }
+
+    expect(names.filter((name) => name === "tok-A")).toHaveLength(3);
+    expect(names.filter((name) => name === "tok-B")).toHaveLength(1);
+  });
+
+  it("does not give a token extra cold turns for having more workers", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    addWorkers(dispatcher, [
+      fakeWorker({ tokenId: 1, tokenName: "tok-A", workerIndex: 0 }),
+      fakeWorker({ tokenId: 1, tokenName: "tok-A", workerIndex: 1 }),
+      fakeWorker({ tokenId: 2, tokenName: "tok-B", workerIndex: 0 }),
+    ]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 1);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null, 1);
+
+    const names: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const worker = await dispatcher.acquireIdleWorker();
+      names.push(worker!.tokenName);
+      worker!.releaseTurn();
+    }
+
+    expect(names).toEqual(["tok-A", "tok-B", "tok-A", "tok-B"]);
+  });
+
+  it("skips a high-weight token when all of its workers are busy", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    addWorkers(dispatcher, [
+      fakeWorker({ tokenId: 1, tokenName: "tok-A", busy: true }),
+      fakeWorker({ tokenId: 2, tokenName: "tok-B" }),
+    ]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 100);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null, 1);
+
+    await expect(dispatcher.acquireIdleWorker()).resolves.toMatchObject({ tokenName: "tok-B" });
+  });
+
+  it("uses weighted selection when draining after a worker release", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const workerA = fakeWorker({ tokenId: 1, tokenName: "tok-A", busy: true });
+    const workerB = fakeWorker({ tokenId: 2, tokenName: "tok-B", busy: true });
+    addWorkers(dispatcher, [workerA, workerB]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 1);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null, 3);
+
+    const queued = dispatcher.enqueue(async (worker) => worker.tokenName);
+    await waitForQueue(dispatcher);
+    workerA.releaseTurn();
+    workerB.releaseTurn();
+
+    await dispatcher.drainQueue();
+    await expect(queued).resolves.toBe("tok-B");
+  });
+
+  it("does not advance weighted state for successful thread reuse", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const workerA = fakeWorker({ tokenId: 1, tokenName: "tok-A" });
+    const workerB = fakeWorker({
+      tokenId: 2,
+      tokenName: "tok-B",
+      threads: ["thread-B"],
+    });
+    addWorkers(dispatcher, [workerA, workerB]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 1);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null, 1);
+    vi.spyOn(dispatcher, "executeTurn").mockImplementation(
+      async (worker, _req, reuseThreadId) =>
+        resultFor(worker, reuseThreadId ?? "thread-new"),
+    );
+
+    const cold1 = await dispatcher.generate(baseReq());
+    const reused = await dispatcher.generate(
+      baseReq({ reuse: { workerId: 20, threadId: "thread-B", epoch: 1 } }),
+    );
+    const cold2 = await dispatcher.generate(baseReq());
+
+    expect([cold1.tokenName, cold2.tokenName]).toEqual(["tok-A", "tok-B"]);
+    expect(reused).toMatchObject({
+      tokenName: "tok-B",
+      threadCoord: { threadId: "thread-B" },
+    });
   });
 });
 
@@ -280,7 +383,7 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     await waitForQueue(dispatcher);
 
     worker.releaseTurn();
-    await dispatcher.drainQueue(worker);
+    await dispatcher.drainQueue();
     await expect(queued).resolves.toBe("tok-A");
   });
 
@@ -311,10 +414,9 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     readOpenAIQuotaUsageMock.mockReset();
     readOpenAIQuotaUsageMock
       .mockResolvedValueOnce(quotaOk(90))
-      .mockResolvedValueOnce(quotaOk(90))
       .mockResolvedValueOnce(quotaOk(10));
 
-    await dispatcher.drainQueue(workerA);
+    await dispatcher.drainQueue();
 
     await expect(queued).resolves.toBe("tok-B");
   });
@@ -323,11 +425,12 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     const dispatcher = new OpenAIDispatcher();
     const worker = fakeWorker({ tokenId: 1, tokenName: "tok-A" });
     addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 1);
     const execute = vi.fn(async (w: CodexAppServerWorker) => w.tokenName);
     const queued = dispatcher.enqueue(execute);
     await waitForQueue(dispatcher);
 
-    await Promise.all([dispatcher.drainQueue(worker), dispatcher.drainQueue(worker)]);
+    await Promise.all([dispatcher.drainQueue(), dispatcher.drainQueue()]);
 
     await expect(queued).resolves.toBe("tok-A");
     expect(execute).toHaveBeenCalledTimes(1);
