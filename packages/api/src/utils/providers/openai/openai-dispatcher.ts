@@ -273,7 +273,10 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     // 이미지 생성은 non-stream 전용(R2): codex 가 이미지 델타를 주지 않고 완성 base64 를
     // 한 번에 준다. 스트리밍 경로로 이미지 요청이 오면 명시적 에러.
     if (req.imageGeneration) {
-      throw new ImageGenerationError("gate", "image generation is not supported on the streaming path");
+      throw new ImageGenerationError(
+        "gate",
+        "image generation is not supported on the streaming path",
+      );
     }
     const excludedTokenIds = new Set<number>();
     const reuseWorker = await this.acquireReuseWorker(req, excludedTokenIds);
