@@ -11,6 +11,7 @@ Do not copy these notes blindly into implementation. Use them to find the releva
 - OpenAI/Codex runtime
 - Anthropic/Claude Code runtime
 - Token sync and quota thresholds
+- Weighted token routing
 - Request logs, metrics, and dashboard
 - CLI packaging and server boot
 - Image generation
@@ -118,6 +119,28 @@ Key decisions:
 - Threshold gates are by token id, not token name. Names are display/logging labels and can change.
 - Lookup failure is fail-open with logs/metrics. Hard failure happens only when usage was read successfully and the token is over threshold.
 - OpenAI needs the gate in reuse, idle selection, and queue drain paths. A reusable but over-threshold worker must fall back cold to another eligible token when possible.
+
+## Weighted Token Routing
+
+Sources:
+
+- `docs/brainstorms/2026-07-10-weighted-token-routing-requirements.md`
+- `docs/plans/2026-07-10-weighted-token-routing-plan.md`
+
+Key decisions:
+
+- `tokens.weight` is a per-token integer from 1 to 100 defaulting to 1. It is a relative routing share for new requests, not an enable/disable switch. Weight 0 is invalid; disabling a token stays on `active`.
+- Both providers share one smooth weighted round-robin selector in the provider common layer. The selector knows only token ids, weights, and current scores. Dispatchers own quota, lifecycle, and worker availability, and pass in only the eligible token id set per selection. Do not teach the selector about credentials, workers, or queues.
+- The quota threshold gate runs before weighted selection. An over-threshold token receives no weighted assignment regardless of weight, and the schedule is computed from the remaining eligible tokens.
+- OpenAI thread reuse stays pinned to its original worker and neither reads nor mutates weighted-selector state. Cache affinity intentionally beats weight distribution; only cold requests are weighted.
+- OpenAI routing is work-conserving. A token whose workers are all busy is omitted from the current selection round instead of making requests wait for the heavy-weight token. Queue drain re-runs weighted selection for the head item; the previous released-worker shortcut was removed because it bypassed weighting.
+- Candidate collection, selector mutation, and worker acquisition must run without an intervening `await`. A weighted score is consumed only when the dispatcher can commit the assignment synchronously; this is what keeps concurrent Anthropic selections spread correctly.
+- Selector scores reset when token topology or configured weights change. Temporary ineligibility from quota or busy workers only excludes the token from that selection's candidate set and does not reset schedule state.
+- Weight-change notification is owned by the versioned migration trigger (`tokens_weight_changed_upd`); the boot-time trigger setup SQL intentionally excludes `weight` from its WHEN clause, and a test pins this so exactly one trigger fires per weight-only change.
+- The token subscriber serializes notification and reconcile handling through an operation chain because weight propagation made dispatcher updates awaited; out-of-order token events could otherwise apply stale weights.
+- Required migrations moved from a soft-fail `onStart` step to a hard-fail `bootstrapServer` order (init → migrate → listen). Dispatchers must never boot against a schema missing `tokens.weight`.
+- `updateToken` became a partial field update (`TokenModel.updateFields`) so the dashboard weight control cannot overwrite name or quota threshold edits happening elsewhere.
+- Explicit scope boundaries: no per-model, per-project, per-request, or time-varying weights, and no automatic weight adjustment from remaining quota, latency, cost, errors, or worker counts.
 
 ## Request Logs, Metrics, And Dashboard
 

@@ -100,9 +100,10 @@ There is no explicit close RPC for old ephemeral threads; qgrid removes them fro
 
 OpenAI worker selection:
 
-- Prefer reuse worker when a valid reuse coordinate exists.
-- Otherwise select an idle ready active worker round-robin across eligible workers.
-- If no worker is free, enqueue.
+- Prefer reuse worker when a valid reuse coordinate exists. Successful reuse bypasses weighted selection and does not read or mutate its state.
+- Otherwise cold selection is two-level: group quota-eligible ready active workers by token, keep only tokens with at least one idle worker, choose the token with the shared smooth weighted round-robin selector (`providers/common/smooth-weighted-round-robin.ts`, driven by `tokens.weight`), then rotate a per-token worker cursor inside the chosen token.
+- Selection is work-conserving: a token whose workers are all busy is omitted from that selection round, so an idle lower-weight token receives the request immediately instead of waiting for the heavy token.
+- If no eligible worker is idle, enqueue. Queue drain re-runs the same weighted cold selection; it must not hand the queue head to the worker that happened to finish first.
 - Queue timeout: 60 seconds.
 - Max queue size: 50.
 
