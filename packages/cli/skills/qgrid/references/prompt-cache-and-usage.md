@@ -45,6 +45,8 @@ Cache hit requires:
 
 When reuse succeeds, qgrid sends only delta input to `turn/start`. When reuse fails, qgrid falls back to cold execution with full prompt plus history injection.
 
+Reuse is decided before weighted token routing and stays pinned to its original worker: a successful reuse neither consumes nor advances the weighted schedule. Cache affinity intentionally beats weight distribution; only cold requests are weighted.
+
 Important cache breakers:
 
 - Different system prompt.

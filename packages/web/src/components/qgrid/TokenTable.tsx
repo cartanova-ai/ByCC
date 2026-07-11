@@ -6,6 +6,7 @@ import TrashIcon from "~icons/lucide/trash-2";
 
 import { QgridService } from "@/services/services.generated";
 import { type TokenSubsetMapping } from "@/services/sonamu.generated";
+import { useUpdateTokenMutation } from "@/services/token/use-update-token-mutation";
 
 type Token = TokenSubsetMapping["A"];
 
@@ -46,7 +47,7 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
 
   const queryClient = useQueryClient();
   const removeMutation = QgridService.useRemoveTokenMutation();
-  const updateMutation = QgridService.useUpdateTokenMutation();
+  const updateMutation = useUpdateTokenMutation();
   const toggleMutation = QgridService.useToggleTokenMutation();
 
   const invalidate = () =>
@@ -78,7 +79,6 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
     await updateMutation.mutateAsync({
       id: editTarget.id,
       name: editName.trim(),
-      quotaThreshold: editTarget.quota_threshold,
     });
     await invalidate();
     setEditTarget(null);

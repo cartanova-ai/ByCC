@@ -22,6 +22,7 @@ function openaiToken(active = true) {
     name: "tok-A",
     credentials: { accessToken: "access", accountId: "account" },
     quota_threshold: 80,
+    weight: 4,
   };
 }
 
@@ -70,7 +71,71 @@ describe("TokenSubscriber OpenAI notifications", () => {
       "tok-A",
       { accessToken: "access", accountId: "account" },
       80,
+      4,
     );
+  });
+
+  it("passes weight to Anthropic token updates", async () => {
+    const anthropicDispatcher = { onTokenUpdated: vi.fn() };
+    const subscriber = new TokenSubscriber(
+      {} as never,
+      {
+        removeCache: vi.fn(),
+        upsertCache: vi.fn(),
+        replaceCache: vi.fn(),
+        openaiDispatcher: null,
+        anthropicDispatcher,
+      } as never,
+    );
+    findOneMock.mockResolvedValueOnce({
+      ...openaiToken(true),
+      provider: "anthropic",
+      credentials: { accessToken: "access", refreshToken: "refresh" },
+    });
+
+    await subscriber.handleNotification(JSON.stringify({ op: "UPDATE", id: 1 }));
+
+    expect(anthropicDispatcher.onTokenUpdated).toHaveBeenCalledWith(
+      1,
+      "tok-A",
+      { accessToken: "access", refreshToken: "refresh" },
+      80,
+      4,
+    );
+  });
+
+  it("serializes token reloads so rapid weight updates cannot apply backward", async () => {
+    let resolveFirst!: (value: ReturnType<typeof openaiToken>) => void;
+    const firstRow = new Promise<ReturnType<typeof openaiToken>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const anthropicDispatcher = { onTokenUpdated: vi.fn() };
+    const subscriber = new TokenSubscriber(
+      {} as never,
+      {
+        removeCache: vi.fn(),
+        upsertCache: vi.fn(),
+        replaceCache: vi.fn(),
+        openaiDispatcher: null,
+        anthropicDispatcher,
+      } as never,
+    );
+    findOneMock.mockReturnValueOnce(firstRow).mockResolvedValueOnce({
+      ...openaiToken(true),
+      provider: "anthropic",
+      weight: 5,
+    });
+
+    const first = subscriber.handleNotification(JSON.stringify({ op: "UPDATE", id: 1 }));
+    const second = subscriber.handleNotification(JSON.stringify({ op: "UPDATE", id: 1 }));
+
+    await flushPromises();
+    expect(findOneMock).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ...openaiToken(true), provider: "anthropic", weight: 2 });
+    await Promise.all([first, second]);
+
+    expect(anthropicDispatcher.onTokenUpdated.mock.calls.map((call) => call[4])).toEqual([2, 5]);
   });
 
   it("does not spawn workers for inactive OpenAI inserts", async () => {
@@ -85,5 +150,42 @@ describe("TokenSubscriber OpenAI notifications", () => {
 
     expect(openaiDispatcher.onTokenAdded).not.toHaveBeenCalled();
     expect(openaiDispatcher.onTokenDeactivated).toHaveBeenCalledWith(1);
+  });
+
+  it("passes weight while reconciling both provider token pools", async () => {
+    const anthropicDispatcher = { replaceTokens: vi.fn() };
+    const openaiDispatcher = { replaceTokens: vi.fn(async () => {}) };
+    const subscriber = new TokenSubscriber(
+      {} as never,
+      {
+        removeCache: vi.fn(),
+        upsertCache: vi.fn(),
+        replaceCache: vi.fn(),
+        openaiDispatcher,
+        anthropicDispatcher,
+      } as never,
+    );
+    findActiveMock.mockResolvedValueOnce([
+      {
+        ...openaiToken(true),
+        provider: "anthropic",
+        credentials: { accessToken: "access-a", refreshToken: "refresh-a" },
+      },
+      {
+        ...openaiToken(true),
+        id: 2,
+        name: "tok-B",
+        credentials: { accessToken: "access-b", accountId: "account-b" },
+      },
+    ]);
+
+    await subscriber.reconcile();
+
+    expect(anthropicDispatcher.replaceTokens).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 1, quotaThreshold: 80, weight: 4 }),
+    ]);
+    expect(openaiDispatcher.replaceTokens).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 2, quotaThreshold: 80, weight: 4 }),
+    ]);
   });
 });

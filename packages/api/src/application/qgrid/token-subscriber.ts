@@ -25,6 +25,7 @@ export class TokenSubscriber {
   attempt = 0;
   connectedAt: Date | null = null;
   lastReconcileAt: Date | null = null;
+  private operationChain: Promise<void> = Promise.resolve();
 
   constructor(
     public connConfig: ClientConfig,
@@ -151,10 +152,14 @@ export class TokenSubscriber {
   }
 
   async handleNotification(payloadJson: string): Promise<void> {
+    return this.enqueueOperation(() => this.handleNotificationNow(payloadJson));
+  }
+
+  private async handleNotificationNow(payloadJson: string): Promise<void> {
     const payload = JSON.parse(payloadJson) as Payload;
     if (payload.op === "DELETE") {
       this.dispatcher.removeCache(payload.id);
-      this.dispatcher.openaiDispatcher
+      await this.dispatcher.openaiDispatcher
         ?.onTokenRemoved(payload.id)
         .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
       // anthropic 토큰 이벤트는 동기(void) — provider 를 모르므로 무해하게 항상 제거 시도.
@@ -165,7 +170,7 @@ export class TokenSubscriber {
     const row = await TokenModel.findOne("A", { id: payload.id });
     if (!row) {
       this.dispatcher.removeCache(payload.id);
-      this.dispatcher.openaiDispatcher
+      await this.dispatcher.openaiDispatcher
         ?.onTokenRemoved(payload.id)
         .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
@@ -179,13 +184,25 @@ export class TokenSubscriber {
       const creds = row.credentials as Record<string, unknown>;
       const openaiDispatcher = this.dispatcher.openaiDispatcher;
       if (payload.op === "INSERT" && row.active) {
-        openaiDispatcher
-          ?.onTokenAdded(payload.id, row.name, creds as OpenAICredentials, row.quota_threshold)
+        await openaiDispatcher
+          ?.onTokenAdded(
+            payload.id,
+            row.name,
+            creds as OpenAICredentials,
+            row.quota_threshold,
+            row.weight,
+          )
           .catch((e) => logger.warn(`openai worker spawn failed: ${(e as Error).message}`));
       } else if (row.active) {
         if (openaiDispatcher) {
-          openaiDispatcher
-            .onTokenUpdated(payload.id, row.name, creds as OpenAICredentials, row.quota_threshold)
+          await openaiDispatcher
+            .onTokenUpdated(
+              payload.id,
+              row.name,
+              creds as OpenAICredentials,
+              row.quota_threshold,
+              row.weight,
+            )
             .then(() => openaiDispatcher.onTokenActivated(payload.id))
             .catch((e) => logger.warn(`openai worker update failed: ${(e as Error).message}`));
         }
@@ -203,6 +220,7 @@ export class TokenSubscriber {
           row.name,
           creds,
           row.quota_threshold,
+          row.weight,
         );
       } else if (row.active) {
         this.dispatcher.anthropicDispatcher?.onTokenUpdated(
@@ -210,6 +228,7 @@ export class TokenSubscriber {
           row.name,
           creds,
           row.quota_threshold,
+          row.weight,
         );
       } else {
         // inactive 면 INSERT 든 UPDATE 든 풀에 넣지 않는다.
@@ -220,6 +239,10 @@ export class TokenSubscriber {
   }
 
   async reconcile(): Promise<void> {
+    return this.enqueueOperation(() => this.reconcileNow());
+  }
+
+  private async reconcileNow(): Promise<void> {
     const rows = await TokenModel.findActive("A");
     this.dispatcher.replaceCache(rows);
     // NOTIFY 유실 대비: AnthropicDispatcher 풀도 DB active anthropic 토큰 기준으로 재동기화.
@@ -231,6 +254,7 @@ export class TokenSubscriber {
         name: r.name,
         credentials: r.credentials as AnthropicCredentials,
         quotaThreshold: r.quota_threshold,
+        weight: r.weight,
       }));
     this.dispatcher.anthropicDispatcher?.replaceTokens(anthropicRows);
     const openaiRows = rows
@@ -240,10 +264,17 @@ export class TokenSubscriber {
         name: r.name,
         credentials: r.credentials as OpenAICredentials,
         quotaThreshold: r.quota_threshold,
+        weight: r.weight,
       }));
     await this.dispatcher.openaiDispatcher
       ?.replaceTokens(openaiRows)
       .catch((e) => logger.warn(`openai reconcile failed: ${(e as Error).message}`));
     this.lastReconcileAt = new Date();
+  }
+
+  private enqueueOperation(operation: () => Promise<void>): Promise<void> {
+    const next = this.operationChain.then(operation, operation);
+    this.operationChain = next.catch(() => {});
+    return next;
   }
 }

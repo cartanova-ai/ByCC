@@ -4,10 +4,10 @@
  * MVP 에서는 stream() 만. getRateLimits(), listModels() 는 future.
  */
 
+import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
-import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
 
 // qgrid provider 내부 표준 usage. codex-protocol 의 TokenUsageBreakdown 은 생성 파일이므로
 // provider 전용 cache write 세부 필드는 여기서 확장해 보존한다.

@@ -15,7 +15,7 @@ Before changing code, identify the affected path:
 - CLI startup, env vars, server boot, OAuth callback URL: read `references/cli-env-and-server-boot.md`.
 - OpenAI models or Codex worker/thread/cache behavior: read `references/openai-codex-runtime.md`.
 - Anthropic models or Claude Code spawn/stream-json behavior: read `references/anthropic-claude-code-runtime.md`.
-- Token registration, OAuth, token sync, active/inactive behavior, or quota thresholds: read `references/token-auth-quota-lifecycle.md`.
+- Token registration, OAuth, token sync, active/inactive behavior, quota thresholds, or weighted token routing: read `references/token-auth-quota-lifecycle.md`.
 - Provider comparisons, routing, or cross-provider bugs: read `references/provider-runtime-differences.md`.
 - Tool calling, AI SDK multi-step loops, or tool-call request logs: read `references/tool-calling-and-multiturn.md`.
 - `sessionKey`, `threadCoord`, prompt cache metrics, usage accounting, or cost: read `references/prompt-cache-and-usage.md`.

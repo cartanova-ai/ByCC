@@ -50,15 +50,15 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 ## Server boot lifecycle
 
-On server start, `packages/api/src/sonamu.config.ts`:
+`packages/api/src/index.ts` runs `bootstrapServer` (`server-bootstrap.ts`) with a strict init → migrate → listen order:
 
-1. Loads `.env` from `packages/api/.env` when running API directly.
-2. Configures Sonamu database connection from `QGRID_DB_*`.
-3. Runs latest migrations from `packages/api/src/migrations`.
-4. Ensures PostgreSQL `tokens_changed` triggers.
-5. Starts `TokenSubscriber` for LISTEN/NOTIFY plus periodic reconcile.
-6. Starts `OpenAIDispatcher` and `AnthropicDispatcher`.
-7. Logs server URL and provider readiness counts.
+1. `Sonamu.init()` loads `.env` from `packages/api/.env` when running API directly and configures the Sonamu database connection from `QGRID_DB_*`.
+2. `runRequiredMigrations` (`startup-migrations.ts`) applies latest migrations from `packages/api/src/migrations` before the server listens. Migration failure exits the process — qgrid must not boot against a schema missing required columns such as `tokens.weight`. This is a hard-fail; it used to be a soft-fail warn inside `onStart`.
+3. `Sonamu.createServer()` starts the server. Its `onStart` in `packages/api/src/sonamu.config.ts`:
+   1. Ensures PostgreSQL `tokens_changed` triggers.
+   2. Starts `TokenSubscriber` for LISTEN/NOTIFY plus periodic reconcile.
+   3. Starts `OpenAIDispatcher` and `AnthropicDispatcher`.
+   4. Logs server URL and provider readiness counts.
 
 On shutdown, it stops provider dispatchers and the token subscriber.
 

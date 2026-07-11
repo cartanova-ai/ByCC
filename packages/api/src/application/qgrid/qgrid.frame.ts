@@ -13,12 +13,8 @@ import {
 } from "../../utils/providers/common/credentials";
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
 import { type TokenSubsetA } from "../sonamu.generated";
-import { TokenModel } from "../token/token.model";
-import {
-  TokenCredentials,
-  TokenSaveParams,
-  type TokenSaveParams as TokenSaveParamsType,
-} from "../token/token.types";
+import { TokenModel, type TokenUpdateFields } from "../token/token.model";
+import { TokenCredentials } from "../token/token.types";
 import {
   type AnthropicUsageRaw,
   buildAuthUrl,
@@ -404,35 +400,36 @@ class QgridFrameClass extends BaseFrameClass {
     return { added: true };
   }
 
-  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  @api({ httpMethod: "POST", clients: ["axios"] })
   async updateToken(
     id: number,
     name?: string,
     quotaThreshold?: number | null,
+    weight?: number,
   ): Promise<{ updated: boolean }> {
-    const entry = await TokenModel.findOne("A", { id });
-    if (!entry) return { updated: false };
-
-    const patch: TokenSaveParamsType = {
-      id: entry.id,
-      provider: entry.provider,
-      credentials: entry.credentials,
-      name: name !== undefined ? name : entry.name,
-    };
-    if (quotaThreshold !== undefined) {
-      patch.quota_threshold = quotaThreshold;
-    }
-
-    const parsed = TokenSaveParams.safeParse(patch);
-    if (!parsed.success) {
+    if (
+      quotaThreshold !== undefined &&
+      quotaThreshold !== null &&
+      (!Number.isInteger(quotaThreshold) || quotaThreshold < 1 || quotaThreshold > 100)
+    ) {
       throw new BadRequestException(
         "quotaThreshold must be an integer between 1 and 100, or null" as LocalizedString,
-        { zodError: parsed.error },
+      );
+    }
+    if (weight !== undefined && (!Number.isInteger(weight) || weight < 1 || weight > 100)) {
+      throw new BadRequestException(
+        "weight must be an integer between 1 and 100" as LocalizedString,
       );
     }
 
-    await TokenModel.save([parsed.data]);
-    return { updated: true };
+    const patch: TokenUpdateFields = {};
+    if (name !== undefined) patch.name = name;
+    if (quotaThreshold !== undefined) patch.quota_threshold = quotaThreshold;
+    if (weight !== undefined) patch.weight = weight;
+    if (Object.keys(patch).length === 0) return { updated: false };
+
+    const updated = await TokenModel.updateFields(id, patch);
+    return { updated: updated > 0 };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })

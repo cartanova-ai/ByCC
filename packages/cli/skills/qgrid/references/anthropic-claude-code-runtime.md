@@ -37,8 +37,8 @@ Anthropic tokens live in an in-memory `Map<tokenId, PooledToken>`.
 - Startup loads active Anthropic tokens from DB.
 - Token subscriber events add/update/remove entries.
 - Periodic reconcile replaces pool contents from active DB rows.
-- Request selection is least-used plus round-robin tie-break.
-- Request count is incremented before awaiting execution so concurrent requests spread across tokens.
+- Request selection is smooth weighted round-robin over quota-eligible tokens, driven by per-token `tokens.weight` (shared selector in `providers/common/smooth-weighted-round-robin.ts`).
+- Selection and score mutation run synchronously before any await, so concurrent requests observe committed prior selections and spread across tokens.
 
 Quota threshold:
 

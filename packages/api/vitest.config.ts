@@ -1,6 +1,7 @@
 import { defineConfig, type ViteUserConfig } from "vitest/config";
 
 import { PrioritySequencer } from "./custom-sequencer";
+import { configureTestRunDatabaseName } from "./src/testing/test-database-name";
 
 type VitestTestConfig = NonNullable<ViteUserConfig["test"]>;
 
@@ -31,6 +32,7 @@ async function loadSonamuTestingModules() {
 }
 
 export default defineConfig(async () => {
+  configureTestRunDatabaseName();
   const { getSonamuTestConfig, NaiteVitestReporter } = await loadSonamuTestingModules();
 
   return {

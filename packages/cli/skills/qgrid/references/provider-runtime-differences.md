@@ -8,7 +8,8 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 | Worker pool | Token x `QGRID_WORKERS_PER_TOKEN`, default 3, max 5 | No workers; in-memory token pool only |
 | Worker id | `tokenId * 10 + workerIndex` | `tokenId` |
 | Epoch | Worker spawn counter; changes on restart | Always `0` |
-| Request concurrency | One turn per worker; queue when all eligible workers busy | Fresh process per request; token selection uses least-used RR |
+| Request concurrency | One turn per worker; queue when all eligible workers busy | Fresh process per request |
+| Token selection | Smooth weighted RR picks a quota-eligible token with an idle worker, then a per-token worker cursor; reuse bypasses weights | Smooth weighted RR over quota-eligible tokens per request |
 | Model routing | `openai/*`; qgrid strips provider prefix before provider call | `anthropic/*`; provider canonicalizes model and strips prefix/`[1m]` |
 | Prefix-less models | Fallback not implemented | Fallback not implemented |
 | Thread/session | Ephemeral Codex thread stored in worker memory | Fresh Claude `--session-id` per request |

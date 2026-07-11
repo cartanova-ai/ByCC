@@ -715,19 +715,14 @@ export namespace QgridService {
     id: number,
     name?: string,
     quotaThreshold?: number | null,
+    weight?: number,
   ): Promise<{ updated: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/updateToken`,
-      data: { id, name, quotaThreshold },
+      data: { id, name, quotaThreshold, weight },
     });
   }
-
-  export const useUpdateTokenMutation = () =>
-    useMutation({
-      mutationFn: (params: { id: number; name: string; quotaThreshold: number | null }) =>
-        updateToken(params.id, params.name, params.quotaThreshold),
-    });
 
   export async function removeToken(id: number): Promise<{ removed: boolean }> {
     return fetch({

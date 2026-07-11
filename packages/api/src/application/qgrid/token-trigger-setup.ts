@@ -11,7 +11,7 @@ const SETUP_STATEMENT_TIMEOUT_MS = 10_000;
 const ADVISORY_LOCK_CLASS_ID = 717;
 const ADVISORY_LOCK_OBJECT_ID = 44900;
 
-const SETUP_SQL = `
+export const TOKENS_TRIGGER_SETUP_SQL = `
   CREATE OR REPLACE FUNCTION public.tokens_notify() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public
@@ -64,7 +64,7 @@ export async function ensureTokensTrigger(connConfig: ClientConfig): Promise<voi
     ]);
     lockAcquired = true;
 
-    await client.query(SETUP_SQL);
+    await client.query(TOKENS_TRIGGER_SETUP_SQL);
     logger.info("trigger ensured (public.tokens_notify + tokens_changed_* triggers)");
   } finally {
     if (lockAcquired) {

@@ -1,6 +1,3 @@
-import { Sonamu } from "sonamu";
+import { bootstrapServer } from "./server-bootstrap";
 
-async function bootstrap() {
-  await Sonamu.createServer();
-}
-bootstrap();
+void bootstrapServer();

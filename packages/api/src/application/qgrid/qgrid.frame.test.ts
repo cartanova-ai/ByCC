@@ -6,6 +6,7 @@ const {
   findOneMock,
   findManyMock,
   saveMock,
+  updateFieldsMock,
   requestLogSaveMock,
   appendStepMock,
   dispatcherQueryMock,
@@ -14,6 +15,7 @@ const {
   findOneMock: vi.fn(),
   findManyMock: vi.fn(),
   saveMock: vi.fn(),
+  updateFieldsMock: vi.fn(),
   requestLogSaveMock: vi.fn(),
   appendStepMock: vi.fn(),
   dispatcherQueryMock: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("../token/token.model", () => ({
     findOne: findOneMock,
     findMany: findManyMock,
     save: saveMock,
+    updateFields: updateFieldsMock,
   },
 }));
 
@@ -59,6 +62,7 @@ const tokenEntry = {
   active: true,
   ord: 0,
   quota_threshold: null,
+  weight: 1,
 };
 
 describe("QgridFrame.updateToken", () => {
@@ -66,6 +70,7 @@ describe("QgridFrame.updateToken", () => {
     findOneMock.mockReset();
     saveMock.mockReset();
     saveMock.mockResolvedValue([1]);
+    updateFieldsMock.mockReset().mockResolvedValue(1);
     requestLogSaveMock.mockReset();
     requestLogSaveMock.mockResolvedValue([1]);
     appendStepMock.mockReset();
@@ -73,28 +78,45 @@ describe("QgridFrame.updateToken", () => {
     dispatcherQueryMock.mockReset();
   });
 
-  it("rejects quota thresholds outside TokenSaveParams bounds before saving", async () => {
-    findOneMock.mockResolvedValueOnce(tokenEntry);
-
+  it("rejects quota thresholds outside bounds before updating", async () => {
     await expect(QgridFrame.updateToken(1, "tok-A", 0)).rejects.toThrow(
       "quotaThreshold must be an integer between 1 and 100, or null",
     );
 
-    expect(saveMock).not.toHaveBeenCalled();
+    expect(updateFieldsMock).not.toHaveBeenCalled();
   });
 
-  it("saves valid quota thresholds through the same schema used by token saves", async () => {
-    findOneMock.mockResolvedValueOnce(tokenEntry);
-
+  it("updates only the supplied quota threshold", async () => {
     await expect(QgridFrame.updateToken(1, "tok-A", 80)).resolves.toEqual({ updated: true });
 
-    expect(saveMock).toHaveBeenCalledWith([
-      expect.objectContaining({
-        id: 1,
-        name: "tok-A",
-        quota_threshold: 80,
-      }),
-    ]);
+    expect(updateFieldsMock).toHaveBeenCalledWith(1, {
+      name: "tok-A",
+      quota_threshold: 80,
+    });
+  });
+
+  it("rejects invalid weights before updating", async () => {
+    await expect(QgridFrame.updateToken(1, "tok-A", undefined, 0)).rejects.toThrow(
+      "weight must be an integer between 1 and 100",
+    );
+
+    expect(updateFieldsMock).not.toHaveBeenCalled();
+  });
+
+  it("updates only the supplied weight", async () => {
+    await expect(QgridFrame.updateToken(1, undefined, undefined, 4)).resolves.toEqual({
+      updated: true,
+    });
+
+    expect(updateFieldsMock).toHaveBeenCalledWith(1, { weight: 4 });
+  });
+
+  it("reports a missing token from the atomic update result", async () => {
+    updateFieldsMock.mockResolvedValueOnce(0);
+
+    await expect(QgridFrame.updateToken(404, undefined, undefined, 4)).resolves.toEqual({
+      updated: false,
+    });
   });
 });
 

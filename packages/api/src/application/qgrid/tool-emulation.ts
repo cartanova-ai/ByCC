@@ -131,7 +131,12 @@ export function applyToolCallEmulation(
         input: toolCall.args,
       };
     });
-    return { ...result, content: appendImages(content, images), finishReason: "tool-calls", runContext };
+    return {
+      ...result,
+      content: appendImages(content, images),
+      finishReason: "tool-calls",
+      runContext,
+    };
   }
 
   const text = parsed.answer ?? result.text;

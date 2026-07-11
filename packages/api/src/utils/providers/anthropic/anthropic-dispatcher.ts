@@ -2,7 +2,7 @@
  * AnthropicDispatcher
  *
  * OpenAIDispatcher와 달리, worker pool을 두는 대신 요청별 fresh spawn
- * 토큰은 인메모리(MAP)으로 관리하고 least-used, round-robin 으로 고른다
+ * 토큰은 인메모리(MAP)으로 관리하고 smooth weighted round-robin 으로 고른다
  *
  * - 모든 요청은 fresh `--session-id` 로 실행
  * - 멀티턴 문맥은 클라이언트가 매 호출 보내는 full history 를 평탄화해 전달한다.
@@ -23,6 +23,7 @@ import {
   type GenerateStreamCallbacks,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
+import { SmoothWeightedRoundRobin } from "../common/smooth-weighted-round-robin";
 import { assertSupportedOneMillionSuffix, canonicalAnthropicModel } from "./anthropic-constants";
 import { readAnthropicQuotaUsage, type AnthropicQuotaUsageResult } from "./anthropic-quota";
 import { makeAnthropicWorkerId, runClaudeSession } from "./claude-session";
@@ -40,6 +41,7 @@ interface PooledToken {
   name: string;
   credentials: AnthropicCredentials;
   quotaThreshold?: number | null;
+  weight: number;
 }
 
 function quotaThresholdExceededMessage(
@@ -57,9 +59,7 @@ function quotaThresholdExceededMessage(
 export class AnthropicDispatcher implements ProviderDispatcher {
   // tokenId → 풀 항목. start()/token 이벤트로 채움
   private tokenPool = new Map<number, PooledToken>();
-  // tokenId 별 사용 카운터(least-used RR). name 이 아니라 id 기준 — 이름 충돌 안전
-  private requestCounts = new Map<number, number>();
-  private rrIndex = 0;
+  private readonly weightedSelector = new SmoothWeightedRoundRobin();
 
   async start(): Promise<void> {
     // OpenAIDispatcher.start() 와 동일하게 DB 에서 기존 anthropic 토큰을 self-bootstrap 한다.
@@ -73,16 +73,18 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         name: t.name,
         credentials: t.credentials as AnthropicCredentials,
         quotaThreshold: t.quota_threshold,
+        weight: t.weight,
       });
+      this.weightedSelector.setToken(t.id, t.weight);
       logger.info(`worker spawned: ${t.name}`);
     }
   }
 
   async stop(): Promise<void> {
+    const tokenIds = [...this.tokenPool.keys()];
+    for (const id of tokenIds) this.weightedSelector.removeToken(id);
     this.tokenPool.clear();
-    // lifecycle 정합: RR 카운터/인덱스도 비워 stop→start 재등록 시 이전 카운트가 안 남게 한다.
-    this.requestCounts.clear();
-    this.rrIndex = 0;
+    this.weightedSelector.resetScores();
   }
 
   // 현재 풀의 토큰 수(startup 로그/health 용).
@@ -101,6 +103,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
       name: string;
       credentials: AnthropicCredentials;
       quotaThreshold?: number | null;
+      weight: number;
     }>,
   ): void {
     const next = new Set(rows.map((r) => r.id));
@@ -111,9 +114,9 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     }
     for (const r of rows) {
       if (this.tokenPool.has(r.id)) {
-        this.onTokenUpdated(r.id, r.name, r.credentials, r.quotaThreshold);
+        this.onTokenUpdated(r.id, r.name, r.credentials, r.quotaThreshold, r.weight);
       } else {
-        this.onTokenAdded(r.id, r.name, r.credentials, r.quotaThreshold);
+        this.onTokenAdded(r.id, r.name, r.credentials, r.quotaThreshold, r.weight);
       }
     }
   }
@@ -124,8 +127,10 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     name: string,
     credentials: AnthropicCredentials,
     quotaThreshold?: number | null,
+    weight = 1,
   ): void {
-    this.tokenPool.set(id, { id, name, credentials, quotaThreshold });
+    this.tokenPool.set(id, { id, name, credentials, quotaThreshold, weight });
+    this.weightedSelector.setToken(id, weight);
   }
 
   onTokenUpdated(
@@ -133,20 +138,18 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     name: string,
     credentials: AnthropicCredentials,
     quotaThreshold?: number | null,
+    weight = 1,
   ): void {
-    this.tokenPool.set(id, { id, name, credentials, quotaThreshold });
+    this.tokenPool.set(id, { id, name, credentials, quotaThreshold, weight });
+    this.weightedSelector.setToken(id, weight);
   }
 
   onTokenRemoved(id: number): void {
     this.tokenPool.delete(id);
-    this.requestCounts.delete(id);
+    this.weightedSelector.removeToken(id);
   }
 
-  private countOf(id: number): number {
-    return this.requestCounts.get(id) ?? 0;
-  }
-
-  // 요청마다 least-used RR 로 토큰을 고른다(동점이면 rrIndex 로 회전).
+  // quota 통과 후보만으로 요청마다 smooth weighted round-robin 선택한다.
   private async selectToken(): Promise<PooledToken | null> {
     const rows = [...this.tokenPool.values()];
     if (rows.length === 0) return null;
@@ -164,12 +167,9 @@ export class AnthropicDispatcher implements ProviderDispatcher {
       );
     }
 
-    const minCount = Math.min(...eligible.map((r) => this.countOf(r.id)));
-    const idle = eligible.filter((r) => this.countOf(r.id) === minCount);
-    const picked = idle[this.rrIndex % idle.length];
-    if (!picked) return null;
-    this.rrIndex++;
-    return this.charge(picked);
+    const selectedId = this.weightedSelector.select(new Set(eligible.map((token) => token.id)));
+    if (selectedId === null) return null;
+    return this.tokenPool.get(selectedId) ?? null;
   }
 
   private async filterEligibleTokens(rows: PooledToken[]): Promise<{
@@ -250,12 +250,6 @@ export class AnthropicDispatcher implements ProviderDispatcher {
       reason: "lookup_fail_open",
       lookupReason: reason,
     });
-  }
-
-  // 선택된 토큰의 사용 카운트를 await 전에 선반영(동시 요청이 다른 토큰을 고르도록).
-  private charge(token: PooledToken): PooledToken {
-    this.requestCounts.set(token.id, this.countOf(token.id) + 1);
-    return token;
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
