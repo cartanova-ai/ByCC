@@ -50,6 +50,8 @@ export class ImageGenerationError extends Error {
 
 const DEFAULT_EFFORT = "low";
 export const MAX_OPENAI_WORKERS_PER_TOKEN = 20;
+const DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN = 5;
+const DEFAULT_OPENAI_MAX_WORKERS_PER_TOKEN = 15;
 const QUEUE_TIMEOUT_MS = 60_000;
 const MAX_QUEUE_SIZE = 50;
 const SPAWN_INTERVAL_MS = 500;
@@ -87,10 +89,10 @@ function boundedNumber(value: string | undefined, fallback: number, min: number)
 export function resolveOpenAIWorkerPoolConfig(
   env: Record<string, string | undefined> = process.env,
 ): OpenAIWorkerPoolConfig {
-  const autoscale = env.QGRID_OPENAI_AUTOSCALE === "true" || env.QGRID_OPENAI_AUTOSCALE === "1";
+  const autoscale = env.QGRID_OPENAI_AUTOSCALE !== "false" && env.QGRID_OPENAI_AUTOSCALE !== "0";
   const legacyWorkers = boundedInteger(
     env.QGRID_WORKERS_PER_TOKEN,
-    3,
+    DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN,
     1,
     MAX_OPENAI_WORKERS_PER_TOKEN,
   );
@@ -102,7 +104,7 @@ export function resolveOpenAIWorkerPoolConfig(
   );
   const configuredMax = boundedInteger(
     env.QGRID_OPENAI_MAX_WORKERS_PER_TOKEN,
-    autoscale ? MAX_OPENAI_WORKERS_PER_TOKEN : minWorkersPerToken,
+    autoscale ? DEFAULT_OPENAI_MAX_WORKERS_PER_TOKEN : minWorkersPerToken,
     1,
     MAX_OPENAI_WORKERS_PER_TOKEN,
   );

@@ -205,28 +205,24 @@ describe("OpenAIDispatcher worker capacity", () => {
     expect(makeOpenAIWorkerId(1, 10)).not.toBe(makeOpenAIWorkerId(2, 0));
   });
 
-  it("preserves fixed worker behavior unless autoscaling is enabled", () => {
+  it("defaults to autoscaling from 5 to 15 workers per token", () => {
+    expect(resolveOpenAIWorkerPoolConfig({})).toMatchObject({
+      autoscale: true,
+      minWorkersPerToken: 5,
+      maxWorkersPerToken: 15,
+    });
+  });
+
+  it("keeps an explicit fixed worker mode for emergency rollback", () => {
     expect(
       resolveOpenAIWorkerPoolConfig({
         QGRID_WORKERS_PER_TOKEN: "5",
-        QGRID_OPENAI_MAX_WORKERS_PER_TOKEN: "12",
+        QGRID_OPENAI_AUTOSCALE: "false",
       }),
     ).toMatchObject({
       autoscale: false,
       minWorkersPerToken: 5,
       maxWorkersPerToken: 5,
-    });
-
-    expect(
-      resolveOpenAIWorkerPoolConfig({
-        QGRID_WORKERS_PER_TOKEN: "5",
-        QGRID_OPENAI_AUTOSCALE: "true",
-        QGRID_OPENAI_MAX_WORKERS_PER_TOKEN: "12",
-      }),
-    ).toMatchObject({
-      autoscale: true,
-      minWorkersPerToken: 5,
-      maxWorkersPerToken: 12,
     });
   });
 
