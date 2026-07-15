@@ -92,6 +92,32 @@ function createWorkerWithNotificationRpc(
   return { worker, request, handlers };
 }
 
+describe("CodexAppServerWorker home isolation", () => {
+  it("places worker homes under the configured OS temp directory", () => {
+    const previousTmpdir = process.env.TMPDIR;
+    const customTmpdir = mkdtempSync(join(tmpdir(), "qgrid-tmp-root-test-"));
+
+    try {
+      process.env.TMPDIR = customTmpdir;
+      const worker = new CodexAppServerWorker({
+        tokenId: 41,
+        tokenName: "token",
+        accessToken: "access",
+        accountId: "account",
+        workerIndex: 14,
+      });
+
+      expect((worker as unknown as { codexHome: string }).codexHome).toBe(
+        join(customTmpdir, "qgrid-codex", "41-14"),
+      );
+    } finally {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
+      rmSync(customTmpdir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("CodexAppServerWorker active turn cleanup", () => {
   it("rejects a non-streaming turn when the worker process exits", async () => {
     const { worker } = createWorkerWithFakeRpc();

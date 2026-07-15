@@ -6,6 +6,9 @@
  * - TokenSubscriber 이벤트로 worker pool 동기화
  * - backpressure: 큐 full 또는 timeout 시 SERVER_BUSY
  */
+import { readFileSync } from "node:fs";
+import { freemem } from "node:os";
+
 import { getLogger } from "@logtape/logtape";
 
 import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
@@ -46,14 +49,93 @@ export class ImageGenerationError extends Error {
 }
 
 const DEFAULT_EFFORT = "low";
-const MAX_WORKERS_PER_TOKEN = 5;
-const WORKERS_PER_TOKEN = Math.min(
-  Number(process.env.QGRID_WORKERS_PER_TOKEN ?? 3),
-  MAX_WORKERS_PER_TOKEN,
-);
+export const MAX_OPENAI_WORKERS_PER_TOKEN = 20;
 const QUEUE_TIMEOUT_MS = 60_000;
 const MAX_QUEUE_SIZE = 50;
 const SPAWN_INTERVAL_MS = 500;
+
+export const OPENAI_WORKER_BASE_RSS_GIB = 0.71;
+export const OPENAI_WORKER_RSS_GIB = 0.157;
+
+export type OpenAIWorkerPoolConfig = {
+  autoscale: boolean;
+  minWorkersPerToken: number;
+  maxWorkersPerToken: number;
+  scaleIntervalMs: number;
+  scaleDownIdleMs: number;
+  maxEstimatedRssGiB: number;
+  minHostAvailableGiB: number;
+};
+
+function boundedInteger(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(Math.floor(parsed), max));
+}
+
+function boundedNumber(value: string | undefined, fallback: number, min: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, parsed);
+}
+
+export function resolveOpenAIWorkerPoolConfig(
+  env: Record<string, string | undefined> = process.env,
+): OpenAIWorkerPoolConfig {
+  const autoscale = env.QGRID_OPENAI_AUTOSCALE === "true" || env.QGRID_OPENAI_AUTOSCALE === "1";
+  const legacyWorkers = boundedInteger(
+    env.QGRID_WORKERS_PER_TOKEN,
+    3,
+    1,
+    MAX_OPENAI_WORKERS_PER_TOKEN,
+  );
+  const minWorkersPerToken = boundedInteger(
+    env.QGRID_OPENAI_MIN_WORKERS_PER_TOKEN,
+    legacyWorkers,
+    1,
+    MAX_OPENAI_WORKERS_PER_TOKEN,
+  );
+  const configuredMax = boundedInteger(
+    env.QGRID_OPENAI_MAX_WORKERS_PER_TOKEN,
+    autoscale ? MAX_OPENAI_WORKERS_PER_TOKEN : minWorkersPerToken,
+    1,
+    MAX_OPENAI_WORKERS_PER_TOKEN,
+  );
+
+  return {
+    autoscale,
+    minWorkersPerToken,
+    maxWorkersPerToken: autoscale
+      ? Math.max(minWorkersPerToken, configuredMax)
+      : minWorkersPerToken,
+    scaleIntervalMs: boundedInteger(env.QGRID_OPENAI_SCALE_INTERVAL_MS, 5_000, 250, 300_000),
+    scaleDownIdleMs: boundedInteger(
+      env.QGRID_OPENAI_SCALE_DOWN_IDLE_MS,
+      10 * 60_000,
+      1_000,
+      24 * 60 * 60_000,
+    ),
+    maxEstimatedRssGiB: boundedNumber(env.QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB, 16, 1),
+    minHostAvailableGiB: boundedNumber(env.QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB, 20, 0),
+  };
+}
+
+export function estimateOpenAIWorkerRssGiB(totalWorkers: number): number {
+  return OPENAI_WORKER_BASE_RSS_GIB + OPENAI_WORKER_RSS_GIB * totalWorkers;
+}
+
+function readHostAvailableGiB(): number {
+  try {
+    const match = readFileSync("/proc/meminfo", "utf8").match(/^MemAvailable:\s+(\d+)\s+kB$/m);
+    if (match?.[1]) return Number(match[1]) / 1024 / 1024;
+  } catch {}
+  return freemem() / 1024 / 1024 / 1024;
+}
 
 // thread 재사용(prompt cache 고정). 끄면 기존 "매 turn 새 thread + history inject" 동작.
 const THREAD_REUSE_ENABLED = process.env.QGRID_OPENAI_THREAD_REUSE !== "false";
@@ -61,9 +143,10 @@ const THREAD_REUSE_ENABLED = process.env.QGRID_OPENAI_THREAD_REUSE !== "false";
 const REUSE_WORKER_WAIT_MS = 5_000;
 const REUSE_WORKER_POLL_MS = 50;
 
-// workerId 합성: tokenId 와 workerIndex(0..4) 를 하나의 안정 숫자로 인코딩.
-function makeWorkerId(tokenId: number, workerIndex: number): number {
-  return tokenId * 10 + workerIndex;
+// workerId 합성: tokenId 와 workerIndex(0..19) 를 하나의 안정 숫자로 인코딩.
+const OPENAI_WORKER_ID_STRIDE = 100;
+export function makeOpenAIWorkerId(tokenId: number, workerIndex: number): number {
+  return tokenId * OPENAI_WORKER_ID_STRIDE + workerIndex;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -92,8 +175,10 @@ type QueueItem = {
 
 type TokenMetadata = {
   name: string;
+  credentials: OpenAICredentials;
   quotaThreshold?: number | null;
   weight: number;
+  active: boolean;
 };
 
 type TokenEligibility = {
@@ -107,16 +192,33 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   workerPool = new Map<number, CodexAppServerWorker[]>();
   tokenMetadata = new Map<number, TokenMetadata>();
   queue: QueueItem[] = [];
+  readonly poolConfig: OpenAIWorkerPoolConfig;
   private readonly weightedSelector = new SmoothWeightedRoundRobin();
   private readonly workerCursorByToken = new Map<number, number>();
+  private readonly getHostAvailableGiB: () => number;
   private draining = false;
   private drainAgain = false;
+  private scalerTimer: ReturnType<typeof setInterval> | null = null;
+  private scalingPromise: Promise<void> | null = null;
+  private lastRequestAt = Date.now();
+  private stopped = false;
+
+  constructor(
+    poolConfig: OpenAIWorkerPoolConfig = resolveOpenAIWorkerPoolConfig(),
+    getHostAvailableGiB: () => number = readHostAvailableGiB,
+  ) {
+    this.poolConfig = poolConfig;
+    this.getHostAvailableGiB = getHostAvailableGiB;
+  }
 
   async start(): Promise<void> {
+    this.stopped = false;
     const { rows } = await TokenModel.findMany("A");
     const openaiTokens = rows.filter((t) => t.provider === "openai");
     logger.info(
-      `starting ${openaiTokens.length} openai tokens (${WORKERS_PER_TOKEN} workers each)`,
+      this.poolConfig.autoscale
+        ? `starting ${openaiTokens.length} openai tokens (${this.poolConfig.minWorkersPerToken}-${this.poolConfig.maxWorkersPerToken} workers each, autoscale)`
+        : `starting ${openaiTokens.length} openai tokens (${this.poolConfig.minWorkersPerToken} workers each)`,
     );
 
     await Promise.allSettled(
@@ -131,9 +233,23 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         if (!t.active) this.onTokenDeactivated(t.id);
       }),
     );
+
+    if (this.poolConfig.autoscale) {
+      this.scalerTimer = setInterval(
+        () => this.requestAutoscaleEvaluation(),
+        this.poolConfig.scaleIntervalMs,
+      );
+      this.scalerTimer.unref?.();
+    }
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.scalerTimer) {
+      clearInterval(this.scalerTimer);
+      this.scalerTimer = null;
+    }
+    await this.scalingPromise?.catch(() => {});
     this.rejectAllQueued("DISPATCHER_SHUTDOWN");
     const kills = [...this.workerPool.values()].flat().map((w) => w.kill());
     await Promise.allSettled(kills);
@@ -154,7 +270,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     quotaThreshold?: number | null,
     weight = 1,
   ): Promise<void> {
-    this.setTokenMetadata(id, name, quotaThreshold, weight);
+    this.setTokenMetadata(id, name, credentials, quotaThreshold, weight);
     if (this.workerPool.has(id)) return;
     await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
   }
@@ -186,7 +302,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   ): Promise<void> {
     const existing = this.workerPool.get(id) ?? [];
     const renamed = existing.some((w) => w.tokenName !== name);
-    this.setTokenMetadata(id, name, quotaThreshold, weight);
+    this.setTokenMetadata(id, name, credentials, quotaThreshold, weight);
     if (renamed) this.rateLimitsCache.delete(id);
 
     if (existing.length === 0) {
@@ -210,6 +326,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   onTokenDeactivated(id: number): void {
     const workers = this.workerPool.get(id) ?? [];
     const tokenName = workers[0]?.tokenName;
+    const metadata = this.tokenMetadata.get(id);
+    if (metadata) metadata.active = false;
     const changed = workers.some((worker) => worker.active);
     workers.forEach((w) => {
       w.active = false;
@@ -225,6 +343,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   onTokenActivated(id: number): void {
     const workers = this.workerPool.get(id) ?? [];
     const tokenName = workers[0]?.tokenName;
+    const metadata = this.tokenMetadata.get(id);
+    if (metadata) metadata.active = true;
     const changed = workers.some((worker) => !worker.active);
     workers.forEach((w) => {
       w.active = true;
@@ -268,6 +388,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   // ── Generate ────────────────────────────────────────────────────
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
+    this.lastRequestAt = Date.now();
     const excludedTokenIds = new Set<number>();
     // thread 재사용 경로: 좌표 worker 를 점유해 기존 thread 에 turn 만 실행.
     const reuseWorker = await this.acquireReuseWorker(req, excludedTokenIds);
@@ -292,6 +413,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async generateStream(req: GenerateRequest, cb: GenerateStreamCallbacks): Promise<void> {
+    this.lastRequestAt = Date.now();
     // 이미지 생성은 non-stream 전용(R2): codex 가 이미지 델타를 주지 않고 완성 base64 를
     // 한 번에 준다. 스트리밍 경로로 이미지 요청이 오면 명시적 에러.
     if (req.imageGeneration) {
@@ -354,7 +476,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   findWorkerById(workerId: number): CodexAppServerWorker | null {
     for (const workers of this.workerPool.values()) {
       for (const w of workers) {
-        if (makeWorkerId(w.tokenId, w.workerIndex) === workerId) return w;
+        if (makeOpenAIWorkerId(w.tokenId, w.workerIndex) === workerId) return w;
       }
     }
     return null;
@@ -438,6 +560,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       };
 
       this.queue.push(item);
+      this.requestAutoscaleEvaluation();
     });
   }
 
@@ -560,7 +683,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       ttftMs: result.ttftMs,
       model: result.model,
       threadCoord: {
-        workerId: makeWorkerId(worker.tokenId, worker.workerIndex),
+        workerId: makeOpenAIWorkerId(worker.tokenId, worker.workerIndex),
         threadId: result.threadId,
         epoch: worker.epoch,
       },
@@ -589,7 +712,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
           ...result,
           tokenName: worker.tokenName,
           threadCoord: {
-            workerId: makeWorkerId(worker.tokenId, worker.workerIndex),
+            workerId: makeOpenAIWorkerId(worker.tokenId, worker.workerIndex),
             threadId: resolvedThreadId,
             epoch: worker.epoch,
           },
@@ -608,9 +731,9 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     quotaThreshold?: number | null,
     weight = 1,
   ): Promise<void> {
-    this.setTokenMetadata(tokenId, tokenName, quotaThreshold, weight);
+    this.setTokenMetadata(tokenId, tokenName, credentials, quotaThreshold, weight);
     const workers: CodexAppServerWorker[] = [];
-    for (let i = 0; i < WORKERS_PER_TOKEN; i++) {
+    for (let i = 0; i < this.poolConfig.minWorkersPerToken; i++) {
       if (i > 0) await sleep(SPAWN_INTERVAL_MS);
       const worker = await this.spawnSingleWorker(tokenId, tokenName, credentials, i);
       if (worker) workers.push(worker);
@@ -653,6 +776,143 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
   }
 
+  async evaluateAutoscaling(): Promise<void> {
+    if (!this.poolConfig.autoscale || this.stopped) return;
+    if (this.queue.length > 0) {
+      await this.scaleUpOneStep();
+      return;
+    }
+    if (Date.now() - this.lastRequestAt >= this.poolConfig.scaleDownIdleMs) {
+      await this.scaleDownOneStep();
+    }
+  }
+
+  async scaleUpOneStep(): Promise<void> {
+    if (!this.poolConfig.autoscale || this.stopped) return;
+    await this.runScaling(async () => {
+      const candidates = [...this.tokenMetadata.entries()].filter(([tokenId, metadata]) => {
+        if (!metadata.active) return false;
+        return (this.workerPool.get(tokenId)?.length ?? 0) < this.poolConfig.maxWorkersPerToken;
+      });
+      if (candidates.length === 0) return;
+
+      const projectedWorkerCount = this.workerCount + candidates.length;
+      const projectedRssGiB = estimateOpenAIWorkerRssGiB(projectedWorkerCount);
+      if (projectedRssGiB > this.poolConfig.maxEstimatedRssGiB) {
+        logger.warn(
+          `openai autoscale blocked: estimated RSS ${projectedRssGiB.toFixed(2)}GiB exceeds ${this.poolConfig.maxEstimatedRssGiB.toFixed(2)}GiB`,
+        );
+        return;
+      }
+
+      const hostAvailableGiB = this.getHostAvailableGiB();
+      if (hostAvailableGiB < this.poolConfig.minHostAvailableGiB) {
+        logger.warn(
+          `openai autoscale blocked: host available ${hostAvailableGiB.toFixed(2)}GiB below ${this.poolConfig.minHostAvailableGiB.toFixed(2)}GiB`,
+        );
+        return;
+      }
+
+      const spawned = await Promise.all(
+        candidates.map(async ([tokenId, metadata]) => {
+          const workers = this.workerPool.get(tokenId) ?? [];
+          const workerIndex = this.nextAvailableWorkerIndex(workers);
+          if (workerIndex >= this.poolConfig.maxWorkersPerToken) return null;
+          const worker = await this.spawnSingleWorker(
+            tokenId,
+            metadata.name,
+            metadata.credentials,
+            workerIndex,
+          );
+          if (!worker) return null;
+
+          const currentMetadata = this.tokenMetadata.get(tokenId);
+          const currentWorkers = this.workerPool.get(tokenId);
+          if (
+            !currentMetadata?.active ||
+            currentMetadata !== metadata ||
+            !currentWorkers ||
+            currentWorkers.some((entry) => entry.workerIndex === workerIndex)
+          ) {
+            await worker.kill().catch(() => {});
+            return null;
+          }
+          currentWorkers.push(worker);
+          currentWorkers.sort((a, b) => a.workerIndex - b.workerIndex);
+          return worker;
+        }),
+      );
+
+      const added = spawned.filter((worker) => worker !== null).length;
+      if (added > 0) {
+        logger.info(
+          `openai autoscale up: +${added} workers (${this.workerCount} total, queue ${this.queue.length})`,
+        );
+        this.requestDrainQueue();
+        if (this.queue.length > 0) {
+          const timer = setTimeout(
+            () => this.requestAutoscaleEvaluation(),
+            Math.min(this.poolConfig.scaleIntervalMs, 1_000),
+          );
+          timer.unref?.();
+        }
+      }
+    });
+  }
+
+  async scaleDownOneStep(): Promise<void> {
+    if (!this.poolConfig.autoscale || this.stopped) return;
+    await this.runScaling(async () => {
+      const removed: CodexAppServerWorker[] = [];
+      for (const tokenId of this.tokenMetadata.keys()) {
+        const workers = this.workerPool.get(tokenId) ?? [];
+        if (workers.length <= this.poolConfig.minWorkersPerToken) continue;
+
+        const worker = workers
+          .toSorted((a, b) => b.workerIndex - a.workerIndex)
+          .find((entry) => entry.hasCapacity);
+        if (!worker) continue;
+
+        this.workerPool.set(
+          tokenId,
+          workers.filter((entry) => entry !== worker),
+        );
+        removed.push(worker);
+      }
+
+      if (removed.length === 0) return;
+      await Promise.allSettled(removed.map((worker) => worker.kill()));
+      logger.info(`openai autoscale down: -${removed.length} workers (${this.workerCount} total)`);
+    });
+  }
+
+  private nextAvailableWorkerIndex(workers: CodexAppServerWorker[]): number {
+    const used = new Set(workers.map((worker) => worker.workerIndex));
+    for (let index = 0; index < this.poolConfig.maxWorkersPerToken; index++) {
+      if (!used.has(index)) return index;
+    }
+    return this.poolConfig.maxWorkersPerToken;
+  }
+
+  private requestAutoscaleEvaluation(): void {
+    if (!this.poolConfig.autoscale || this.stopped) return;
+    void this.evaluateAutoscaling().catch((e) =>
+      logger.warn(`openai autoscale evaluation failed: ${(e as Error).message}`),
+    );
+  }
+
+  private async runScaling(task: () => Promise<void>): Promise<void> {
+    if (this.scalingPromise) {
+      await this.scalingPromise;
+      return;
+    }
+    const scaling = task().finally(() => {
+      if (this.scalingPromise === scaling) this.scalingPromise = null;
+    });
+    this.scalingPromise = scaling;
+    await scaling;
+  }
+
   // ── Rate limits ─────────────────────────────────────────────────
 
   rateLimitsCache = new Map<number, { data: GetAccountRateLimitsResponse; cachedAt: number }>();
@@ -679,10 +939,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   private setTokenMetadata(
     id: number,
     name: string,
+    credentials: OpenAICredentials,
     quotaThreshold: number | null | undefined,
     weight: number,
   ): void {
-    this.tokenMetadata.set(id, { name, quotaThreshold, weight });
+    this.tokenMetadata.set(id, {
+      name,
+      credentials,
+      quotaThreshold,
+      weight,
+      active: this.tokenMetadata.get(id)?.active ?? true,
+    });
     this.weightedSelector.setToken(id, weight);
   }
 

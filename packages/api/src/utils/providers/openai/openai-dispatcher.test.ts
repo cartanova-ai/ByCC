@@ -4,7 +4,15 @@ import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.ty
 import { type OpenAICredentials } from "../../../application/token/token.types";
 import { type GenerateRequest, type GenerateResult } from "../common/provider-dispatcher";
 import { type CodexAppServerWorker } from "./codex-worker";
-import { ImageGenerationError, OpenAIDispatcher } from "./openai-dispatcher";
+import {
+  estimateOpenAIWorkerRssGiB,
+  ImageGenerationError,
+  makeOpenAIWorkerId,
+  MAX_OPENAI_WORKERS_PER_TOKEN,
+  type OpenAIWorkerPoolConfig,
+  OpenAIDispatcher,
+  resolveOpenAIWorkerPoolConfig,
+} from "./openai-dispatcher";
 import { type OpenAIQuotaUsageResult } from "./openai-quota";
 
 const { readOpenAIQuotaUsageMock, loggerInfoMock, loggerWarnMock } = vi.hoisted(() => ({
@@ -70,7 +78,7 @@ function resultFor(worker: CodexAppServerWorker, threadId = "thread-new"): Gener
     durationMs: 10,
     model: "gpt-5-codex",
     threadCoord: {
-      workerId: worker.tokenId * 10 + worker.workerIndex,
+      workerId: makeOpenAIWorkerId(worker.tokenId, worker.workerIndex),
       threadId,
       epoch: worker.epoch,
     },
@@ -159,6 +167,21 @@ function addWorkers(dispatcher: OpenAIDispatcher, workers: CodexAppServerWorker[
   for (const [tokenId, group] of byToken) dispatcher.workerPool.set(tokenId, group);
 }
 
+function autoscaleConfig(
+  overrides: Partial<OpenAIWorkerPoolConfig> = {},
+): OpenAIWorkerPoolConfig {
+  return {
+    autoscale: true,
+    minWorkersPerToken: 1,
+    maxWorkersPerToken: 3,
+    scaleIntervalMs: 5_000,
+    scaleDownIdleMs: 600_000,
+    maxEstimatedRssGiB: 16,
+    minHostAvailableGiB: 20,
+    ...overrides,
+  };
+}
+
 async function waitForQueue(dispatcher: OpenAIDispatcher, length = 1): Promise<void> {
   for (let i = 0; i < 10; i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -166,6 +189,130 @@ async function waitForQueue(dispatcher: OpenAIDispatcher, length = 1): Promise<v
   }
   expect(dispatcher.queueLength).toBe(length);
 }
+
+describe("OpenAIDispatcher worker capacity", () => {
+  it("supports 20 workers per token without worker id collisions", () => {
+    expect(MAX_OPENAI_WORKERS_PER_TOKEN).toBe(20);
+
+    const tokenIds = [1, 2, 41, 47, 55, 56, 58];
+    const workerIds = tokenIds.flatMap((tokenId) =>
+      Array.from({ length: MAX_OPENAI_WORKERS_PER_TOKEN }, (_, workerIndex) =>
+        makeOpenAIWorkerId(tokenId, workerIndex),
+      ),
+    );
+
+    expect(new Set(workerIds)).toHaveLength(workerIds.length);
+    expect(makeOpenAIWorkerId(1, 10)).not.toBe(makeOpenAIWorkerId(2, 0));
+  });
+
+  it("preserves fixed worker behavior unless autoscaling is enabled", () => {
+    expect(
+      resolveOpenAIWorkerPoolConfig({
+        QGRID_WORKERS_PER_TOKEN: "5",
+        QGRID_OPENAI_MAX_WORKERS_PER_TOKEN: "12",
+      }),
+    ).toMatchObject({
+      autoscale: false,
+      minWorkersPerToken: 5,
+      maxWorkersPerToken: 5,
+    });
+
+    expect(
+      resolveOpenAIWorkerPoolConfig({
+        QGRID_WORKERS_PER_TOKEN: "5",
+        QGRID_OPENAI_AUTOSCALE: "true",
+        QGRID_OPENAI_MAX_WORKERS_PER_TOKEN: "12",
+      }),
+    ).toMatchObject({
+      autoscale: true,
+      minWorkersPerToken: 5,
+      maxWorkersPerToken: 12,
+    });
+  });
+
+  it("estimates worker RSS from the dev0 measurement model", () => {
+    expect(estimateOpenAIWorkerRssGiB(50)).toBeCloseTo(8.56, 2);
+    expect(estimateOpenAIWorkerRssGiB(60)).toBeCloseTo(10.13, 2);
+  });
+});
+
+describe("OpenAIDispatcher autoscaling", () => {
+  it("requests a scale-up evaluation when a request enters the queue", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    addWorkers(dispatcher, [fakeWorker({ tokenId: 1, busy: true })]);
+    const scaleUpOneStep = vi.spyOn(dispatcher, "scaleUpOneStep").mockResolvedValue(undefined);
+
+    const queued = dispatcher.enqueue(async () => "ok");
+    const rejection = expect(queued).rejects.toThrow("TEST_CLEANUP");
+    await waitForQueue(dispatcher);
+    dispatcher.rejectAllQueued("TEST_CLEANUP");
+
+    await rejection;
+    expect(scaleUpOneStep).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds one worker to each active token in a scale-up step", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const tokenCredentials = credentials();
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", tokenCredentials, null, 1);
+    dispatcher.workerPool.set(1, [fakeWorker({ tokenId: 1, workerIndex: 0 })]);
+    const added = fakeWorker({ tokenId: 1, workerIndex: 1 });
+    const spawnSingleWorker = vi.spyOn(dispatcher, "spawnSingleWorker").mockResolvedValue(added);
+
+    await dispatcher.scaleUpOneStep();
+
+    expect(spawnSingleWorker).toHaveBeenCalledWith(1, "token", tokenCredentials, 1);
+    expect(dispatcher.workerPool.get(1)).toHaveLength(2);
+    expect(dispatcher.workerCount).toBe(2);
+  });
+
+  it("does not scale past the estimated RSS guard", async () => {
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({ maxEstimatedRssGiB: 0.9 }),
+      () => 64,
+    );
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    dispatcher.workerPool.set(1, [fakeWorker({ tokenId: 1, workerIndex: 0 })]);
+    const spawnSingleWorker = vi.spyOn(dispatcher, "spawnSingleWorker");
+
+    await dispatcher.scaleUpOneStep();
+
+    expect(spawnSingleWorker).not.toHaveBeenCalled();
+    expect(dispatcher.workerCount).toBe(1);
+  });
+
+  it("does not scale when host available memory is below the floor", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 10);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    dispatcher.workerPool.set(1, [fakeWorker({ tokenId: 1, workerIndex: 0 })]);
+    const spawnSingleWorker = vi.spyOn(dispatcher, "spawnSingleWorker");
+
+    await dispatcher.scaleUpOneStep();
+
+    expect(spawnSingleWorker).not.toHaveBeenCalled();
+    expect(dispatcher.workerCount).toBe(1);
+  });
+
+  it("removes only idle workers above the configured minimum for inactive tokens", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    const busy = fakeWorker({ tokenId: 1, workerIndex: 0, busy: true });
+    const idle = fakeWorker({ tokenId: 1, workerIndex: 1 });
+    dispatcher.workerPool.set(1, [busy, idle]);
+    dispatcher.onTokenDeactivated(1);
+
+    await dispatcher.scaleDownOneStep();
+    await dispatcher.scaleDownOneStep();
+
+    expect(idle.kill).toHaveBeenCalledTimes(1);
+    expect(busy.kill).not.toHaveBeenCalled();
+    expect(dispatcher.workerPool.get(1)).toEqual([busy]);
+  });
+});
 
 describe("OpenAIDispatcher token updates", () => {
   it("keeps existing workers when only OpenAI auth tokens rotate", async () => {
@@ -329,7 +476,9 @@ describe("OpenAIDispatcher weighted routing", () => {
 
     const cold1 = await dispatcher.generate(baseReq());
     const reused = await dispatcher.generate(
-      baseReq({ reuse: { workerId: 20, threadId: "thread-B", epoch: 1 } }),
+      baseReq({
+        reuse: { workerId: makeOpenAIWorkerId(2, 0), threadId: "thread-B", epoch: 1 },
+      }),
     );
     const cold2 = await dispatcher.generate(baseReq());
 
@@ -470,7 +619,9 @@ describe("OpenAIDispatcher quota threshold gate", () => {
       );
 
     const result = await dispatcher.generate(
-      baseReq({ reuse: { workerId: 10, threadId: "thread-1", epoch: 1 } }),
+      baseReq({
+        reuse: { workerId: makeOpenAIWorkerId(1, 0), threadId: "thread-1", epoch: 1 },
+      }),
     );
 
     expect(result.tokenName).toBe("tok-B");
@@ -492,7 +643,9 @@ describe("OpenAIDispatcher quota threshold gate", () => {
       );
 
     const result = await dispatcher.generate(
-      baseReq({ reuse: { workerId: 10, threadId: "thread-1", epoch: 1 } }),
+      baseReq({
+        reuse: { workerId: makeOpenAIWorkerId(1, 0), threadId: "thread-1", epoch: 1 },
+      }),
     );
 
     expect(result.tokenName).toBe("tok-A");
@@ -543,7 +696,11 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     readOpenAIQuotaUsageMock.mockResolvedValueOnce(quotaOk(85));
 
     await expect(
-      dispatcher.generate(baseReq({ reuse: { workerId: 10, threadId: "thread-1", epoch: 1 } })),
+      dispatcher.generate(
+        baseReq({
+          reuse: { workerId: makeOpenAIWorkerId(1, 0), threadId: "thread-1", epoch: 1 },
+        }),
+      ),
     ).rejects.toBeInstanceOf(QuotaThresholdExceededError);
   });
 });
@@ -621,7 +778,10 @@ describe("OpenAIDispatcher image generation routing", () => {
   it("forces cold thread for image requests even when a reuse coordinate is present", async () => {
     const dispatcher = new OpenAIDispatcher();
     const worker = await dispatcher.acquireReuseWorker(
-      baseReq({ imageGeneration: true, reuse: { workerId: 10, threadId: "t1", epoch: 1 } }),
+      baseReq({
+        imageGeneration: true,
+        reuse: { workerId: makeOpenAIWorkerId(1, 0), threadId: "t1", epoch: 1 },
+      }),
     );
     expect(worker).toBeNull();
   });

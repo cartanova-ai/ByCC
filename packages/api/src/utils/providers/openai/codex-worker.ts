@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
@@ -169,7 +171,7 @@ export class CodexAppServerWorker {
 
   constructor(private config: WorkerConfig) {
     const suffix = config.workerIndex !== undefined ? `-${config.workerIndex}` : "";
-    this.codexHome = `/tmp/qgrid-codex/${config.tokenId}${suffix}`;
+    this.codexHome = join(tmpdir(), "qgrid-codex", `${config.tokenId}${suffix}`);
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
