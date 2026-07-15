@@ -237,6 +237,39 @@ describe("OpenAIDispatcher worker capacity", () => {
 });
 
 describe("OpenAIDispatcher autoscaling", () => {
+  it("scales six active tokens from 5 to 15 workers per token", async () => {
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({
+        minWorkersPerToken: 5,
+        maxWorkersPerToken: 15,
+        maxEstimatedRssGiB: 16,
+      }),
+      () => 64,
+    );
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+
+    for (let tokenId = 1; tokenId <= 6; tokenId++) {
+      await dispatcher.onTokenAdded(tokenId, `token-${tokenId}`, credentials(), null, 1);
+      dispatcher.workerPool.set(
+        tokenId,
+        Array.from({ length: 5 }, (_, workerIndex) => fakeWorker({ tokenId, workerIndex })),
+      );
+    }
+
+    vi.spyOn(dispatcher, "spawnSingleWorker").mockImplementation(
+      async (tokenId, tokenName, _credentials, workerIndex) =>
+        fakeWorker({ tokenId, tokenName, workerIndex }),
+    );
+
+    for (let step = 0; step < 12; step++) await dispatcher.scaleUpOneStep();
+
+    expect(dispatcher.workerCount).toBe(90);
+    expect([...dispatcher.workerPool.values()].map((workers) => workers.length)).toEqual([
+      15, 15, 15, 15, 15, 15,
+    ]);
+    expect(estimateOpenAIWorkerRssGiB(dispatcher.workerCount)).toBeLessThan(16);
+  });
+
   it("requests a scale-up evaluation when a request enters the queue", async () => {
     const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
     addWorkers(dispatcher, [fakeWorker({ tokenId: 1, busy: true })]);
