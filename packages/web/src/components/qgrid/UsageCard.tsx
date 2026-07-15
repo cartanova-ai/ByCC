@@ -101,16 +101,26 @@ function formatResets(iso: string | null): string {
   return h > 0 ? `resets ${h}h ${m}m` : `resets ${m}m`;
 }
 
+function formatWindowLabel(fallback: string, windowDurationMins?: number | null): string {
+  if (!windowDurationMins || windowDurationMins <= 0) return fallback;
+
+  const hours = windowDurationMins / 60;
+  if (hours >= 24) return `${Math.round(hours / 24)}d`;
+  return `${Math.round(hours)}h`;
+}
+
 function UsageRow({
   label,
   utilization,
   resetsAt,
+  windowDurationMins,
   theme,
   threshold,
 }: {
   label: string;
   utilization: number | null;
   resetsAt: string | null;
+  windowDurationMins?: number | null;
   theme: ProviderTheme;
   // primary(5h) 행에만 전달. 설정 시 막대 위 그 % 위치에 제외선을 그린다. null이면 선 없음.
   threshold?: number | null;
@@ -119,7 +129,9 @@ function UsageRow({
   const hasThreshold = threshold !== undefined && threshold !== null;
   return (
     <div className="flex items-center gap-3">
-      <span className="text-xs text-sand-600 w-20 shrink-0">{label}</span>
+      <span className="text-xs text-sand-600 w-20 shrink-0">
+        {formatWindowLabel(label, windowDurationMins)}
+      </span>
       <div className="relative flex-1 h-2 bg-sand-200 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-300 ${barColor(pct, theme)}`}
@@ -183,6 +195,7 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
           label="5h"
           utilization={data.fiveHour.utilization}
           resetsAt={data.fiveHour.resetsAt}
+          windowDurationMins={data.fiveHour.windowDurationMins}
           theme={theme}
           threshold={thresholdForPrimary}
         />
@@ -192,6 +205,7 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
           label="7d"
           utilization={data.sevenDay.utilization}
           resetsAt={data.sevenDay.resetsAt}
+          windowDurationMins={data.sevenDay.windowDurationMins}
           theme={theme}
         />
       )}

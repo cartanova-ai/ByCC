@@ -305,4 +305,28 @@ describe("QgridFrame.usage", () => {
     });
     expect(getRateLimitsByTokenIdMock).not.toHaveBeenCalled();
   });
+
+  it("returns the provider-reported OpenAI window duration", async () => {
+    findManyMock.mockResolvedValueOnce({
+      rows: [{ ...tokenEntry, provider: "openai", active: true }],
+    });
+    getRateLimitsByTokenIdMock.mockResolvedValueOnce({
+      data: {
+        rateLimits: {
+          primary: { usedPercent: 11, resetsAt: 1_784_000_000, windowDurationMins: 10_080 },
+          secondary: null,
+        },
+      },
+    });
+
+    await expect(QgridFrame.usage(1)).resolves.toEqual({
+      provider: "openai",
+      fiveHour: {
+        utilization: 11,
+        resetsAt: new Date(1_784_000_000 * 1_000).toISOString(),
+        windowDurationMins: 10_080,
+      },
+      sevenDay: null,
+    });
+  });
 });

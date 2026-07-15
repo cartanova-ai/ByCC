@@ -261,6 +261,7 @@ const RateWindow = z
   .object({
     utilization: z.number().nullable(),
     resetsAt: z.string().nullable(),
+    windowDurationMins: z.number().nullable().optional(),
   })
   .nullable();
 

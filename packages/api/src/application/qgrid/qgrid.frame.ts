@@ -583,12 +583,14 @@ class QgridFrameClass extends BaseFrameClass {
             ? {
                 utilization: rl.primary.usedPercent,
                 resetsAt: unixSecondsToIso(rl.primary.resetsAt),
+                windowDurationMins: rl.primary.windowDurationMins,
               }
             : null,
           sevenDay: rl?.secondary
             ? {
                 utilization: rl.secondary.usedPercent,
                 resetsAt: unixSecondsToIso(rl.secondary.resetsAt),
+                windowDurationMins: rl.secondary.windowDurationMins,
               }
             : null,
         };
