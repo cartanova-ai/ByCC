@@ -4,8 +4,8 @@ import { z } from "zod";
 import { MonitConsole } from "@/components/qgrid/MonitConsole";
 
 const monitSearchSchema = z.object({
-  level: z.enum(["all", "warn", "error"]).optional().default("all"),
-  cats: z.array(z.string()).optional(),
+  // scaling 은 레벨이 아니라 뷰 모드 — autoscale/worker 증감 라인만 보여준다.
+  level: z.enum(["all", "scaling", "warn", "error"]).optional().default("all"),
 });
 export type MonitSearch = z.infer<typeof monitSearchSchema>;
 

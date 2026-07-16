@@ -27,11 +27,8 @@ const LEVEL_RANK: Record<string, number> = {
   fatal: 5,
 };
 
-const LEVEL_THRESHOLD: Record<MonitSearch["level"], number> = {
-  all: 0,
-  warn: 3,
-  error: 4,
-};
+// autoscale 관측 모드: queue 압력에 따른 worker 증설/축소 흐름만 골라 본다.
+const SCALING_PATTERN = /autoscale|worker/i;
 
 const LEVEL_LABEL: Record<string, string> = {
   trace: "TRC",
@@ -51,11 +48,6 @@ const TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
 
 function formatTime(epochMs: number): string {
   return TIME_FORMATTER.format(new Date(epochMs));
-}
-
-// 필터 입도는 카테고리 두 번째 세그먼트 — ["qgrid","oauth"] → "oauth", ["sonamu"] → "sonamu"
-function categoryKey(category: string[]): string {
-  return category[1] ?? category[0] ?? "unknown";
 }
 
 function categoryLabel(category: string[]): string {
@@ -83,6 +75,9 @@ export function MonitConsole({
     refetchInterval: POLL_INTERVAL_MS,
     retry: false,
   });
+  // 프로세스 정적 정보 — 폴링 없이 1회.
+  const infoQuery = useQuery({ ...MonitService.monitInfoQueryOptions(), staleTime: Infinity });
+  const info = infoQuery.data;
 
   useEffect(() => {
     const chunk = query.data;
@@ -111,12 +106,9 @@ export function MonitConsole({
       epochRef.current = chunk.processStartedAt;
       cursorRef.current = chunk.nextCursor;
 
-      const lastSeq =
-        base.length > 0
-          ? [...base].reverse().find((item): item is LineItem & { kind: "log" } => {
-              return item.kind === "log";
-            })?.entry.seq
-          : undefined;
+      const lastSeq = base.findLast(
+        (item): item is LineItem & { kind: "log" } => item.kind === "log",
+      )?.entry.seq;
       for (const entry of chunk.entries) {
         // 커서가 중복을 막지만, 경계 중복은 방어적으로 한 번 더 거른다 (AE4).
         if (lastSeq !== undefined && entry.seq <= lastSeq) continue;
@@ -139,25 +131,21 @@ export function MonitConsole({
     (query.isRefetchError ||
       (query.dataUpdatedAt > 0 && clock - query.dataUpdatedAt > STALE_AFTER_MS));
 
-  const observedCategories = useMemo(() => {
-    const keys = new Set<string>();
-    for (const item of items) {
-      if (item.kind === "log") keys.add(categoryKey(item.entry.category));
-    }
-    return [...keys].toSorted();
-  }, [items]);
-
-  const activeCategories = search.cats ?? observedCategories;
   const visible = useMemo(() => {
-    const threshold = LEVEL_THRESHOLD[search.level];
-    const categorySet = search.cats === undefined ? null : new Set(search.cats);
     return items.filter((item) => {
       if (item.kind !== "log") return true;
-      if ((LEVEL_RANK[item.entry.level] ?? 2) < threshold) return false;
-      if (categorySet !== null && !categorySet.has(categoryKey(item.entry.category))) return false;
-      return true;
+      switch (search.level) {
+        case "scaling":
+          return SCALING_PATTERN.test(item.entry.text);
+        case "warn":
+          return (LEVEL_RANK[item.entry.level] ?? 2) >= 3;
+        case "error":
+          return (LEVEL_RANK[item.entry.level] ?? 2) >= 4;
+        default:
+          return true;
+      }
     });
-  }, [items, search.level, search.cats]);
+  }, [items, search.level]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -197,10 +185,11 @@ export function MonitConsole({
         )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <div className="segmented-control inline-flex" role="tablist" aria-label="Level filter">
+          <div className="segmented-control inline-flex" role="tablist" aria-label="Log filter">
             {(
               [
                 { value: "all", label: "All" },
+                { value: "scaling", label: "Scaling" },
                 { value: "warn", label: "Warn+" },
                 { value: "error", label: "Err+" },
               ] as const
@@ -216,36 +205,29 @@ export function MonitConsole({
               </button>
             ))}
           </div>
-          {observedCategories.map((category) => {
-            const active = activeCategories.includes(category);
-            return (
-              <button
-                key={category}
-                type="button"
-                aria-pressed={active}
-                onClick={() => {
-                  const next = active
-                    ? activeCategories.filter((entry) => entry !== category)
-                    : [...activeCategories, category];
-                  // 전 카테고리 선택 상태는 URL 을 비워 기본값으로 둔다.
-                  onSearchChange({
-                    ...search,
-                    cats: next.length === observedCategories.length ? undefined : next,
-                  });
-                }}
-                className={clsx(
-                  "rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sienna-300",
-                  active
-                    ? "border-sand-400 bg-sand-100 text-sand-800"
-                    : "border-sand-200 bg-white text-sand-400 line-through",
-                )}
-              >
-                {category}
-              </button>
-            );
-          })}
         </div>
       </header>
+
+      {info && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-sand-100 bg-sand-50/60 px-4 py-2 text-[11px] text-sand-600 sm:px-5">
+          <span>
+            server <span className="font-mono text-sand-800">{info.serverUrl}</span>
+          </span>
+          <span>
+            db{" "}
+            <span className="font-mono text-sand-800">
+              {info.dbHost}/{info.dbName}
+            </span>
+          </span>
+          <span>
+            workers/token{" "}
+            <span className="font-mono text-sand-800">
+              {info.openai.minWorkersPerToken}–{info.openai.maxWorkersPerToken}
+            </span>{" "}
+            {info.openai.autoscale ? "autoscale" : "fixed"}
+          </span>
+        </div>
+      )}
 
       <div className="relative">
         <div
@@ -287,10 +269,7 @@ export function MonitConsole({
                 : "No lines match the current filters."}
             </div>
           ) : (
-            <div
-              className="relative w-full"
-              style={{ height: `${virtualizer.getTotalSize()}px` }}
-            >
+            <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const item = visible[virtualRow.index]!;
                 return (

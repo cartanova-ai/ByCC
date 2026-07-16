@@ -20,7 +20,7 @@ const sections: MenuSection[] = [
     items: [
       { title: "Tokens", path: "/tokens", icon: KeyRoundIcon },
       { title: "Request Logs", path: "/logs", icon: ActivityIcon },
-      { title: "Monit", path: "/monit", icon: TerminalIcon },
+      { title: "Server Logs", path: "/monit", icon: TerminalIcon },
     ],
   },
 ];
