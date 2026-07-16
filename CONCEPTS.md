@@ -10,6 +10,9 @@ The install-time process that makes qgrid's agent instructions discoverable to l
 ### Request-log project label
 A caller-provided workload identity attached to qgrid request logs so operators can group traffic, metrics, and debugging context by project or workflow instead of inferring ownership from prompts or tokens.
 
+### Monit tab
+The dashboard's ephemeral process-log surface: a terminal-style scrollback-plus-live-tail view over the server's in-memory log buffer, which resets on restart. Distinct from Request Logs, the persistent per-request DB record — Monit shows what the server terminal shows, so a remote instance can be observed without SSH.
+
 ## Prompt cache & thread reuse
 
 ### Thread reuse

@@ -292,6 +292,7 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 |---|---|---|
 | `QGRID_URL` | Qgrid server address (SDK) | `http://localhost:44900` |
 | `QGRID_PROJECT_NAME` | Request log project name (SDK/logger). Enables per-project filtering in the dashboard | (empty) |
+| `HOST` | Server listen host. A non-loopback value exposes the dashboard and admin APIs | `localhost` |
 | `QGRID_DB_HOST` | PostgreSQL host | `localhost` |
 | `QGRID_DB_PORT` | PostgreSQL port | `5432` |
 | `QGRID_DB_USER` | PostgreSQL user | `postgres` |
@@ -300,6 +301,8 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_WORKERS_PER_TOKEN` | Workers per OpenAI token | `3` (max 5) |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
+
+> Qgrid does not add a separate authentication guard to dashboard APIs. Keep `HOST` on loopback unless access is protected by a trusted network or reverse proxy. A public bind exposes every admin endpoint, including the Monit tab's server log feed.
 
 ---
 
