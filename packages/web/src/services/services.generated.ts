@@ -17,6 +17,7 @@ import {
 import { type AxiosProgressEvent } from "axios";
 import qs from "qs";
 
+import { MonitLogChunk } from "./monit/monit.types";
 import {
   QueryInput,
   QueryOutput,
@@ -814,6 +815,29 @@ export namespace QgridService {
     useRefreshable(
       useQuery({
         ...healthQueryOptions(),
+        ...options,
+      }),
+    );
+}
+
+export namespace MonitService {
+  export async function monitLogs(cursor?: number): Promise<MonitLogChunk> {
+    return fetch({
+      method: "GET",
+      url: `/api/monit/monitLogs?${qs.stringify({ cursor })}`,
+    });
+  }
+
+  export const monitLogsQueryOptions = (cursor?: number) =>
+    queryOptions({
+      queryKey: ["Monit", "monitLogs", cursor],
+      queryFn: () => monitLogs(cursor),
+    });
+
+  export const useMonitLogs = (cursor?: number, options?: { enabled?: boolean }) =>
+    useRefreshable(
+      useQuery({
+        ...monitLogsQueryOptions(cursor),
         ...options,
       }),
     );

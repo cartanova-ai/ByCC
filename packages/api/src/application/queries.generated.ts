@@ -92,3 +92,8 @@ export namespace QgridService {
   export const health = (): SSRQuery =>
     createSSRQuery("QgridFrame", "health", [], ["Qgrid", "health"]);
 }
+
+export namespace MonitService {
+  export const monitLogs = (cursor?: number): SSRQuery =>
+    createSSRQuery("MonitFrame", "monitLogs", [cursor], ["Monit", "monitLogs"]);
+}
