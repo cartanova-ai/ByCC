@@ -49,6 +49,31 @@ qgrid-specific behavior is controlled through `providerOptions.qgrid`. Explain t
 
 `providerOptions.qgrid` does not currently support `projectName` or `project_name`. Prefer `QGRID_PROJECT_NAME` for the default project label; use config `projectName` only when a caller needs to override that default.
 
+## OpenAI/Codex Fast mode
+
+qgrid supports Codex Fast mode per request through `providerOptions.qgrid.serviceTier`. Pass `"fast"`; qgrid forwards it through the OpenAI route to Codex `turn/start`, and Codex normalizes the legacy `fast` value to the upstream `priority` service tier.
+
+```ts
+const result = await generateText({
+  model: qgrid("openai/gpt-5.6-terra"),
+  prompt,
+  providerOptions: {
+    qgrid: {
+      serviceTier: "fast",
+    },
+  },
+});
+```
+
+Fast mode contract:
+
+- It is OpenAI/Codex-only. Do not send it to `anthropic/*` models.
+- It works on both `generateText` and `streamText`; image generation remains non-stream for unrelated reasons.
+- Omit `serviceTier` for normal/default routing. qgrid's current API accepts `"fast"` and `"flex"`; callers should not send Codex's normalized `"priority"` value directly.
+- qgrid is a pass-through for this selection. Codex applies the tier only when its Fast mode feature is enabled and the selected model advertises support; otherwise Codex can omit the unsupported tier.
+- Fast mode changes upstream service-tier routing, not qgrid worker capacity. It does not change WPT, client concurrency, queue behavior, or worker autoscaling.
+- Do not promise a fixed latency improvement. Verify TTFT, duration, throughput, and quota consumption with a workload-specific A/B test.
+
 ## Request construction
 
 The provider sends `POST /api/qgrid/query` for generate and `prepareStream` plus SSE for stream.
