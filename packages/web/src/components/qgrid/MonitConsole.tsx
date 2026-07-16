@@ -249,53 +249,53 @@ export function MonitConsole({
                   {vitals.openaiQueueLength}
                 </span>
               </span>
-              <span>
-                anthropic tokens{" "}
-                <span className="font-mono text-sand-800">{vitals.anthropicTokenCount}</span>
-              </span>
             </>
           )}
         </div>
       )}
 
-      {vitals && vitals.openaiWorkersByToken.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-sand-100 px-4 py-2 sm:px-5">
-          <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-sand-400">
-            workers / token
-          </span>
-          {vitals.openaiWorkersByToken.map((token) => {
-            // min 미달 = 워커가 죽고 보충되지 않은 상태 — 눈에 띄어야 한다
-            const deficit = info !== undefined && token.count < info.openai.minWorkersPerToken;
-            return (
-              <span
-                key={token.name}
-                title={
-                  deficit
-                    ? `${token.name}: ${token.count} workers — below configured floor (${info.openai.minWorkersPerToken})`
-                    : `${token.name}: ${token.count} workers`
-                }
-                className={clsx(
-                  "inline-flex items-baseline gap-1.5 rounded-md border px-2 py-1",
-                  deficit ? "border-caution-400/60 bg-caution-400/10" : "border-sand-200 bg-white",
-                )}
-              >
-                <span className="font-mono text-[11px] text-sand-600">
-                  {token.name.split("/").pop()}
+      {vitals &&
+        (vitals.openaiWorkersByToken.length > 0 || vitals.anthropicTokenNames.length > 0) && (
+          <div className="space-y-1.5 border-b border-sand-100 px-4 py-2.5 sm:px-5">
+            {vitals.openaiWorkersByToken.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-[4.5rem] shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-sand-400">
+                  openai
                 </span>
-                <span
-                  className={clsx(
-                    "font-mono text-[13px] font-semibold tracking-[-0.02em]",
-                    deficit ? "text-caution-500" : "text-sand-900",
-                  )}
-                >
-                  {token.count}
+                {vitals.openaiWorkersByToken.map((token) => (
+                  <span
+                    key={token.name}
+                    title={`${token.name}: ${token.count} workers`}
+                    className="inline-flex items-baseline gap-1.5 rounded-md border border-sand-200 bg-white px-2 py-1"
+                  >
+                    <span className="font-mono text-[11px] text-sand-600">
+                      {token.name.split("/").pop()}
+                    </span>
+                    <span className="font-mono text-[13px] font-semibold tracking-[-0.02em] text-sand-900">
+                      {token.count}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+            {vitals.anthropicTokenNames.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-[4.5rem] shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-sand-400">
+                  anthropic
                 </span>
-                {deficit && <span className="text-[10px] text-caution-500">▼</span>}
-              </span>
-            );
-          })}
-        </div>
-      )}
+                {vitals.anthropicTokenNames.map((name) => (
+                  <span
+                    key={name}
+                    title={name}
+                    className="inline-flex items-baseline rounded-md border border-sand-200 bg-white px-2 py-1 font-mono text-[11px] text-sand-600"
+                  >
+                    {name.split("/").pop()}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
       <div className="relative">
         <div

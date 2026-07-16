@@ -122,7 +122,10 @@ describe("MonitFrame.monitLogs", () => {
         { name: "openai/nk", count: 13 },
       ],
     } as never;
-    QgridDispatcher.anthropicDispatcher = { tokenCount: 8 } as never;
+    QgridDispatcher.anthropicDispatcher = {
+      tokenCount: 8,
+      tokenNames: ["anthropic/haze", "anthropic/noa"],
+    } as never;
     try {
       const chunk = await MonitFrame.monitLogs();
       expect(chunk.vitals).toEqual({
@@ -134,6 +137,7 @@ describe("MonitFrame.monitLogs", () => {
           { name: "openai/nk", count: 13 },
         ],
         anthropicTokenCount: 8,
+        anthropicTokenNames: ["anthropic/haze", "anthropic/noa"],
       });
     } finally {
       QgridDispatcher.openaiDispatcher = null;
@@ -144,6 +148,7 @@ describe("MonitFrame.monitLogs", () => {
     expect(empty.vitals.openaiWorkerCount).toBe(0);
     expect(empty.vitals.openaiWorkersByToken).toEqual([]);
     expect(empty.vitals.anthropicTokenCount).toBe(0);
+    expect(empty.vitals.anthropicTokenNames).toEqual([]);
   });
 });
 

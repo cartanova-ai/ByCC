@@ -92,6 +92,11 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     return this.tokenPool.size;
   }
 
+  // Monit 표시용 — 풀에 있는 토큰 이름 스냅샷 (이름순 정렬)
+  get tokenNames(): string[] {
+    return [...this.tokenPool.values()].map((token) => token.name).toSorted();
+  }
+
   // DB active anthropic 토큰 목록으로 풀을 재동기화한다(periodic reconcile/재연결용).
   // LISTEN/NOTIFY 가 끊긴 동안 유실된 추가/삭제/비활성화를 DB 기준으로 다시 맞춘다.
   // 이벤트 핸들러를 재사용해 풀 갱신이 일관되게 적용되도록 한다:

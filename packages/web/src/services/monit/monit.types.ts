@@ -29,6 +29,8 @@ export const MonitVitals = z.object({
   // 토큰별 현재 워커 수 — autoscale 로 늘고 주는 것을 토큰 단위로 본다
   openaiWorkersByToken: z.array(z.object({ name: z.string(), count: z.number() })),
   anthropicTokenCount: z.number(),
+  // fresh-spawn 이라 워커 수는 없다 — 풀에 어떤 토큰이 있는지만 보여준다
+  anthropicTokenNames: z.array(z.string()),
 });
 export type MonitVitals = z.infer<typeof MonitVitals>;
 

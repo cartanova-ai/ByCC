@@ -56,6 +56,7 @@ function currentVitals(): MonitVitals {
     openaiQueueLength: QgridDispatcher.openaiDispatcher?.queueLength ?? 0,
     openaiWorkersByToken: QgridDispatcher.openaiDispatcher?.workerCountsByToken ?? [],
     anthropicTokenCount: QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0,
+    anthropicTokenNames: QgridDispatcher.anthropicDispatcher?.tokenNames ?? [],
   };
 }
 
