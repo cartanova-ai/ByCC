@@ -17,7 +17,7 @@ import {
 import { type AxiosProgressEvent } from "axios";
 import qs from "qs";
 
-import { MonitLogChunk } from "./monit/monit.types";
+import { MonitLogChunk, MonitServerInfo } from "./monit/monit.types";
 import {
   QueryInput,
   QueryOutput,
@@ -838,6 +838,27 @@ export namespace MonitService {
     useRefreshable(
       useQuery({
         ...monitLogsQueryOptions(cursor),
+        ...options,
+      }),
+    );
+
+  export async function monitInfo(): Promise<MonitServerInfo> {
+    return fetch({
+      method: "GET",
+      url: `/api/monit/monitInfo`,
+    });
+  }
+
+  export const monitInfoQueryOptions = () =>
+    queryOptions({
+      queryKey: ["Monit", "monitInfo"],
+      queryFn: () => monitInfo(),
+    });
+
+  export const useMonitInfo = (options?: { enabled?: boolean }) =>
+    useRefreshable(
+      useQuery({
+        ...monitInfoQueryOptions(),
         ...options,
       }),
     );

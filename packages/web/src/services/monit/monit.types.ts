@@ -28,3 +28,17 @@ export const MonitLogChunk = z.object({
   dropped: z.number(),
 });
 export type MonitLogChunk = z.infer<typeof MonitLogChunk>;
+
+// 프로세스 단위 정적 환경 정보 — 어느 서버/DB 를 보고 있는지 한눈에 확인하는 용도.
+// 비밀값(DB 비밀번호, 토큰)은 절대 싣지 않는다.
+export const MonitServerInfo = z.object({
+  serverUrl: z.string(),
+  dbHost: z.string(),
+  dbName: z.string(),
+  openai: z.object({
+    minWorkersPerToken: z.number(),
+    maxWorkersPerToken: z.number(),
+    autoscale: z.boolean(),
+  }),
+});
+export type MonitServerInfo = z.infer<typeof MonitServerInfo>;

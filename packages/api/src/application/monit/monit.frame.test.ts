@@ -111,3 +111,26 @@ describe("MonitFrame.monitLogs", () => {
     expect(requestLogSaveMock).not.toHaveBeenCalled();
   });
 });
+
+describe("MonitFrame.monitInfo", () => {
+  it("returns the active DB connection, server url, and pool bounds without secrets", async () => {
+    vi.stubEnv("HOST", "0.0.0.0");
+    vi.stubEnv("PORT", "45000");
+    vi.stubEnv("QGRID_DB_HOST", "db.internal");
+    vi.stubEnv("QGRID_DB_NAME", "qgrid_dev");
+
+    // 단위 테스트에선 DB 미초기화 → env 폴백 경로. 부팅된 서버에선 활성 knex 설정을 읽는다
+    // (dev 서버의 통합 테스트 러너가 env 를 오염시키는 문제 회피 — curl 로 별도 검증).
+    const info = await MonitFrame.monitInfo();
+    expect(info.serverUrl).toBe("http://0.0.0.0:45000");
+    expect(info.dbHost).toBe("db.internal");
+    expect(info.dbName).toBe("qgrid_dev");
+    expect(info.openai.minWorkersPerToken).toBeGreaterThan(0);
+    expect(info.openai.maxWorkersPerToken).toBeGreaterThanOrEqual(info.openai.minWorkersPerToken);
+    // allowlist — 연결 객체의 password/user 등은 절대 실리지 않는다.
+    expect(Object.keys(info).toSorted()).toEqual(["dbHost", "dbName", "openai", "serverUrl"]);
+    expect(JSON.stringify(info)).not.toContain("password");
+
+    vi.unstubAllEnvs();
+  });
+});

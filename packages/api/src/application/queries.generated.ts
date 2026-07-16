@@ -96,4 +96,7 @@ export namespace QgridService {
 export namespace MonitService {
   export const monitLogs = (cursor?: number): SSRQuery =>
     createSSRQuery("MonitFrame", "monitLogs", [cursor], ["Monit", "monitLogs"]);
+
+  export const monitInfo = (): SSRQuery =>
+    createSSRQuery("MonitFrame", "monitInfo", [], ["Monit", "monitInfo"]);
 }
