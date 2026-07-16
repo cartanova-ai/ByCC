@@ -4,6 +4,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/tokens": "Tokens",
   "/logs": "Request Logs",
+  "/monit": "Monit",
 };
 
 function getBreadcrumb(pathname: string): {

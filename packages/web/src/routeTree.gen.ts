@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TokensRouteImport } from './routes/tokens'
+import { Route as MonitRouteImport } from './routes/monit'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RequestsShowRouteImport } from './routes/requests/show'
@@ -17,6 +18,11 @@ import { Route as RequestsShowRouteImport } from './routes/requests/show'
 const TokensRoute = TokensRouteImport.update({
   id: '/tokens',
   path: '/tokens',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MonitRoute = MonitRouteImport.update({
+  id: '/monit',
+  path: '/monit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LogsRoute = LogsRouteImport.update({
@@ -38,12 +44,14 @@ const RequestsShowRoute = RequestsShowRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/logs': typeof LogsRoute
+  '/monit': typeof MonitRoute
   '/tokens': typeof TokensRoute
   '/requests/show': typeof RequestsShowRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/logs': typeof LogsRoute
+  '/monit': typeof MonitRoute
   '/tokens': typeof TokensRoute
   '/requests/show': typeof RequestsShowRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/logs': typeof LogsRoute
+  '/monit': typeof MonitRoute
   '/tokens': typeof TokensRoute
   '/requests/show': typeof RequestsShowRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/logs' | '/tokens' | '/requests/show'
+  fullPaths: '/' | '/logs' | '/monit' | '/tokens' | '/requests/show'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/logs' | '/tokens' | '/requests/show'
-  id: '__root__' | '/' | '/logs' | '/tokens' | '/requests/show'
+  to: '/' | '/logs' | '/monit' | '/tokens' | '/requests/show'
+  id: '__root__' | '/' | '/logs' | '/monit' | '/tokens' | '/requests/show'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LogsRoute: typeof LogsRoute
+  MonitRoute: typeof MonitRoute
   TokensRoute: typeof TokensRoute
   RequestsShowRoute: typeof RequestsShowRoute
 }
@@ -76,6 +86,13 @@ declare module '@tanstack/react-router' {
       path: '/tokens'
       fullPath: '/tokens'
       preLoaderRoute: typeof TokensRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/monit': {
+      id: '/monit'
+      path: '/monit'
+      fullPath: '/monit'
+      preLoaderRoute: typeof MonitRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/logs': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LogsRoute: LogsRoute,
+  MonitRoute: MonitRoute,
   TokensRoute: TokensRoute,
   RequestsShowRoute: RequestsShowRoute,
 }

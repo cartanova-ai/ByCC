@@ -3,6 +3,7 @@ import type React from "react";
 import ActivityIcon from "~icons/lucide/file-text";
 import GaugeIcon from "~icons/lucide/home";
 import KeyRoundIcon from "~icons/lucide/key-round";
+import TerminalIcon from "~icons/lucide/terminal";
 
 interface MenuSection {
   label: string;
@@ -19,6 +20,7 @@ const sections: MenuSection[] = [
     items: [
       { title: "Tokens", path: "/tokens", icon: KeyRoundIcon },
       { title: "Request Logs", path: "/logs", icon: ActivityIcon },
+      { title: "Monit", path: "/monit", icon: TerminalIcon },
     ],
   },
 ];
