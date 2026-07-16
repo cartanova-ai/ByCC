@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
 
+import { monitLogSink } from "./application/monit/log-buffer";
 import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
@@ -81,12 +82,14 @@ export default defineConfig({
           categoryTruncate: "middle",
         }),
       }),
+      // Monit 탭용 in-memory ring buffer. 포맷은 sink 별 — 콘솔 출력은 그대로다.
+      monit: monitLogSink,
     },
     loggers: [
       // qgrid 로그 (요청 분배, oauth/usage API)
-      { category: ["qgrid"], sinks: ["console"], lowestLevel: "info" },
+      { category: ["qgrid"], sinks: ["console", "monit"], lowestLevel: "info" },
       // sonamu 로그는 warning 이상만
-      { category: ["sonamu"], sinks: ["console"], lowestLevel: "warning" },
+      { category: ["sonamu"], sinks: ["console", "monit"], lowestLevel: "warning" },
       // fastify 로그 차단
       { category: ["fastify"], sinks: [], lowestLevel: "fatal" },
     ],
