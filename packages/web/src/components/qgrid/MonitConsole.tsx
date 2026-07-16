@@ -253,18 +253,47 @@ export function MonitConsole({
                 anthropic tokens{" "}
                 <span className="font-mono text-sand-800">{vitals.anthropicTokenCount}</span>
               </span>
-              {vitals.openaiWorkersByToken.length > 0 && (
-                <span>
-                  per token{" "}
-                  <span className="font-mono text-sand-800">
-                    {vitals.openaiWorkersByToken
-                      .map((token) => `${token.name.split("/").pop()} ${token.count}`)
-                      .join(" · ")}
-                  </span>
-                </span>
-              )}
             </>
           )}
+        </div>
+      )}
+
+      {vitals && vitals.openaiWorkersByToken.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-sand-100 px-4 py-2 sm:px-5">
+          <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-sand-400">
+            workers / token
+          </span>
+          {vitals.openaiWorkersByToken.map((token) => {
+            // min 미달 = 워커가 죽고 보충되지 않은 상태 — 눈에 띄어야 한다
+            const deficit = info !== undefined && token.count < info.openai.minWorkersPerToken;
+            return (
+              <span
+                key={token.name}
+                title={
+                  deficit
+                    ? `${token.name}: ${token.count} workers — below configured floor (${info.openai.minWorkersPerToken})`
+                    : `${token.name}: ${token.count} workers`
+                }
+                className={clsx(
+                  "inline-flex items-baseline gap-1.5 rounded-md border px-2 py-1",
+                  deficit ? "border-caution-400/60 bg-caution-400/10" : "border-sand-200 bg-white",
+                )}
+              >
+                <span className="font-mono text-[11px] text-sand-600">
+                  {token.name.split("/").pop()}
+                </span>
+                <span
+                  className={clsx(
+                    "font-mono text-[13px] font-semibold tracking-[-0.02em]",
+                    deficit ? "text-caution-500" : "text-sand-900",
+                  )}
+                >
+                  {token.count}
+                </span>
+                {deficit && <span className="text-[10px] text-caution-500">▼</span>}
+              </span>
+            );
+          })}
         </div>
       )}
 
