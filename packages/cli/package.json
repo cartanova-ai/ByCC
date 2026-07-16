@@ -1,6 +1,6 @@
 {
   "name": "@cartanova/qgrid-cli",
-  "version": "2.4.6",
+  "version": "2.4.7",
   "repository": {
     "type": "git",
     "url": "https://github.com/cartanova-ai/qgrid"
@@ -46,7 +46,7 @@
     "knex": "^3.1.0",
     "pg": "^8.16.3",
     "radashi": "^12.2.0",
-    "sonamu": "^0.9.4",
+    "sonamu": "0.9.9",
     "typescript": "5.9.3",
     "zod": "^4.3.6"
   },
