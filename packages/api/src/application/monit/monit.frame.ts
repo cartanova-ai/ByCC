@@ -7,8 +7,9 @@
 import { api, BaseFrameClass, DB } from "sonamu";
 
 import { resolveOpenAIWorkerPoolConfig } from "../../utils/providers/openai/openai-dispatcher";
+import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
 import { monitLogBuffer } from "./log-buffer";
-import { type MonitLogChunk, type MonitServerInfo } from "./monit.types";
+import { type MonitLogChunk, type MonitServerInfo, type MonitVitals } from "./monit.types";
 
 // 응답당 엔트리 상한 — 폴링 클라이언트는 다음 폴에서 이어서 따라잡는다.
 const RESPONSE_ENTRY_LIMIT = 1_000;
@@ -23,6 +24,7 @@ class MonitFrameClass extends BaseFrameClass {
     return {
       processStartedAt: monitLogBuffer.processStartedAt,
       ...monitLogBuffer.after(cursor, RESPONSE_ENTRY_LIMIT),
+      vitals: currentVitals(),
     };
   }
 
@@ -44,6 +46,16 @@ class MonitFrameClass extends BaseFrameClass {
       },
     };
   }
+}
+
+// dispatcher 미초기화(부팅 직후) 시 0 으로 응답한다 — 가벼운 스냅샷이라 오류로 만들지 않는다.
+function currentVitals(): MonitVitals {
+  return {
+    openaiWorkerCount: QgridDispatcher.openaiDispatcher?.workerCount ?? 0,
+    openaiReadyWorkerCount: QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0,
+    openaiQueueLength: QgridDispatcher.openaiDispatcher?.queueLength ?? 0,
+    anthropicTokenCount: QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0,
+  };
 }
 
 // 실제 활성 knex 연결에서 읽는다 — dev 서버의 통합 테스트 러너가 process.env.QGRID_DB_NAME 을

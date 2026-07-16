@@ -7,6 +7,7 @@ vi.mock("../request-log/request-log.model", () => ({
   MICRO_USD: 1_000_000,
 }));
 
+import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
 import { monitLogBuffer } from "./log-buffer";
 import { MonitFrame } from "./monit.frame";
 
@@ -109,6 +110,31 @@ describe("MonitFrame.monitLogs", () => {
     push("a line");
     await MonitFrame.monitLogs();
     expect(requestLogSaveMock).not.toHaveBeenCalled();
+  });
+
+  it("piggybacks live vitals on every chunk, zeroed before dispatchers boot", async () => {
+    QgridDispatcher.openaiDispatcher = {
+      workerCount: 25,
+      readyWorkerCount: 24,
+      queueLength: 3,
+    } as never;
+    QgridDispatcher.anthropicDispatcher = { tokenCount: 8 } as never;
+    try {
+      const chunk = await MonitFrame.monitLogs();
+      expect(chunk.vitals).toEqual({
+        openaiWorkerCount: 25,
+        openaiReadyWorkerCount: 24,
+        openaiQueueLength: 3,
+        anthropicTokenCount: 8,
+      });
+    } finally {
+      QgridDispatcher.openaiDispatcher = null;
+      QgridDispatcher.anthropicDispatcher = null;
+    }
+
+    const empty = await MonitFrame.monitLogs();
+    expect(empty.vitals.openaiWorkerCount).toBe(0);
+    expect(empty.vitals.anthropicTokenCount).toBe(0);
   });
 });
 

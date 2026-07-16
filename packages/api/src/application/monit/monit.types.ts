@@ -15,12 +15,23 @@ export const MonitLogEntry = z.object({
 });
 export type MonitLogEntry = z.infer<typeof MonitLogEntry>;
 
+// 폴링에 편승하는 라이브 카운트 — 깊은 워커/큐 진단은 audit 대시보드(별도)의 몫이고,
+// 여기는 "지금 몇 개 돌고 큐가 쌓이나"만 가볍게 답한다.
+export const MonitVitals = z.object({
+  openaiWorkerCount: z.number(),
+  openaiReadyWorkerCount: z.number(),
+  openaiQueueLength: z.number(),
+  anthropicTokenCount: z.number(),
+});
+export type MonitVitals = z.infer<typeof MonitVitals>;
+
 export const MonitLogChunk = z.object({
   processStartedAt: z.number(),
   entries: z.array(MonitLogEntry),
   nextCursor: z.number(),
   // 호출자의 커서가 buffer eviction 에 밀려 유실된 라인 수
   dropped: z.number(),
+  vitals: MonitVitals,
 });
 export type MonitLogChunk = z.infer<typeof MonitLogChunk>;
 

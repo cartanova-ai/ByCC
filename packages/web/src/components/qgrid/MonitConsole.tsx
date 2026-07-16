@@ -75,9 +75,10 @@ export function MonitConsole({
     refetchInterval: POLL_INTERVAL_MS,
     retry: false,
   });
-  // 프로세스 정적 정보 — 폴링 없이 1회.
+  // 프로세스 정적 정보 — 폴링 없이 1회. 라이브 카운트는 로그 폴링에 편승해 도착한다.
   const infoQuery = useQuery({ ...MonitService.monitInfoQueryOptions(), staleTime: Infinity });
   const info = infoQuery.data;
+  const vitals = query.data?.vitals;
 
   useEffect(() => {
     const chunk = query.data;
@@ -226,6 +227,34 @@ export function MonitConsole({
             </span>{" "}
             {info.openai.autoscale ? "autoscale" : "fixed"}
           </span>
+          {vitals && (
+            <>
+              <span>
+                openai workers{" "}
+                <span className="font-mono text-sand-800">
+                  {vitals.openaiReadyWorkerCount}/{vitals.openaiWorkerCount}
+                </span>{" "}
+                ready
+              </span>
+              <span>
+                queue{" "}
+                <span
+                  className={clsx(
+                    "font-mono",
+                    vitals.openaiQueueLength > 0
+                      ? "font-semibold text-caution-500"
+                      : "text-sand-800",
+                  )}
+                >
+                  {vitals.openaiQueueLength}
+                </span>
+              </span>
+              <span>
+                anthropic tokens{" "}
+                <span className="font-mono text-sand-800">{vitals.anthropicTokenCount}</span>
+              </span>
+            </>
+          )}
         </div>
       )}
 
