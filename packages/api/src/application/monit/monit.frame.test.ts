@@ -117,6 +117,10 @@ describe("MonitFrame.monitLogs", () => {
       workerCount: 25,
       readyWorkerCount: 24,
       queueLength: 3,
+      workerCountsByToken: [
+        { name: "openai/haze", count: 12 },
+        { name: "openai/nk", count: 13 },
+      ],
     } as never;
     QgridDispatcher.anthropicDispatcher = { tokenCount: 8 } as never;
     try {
@@ -125,6 +129,10 @@ describe("MonitFrame.monitLogs", () => {
         openaiWorkerCount: 25,
         openaiReadyWorkerCount: 24,
         openaiQueueLength: 3,
+        openaiWorkersByToken: [
+          { name: "openai/haze", count: 12 },
+          { name: "openai/nk", count: 13 },
+        ],
         anthropicTokenCount: 8,
       });
     } finally {
@@ -134,6 +142,7 @@ describe("MonitFrame.monitLogs", () => {
 
     const empty = await MonitFrame.monitLogs();
     expect(empty.vitals.openaiWorkerCount).toBe(0);
+    expect(empty.vitals.openaiWorkersByToken).toEqual([]);
     expect(empty.vitals.anthropicTokenCount).toBe(0);
   });
 });

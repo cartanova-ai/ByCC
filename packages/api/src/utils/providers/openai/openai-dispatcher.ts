@@ -1169,4 +1169,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   get queueLength(): number {
     return this.queue.length;
   }
+
+  // Monit 표시용 — 토큰별 현재 워커 수 스냅샷 (이름순 정렬)
+  get workerCountsByToken(): Array<{ name: string; count: number }> {
+    return [...this.workerPool.entries()]
+      .map(([tokenId, workers]) => ({
+        name: workers[0]?.tokenName ?? `token ${tokenId}`,
+        count: workers.length,
+      }))
+      .filter((entry) => entry.count > 0)
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+  }
 }

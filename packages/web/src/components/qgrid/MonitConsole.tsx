@@ -253,6 +253,16 @@ export function MonitConsole({
                 anthropic tokens{" "}
                 <span className="font-mono text-sand-800">{vitals.anthropicTokenCount}</span>
               </span>
+              {vitals.openaiWorkersByToken.length > 0 && (
+                <span>
+                  per token{" "}
+                  <span className="font-mono text-sand-800">
+                    {vitals.openaiWorkersByToken
+                      .map((token) => `${token.name.split("/").pop()} ${token.count}`)
+                      .join(" · ")}
+                  </span>
+                </span>
+              )}
             </>
           )}
         </div>

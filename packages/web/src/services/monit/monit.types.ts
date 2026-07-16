@@ -26,6 +26,8 @@ export const MonitVitals = z.object({
   openaiWorkerCount: z.number(),
   openaiReadyWorkerCount: z.number(),
   openaiQueueLength: z.number(),
+  // 토큰별 현재 워커 수 — autoscale 로 늘고 주는 것을 토큰 단위로 본다
+  openaiWorkersByToken: z.array(z.object({ name: z.string(), count: z.number() })),
   anthropicTokenCount: z.number(),
 });
 export type MonitVitals = z.infer<typeof MonitVitals>;

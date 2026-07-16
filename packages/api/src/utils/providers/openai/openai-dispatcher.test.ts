@@ -232,6 +232,22 @@ describe("OpenAIDispatcher worker capacity", () => {
   });
 });
 
+describe("OpenAIDispatcher monit stats", () => {
+  it("reports worker counts grouped by token name", () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig({ autoscale: false }), () => 64);
+    addWorkers(dispatcher, [
+      fakeWorker({ tokenId: 1, tokenName: "openai/nk" }),
+      fakeWorker({ tokenId: 1, tokenName: "openai/nk", workerIndex: 1 }),
+      fakeWorker({ tokenId: 2, tokenName: "openai/haze" }),
+    ]);
+
+    expect(dispatcher.workerCountsByToken).toEqual([
+      { name: "openai/haze", count: 1 },
+      { name: "openai/nk", count: 2 },
+    ]);
+  });
+});
+
 describe("OpenAIDispatcher autoscaling", () => {
   it("scales six active tokens from 5 to 15 workers per token", async () => {
     const dispatcher = new OpenAIDispatcher(
