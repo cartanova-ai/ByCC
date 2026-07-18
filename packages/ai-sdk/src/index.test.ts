@@ -453,6 +453,63 @@ describe("qgrid AI SDK provider", () => {
     });
   });
 
+  it("exposes Fable refusal fallback routing and cost provenance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/query")) {
+          return new Response(
+            JSON.stringify({
+              text: "served by opus",
+              content: [{ type: "text", text: "served by opus" }],
+              finishReason: "stop",
+              model: "claude-opus-4-8",
+              requestedModel: "claude-fable-5",
+              modelFallbacks: [
+                {
+                  trigger: "refusal",
+                  fromModel: "claude-fable-5",
+                  toModel: "claude-opus-4-8",
+                  category: "cyber",
+                },
+              ],
+              usage: {
+                ...usage,
+                cache_creation_5m_input_tokens: 2,
+                cache_creation_1h_input_tokens: 7,
+              },
+              durationMs: 50,
+              costUsd: 0.003,
+              costSource: "provider",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const result = await qgrid("anthropic/claude-fable-5").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    } as never);
+
+    expect(result.response?.modelId).toBe("claude-opus-4-8");
+    expect(result.providerMetadata?.qgrid).toMatchObject({
+      model: "claude-opus-4-8",
+      requestedModel: "claude-fable-5",
+      costSource: "provider",
+      cacheCreation5mInputTokens: 2,
+      cacheCreation1hInputTokens: 7,
+      modelFallbacks: [
+        {
+          trigger: "refusal",
+          fromModel: "claude-fable-5",
+          toModel: "claude-opus-4-8",
+        },
+      ],
+    });
+  });
+
   it("does not send logMode for non-tool doStream (server treats as auto)", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
@@ -548,6 +605,10 @@ describe("qgrid AI SDK provider", () => {
       expect(await reader.read()).toMatchObject({ done: false, value: { type: "text-start" } });
       expect(await reader.read()).toMatchObject({ done: false, value: { type: "text-delta" } });
       expect(await reader.read()).toMatchObject({ done: false, value: { type: "text-end" } });
+      expect(await reader.read()).toMatchObject({
+        done: false,
+        value: { type: "response-metadata", modelId: "claude-opus-4-8" },
+      });
       expect(await reader.read()).toMatchObject({ done: false, value: { type: "finish" } });
       expect(await reader.read()).toEqual({ done: true, value: undefined });
     }

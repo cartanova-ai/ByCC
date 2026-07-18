@@ -78,6 +78,22 @@ function setThreadCoord(sessionKey: string, coord: QgridThreadCoord): void {
   threadCoordStore.set(sessionKey, { coord, expiresAt: Date.now() + THREAD_COORD_TTL_MS });
 }
 
+function qgridProviderMetadata(data: QueryOutput) {
+  return {
+    qgrid: {
+      model: data.model,
+      requestedModel: data.requestedModel ?? data.model,
+      modelFallbacks: data.modelFallbacks ?? [],
+      tokenName: data.tokenName ?? null,
+      durationMs: data.durationMs,
+      costUsd: data.costUsd,
+      costSource: data.costSource,
+      cacheCreation5mInputTokens: data.usage.cache_creation_5m_input_tokens ?? null,
+      cacheCreation1hInputTokens: data.usage.cache_creation_1h_input_tokens ?? null,
+    },
+  };
+}
+
 function reusableSessionKey(modelId: QgridSupportedModel, sessionKey?: string): string | undefined {
   return modelId.startsWith("anthropic/") ? undefined : sessionKey;
 }
@@ -320,14 +336,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         finishReason,
         usage: toAiSdkUsage(data.usage),
         warnings: [],
-        providerMetadata: {
-          qgrid: {
-            model: data.model,
-            tokenName: data.tokenName ?? null,
-            durationMs: data.durationMs,
-            costUsd: data.costUsd,
-          },
-        },
+        providerMetadata: qgridProviderMetadata(data),
         response: { modelId: data.model },
       };
     },
@@ -508,12 +517,17 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                 }
 
                 controller.enqueue({
+                  type: "response-metadata",
+                  modelId: done.model,
+                });
+                controller.enqueue({
                   type: "finish",
                   finishReason:
                     done.finishReason === "tool-calls"
                       ? { unified: "tool-calls", raw: "tool_call" }
                       : { unified: "stop", raw: "stop" },
                   usage: toAiSdkUsage(done.usage),
+                  providerMetadata: qgridProviderMetadata(done),
                 });
                 streamCompleted = true;
                 controller.close();

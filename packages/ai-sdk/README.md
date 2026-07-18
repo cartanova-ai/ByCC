@@ -139,6 +139,9 @@ The AI SDK manages tool execution; qgrid handles only each turn's LLM call.
 ### Provider Options
 
 All qgrid-specific options go under the `providerOptions.qgrid` namespace. (Not `providerOptions.openai`.)
+AI SDK types the outer `providerOptions` as a generic JSON record, so apply the exported
+`QgridProviderOptions` type to the nested `qgrid` value with `satisfies`. This preserves
+literal inference and catches misspelled or invalid qgrid options at compile time.
 
 ```typescript
 import { generateText } from "ai";
@@ -166,7 +169,7 @@ const { text } = await generateText({
 | `serviceTier` | `string` | OpenAI only | OpenAI/codex service tier |
 | `imageGeneration` | `boolean` | OpenAI only, non-stream | Enables codex's built-in `image_generation` tool (see [below](#image-generation)) |
 | `imageGenerationOptions` | `{ quality?, size? }` | OpenAI only | Image quality/size hints. `quality: "low" \| "medium" \| "high"`, `size: "1024x1024" \| "1024x1536" \| "1536x1024"` (defaults: `medium` / `1536x1024`) |
-| `fallbackModels` | `string[]` | reserved | Reserved for future server-side fallback routing. Not functional yet |
+| `fallbackModels` | `string[]` | reserved | Reserved for future qgrid server-side fallback routing. Not functional yet and unrelated to Claude Code's Fable refusal fallback |
 
 ### Multi-turn prompt cache (sessionKey)
 
@@ -279,6 +282,7 @@ type QgridSupportedModel =
   | "openai/gpt-5.3-codex"
   | "openai/gpt-5.3-codex-spark"
   // Anthropic
+  | "anthropic/claude-fable-5"
   | "anthropic/claude-haiku-4-5"
   | "anthropic/claude-sonnet-4"
   | "anthropic/claude-sonnet-4-5"
@@ -302,6 +306,12 @@ type QgridSupportedModel =
 | `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
 
 All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec is a 1.05M context window with 128K max output, but qgrid runs on the codex app-server subscription path, where all three models report a 372K context window (95% effective — about 353K of usable input) that cannot be raised by configuration. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
+
+`anthropic/claude-fable-5` has a 1M context window and 128K max output. Its standard prices per 1M tokens are $10 input, $1 cache read, $12.50 five-minute cache write, $20 one-hour cache write, and $50 output. qgrid preserves Claude's 5m/1h cache-creation breakdown and prices each TTL separately; only legacy responses without that breakdown fall back to the one-hour TTL automatically selected by Claude Code on subscription OAuth. Fable requires always-on adaptive thinking, so qgrid preserves adaptive thinking for this model while continuing to disable thinking for existing Anthropic models.
+
+Claude Code may automatically retry a Fable safety refusal on Opus 4.8. In that case, the AI SDK response's `response.modelId` and `providerMetadata.qgrid.model` identify Opus as the actual serving model. `providerMetadata.qgrid.requestedModel` remains Fable, and `providerMetadata.qgrid.modelFallbacks` contains the refusal fallback history. The metadata also exposes `costSource` and the 5m/1h cache-write token split.
+
+`openai/gpt-5.3-codex-spark` remains a research preview without final published per-token rates. qgrid therefore reports its generic fallback estimate rather than presenting that estimate as official pricing.
 
 ## Configuration
 

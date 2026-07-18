@@ -24,7 +24,10 @@ export type QgridProviderOptions = {
   reasoningSummary?: "auto" | "concise" | "detailed" | "none";
   /** OpenAI/codex service tier. OpenAI/codex route에서만 적용된다. */
   serviceTier?: string;
-  /** @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록. */
+  /**
+   * @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록.
+   * Claude Code가 처리하는 Fable 5 safety-refusal fallback과는 무관하다.
+   */
   fallbackModels?: string[];
   /**
    * codex 내장 image_generation tool 을 켠다. OpenAI/codex route + non-stream 전용.
@@ -68,6 +71,7 @@ export type QgridSupportedModel =
   | "openai/gpt-5.4-mini"
   | "openai/gpt-5.3-codex"
   | "openai/gpt-5.3-codex-spark"
+  | "anthropic/claude-fable-5"
   | "anthropic/claude-haiku-4-5"
   | "anthropic/claude-sonnet-4"
   | "anthropic/claude-sonnet-4-5"
@@ -91,15 +95,26 @@ export type QueryOutput = {
   >;
   finishReason?: "stop" | "tool-calls";
   model: string;
+  requestedModel?: string;
+  modelFallbacks?: Array<{
+    trigger: "refusal";
+    fromModel: string;
+    toModel: string;
+    category?: string;
+    explanation?: string;
+  }>;
   tokenName?: string;
   usage: {
     input_tokens: number;
     output_tokens: number;
     cache_creation_input_tokens: number;
+    cache_creation_5m_input_tokens?: number;
+    cache_creation_1h_input_tokens?: number;
     cache_read_input_tokens: number;
   };
   durationMs: number;
   costUsd: number;
+  costSource: "provider" | "pricing_table" | "mixed";
   runContext?: { requestLogId?: number; threadCoord?: QgridThreadCoord };
 };
 
@@ -116,10 +131,17 @@ export type AppendStepInput = {
   requestLogId: number;
   stepIndex: number;
   type: "generate" | "tool_call";
+  modelName?: string;
+  requestedModelName?: string;
+  fallbackCount?: number;
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  cacheCreation5mTokens?: number;
+  cacheCreation1hTokens?: number;
+  costUsd?: number;
+  costSource?: "provider" | "pricing_table" | "mixed";
   durationMs?: number;
   finishReason?: string;
   reasoningText?: string;
@@ -166,10 +188,17 @@ export type FinishRunInput = {
   status: "succeeded" | "error" | "aborted";
   response?: string;
   tokenName?: string;
+  modelName?: string;
+  requestedModelName?: string;
+  fallbackCount?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
   totalCacheReadTokens?: number;
   totalCacheCreationTokens?: number;
+  totalCacheCreation5mTokens?: number;
+  totalCacheCreation1hTokens?: number;
+  costUsd?: number;
+  costSource?: "provider" | "pricing_table" | "mixed";
   totalDurationMs?: number;
   history?: string;
   errorMessage?: string;

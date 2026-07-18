@@ -139,6 +139,9 @@ AI SDK가 tool 실행을 관리하고, qgrid는 각 턴의 LLM 호출만 담당�
 ### Provider Options
 
 qgrid 전용 옵션은 전부 `providerOptions.qgrid` 네임스페이스로 전달합니다. (`providerOptions.openai`가 아닙니다)
+AI SDK는 바깥 `providerOptions`를 범용 JSON record로 타입 선언하므로 qgrid 옵션을 자동 추론하지 못합니다.
+따라서 공개 타입 `QgridProviderOptions`를 중첩된 `qgrid` 값에 `satisfies`로 적용하세요. literal 추론을
+유지하면서 qgrid 옵션의 오타와 잘못된 값을 컴파일 타임에 잡을 수 있습니다.
 
 ```typescript
 import { generateText } from "ai";
@@ -166,7 +169,7 @@ const { text } = await generateText({
 | `serviceTier` | `string` | OpenAI 전용 | OpenAI/codex service tier |
 | `imageGeneration` | `boolean` | OpenAI 전용, non-stream | codex 내장 `image_generation` tool 활성화 ([아래](#image-generation) 참조) |
 | `imageGenerationOptions` | `{ quality?, size? }` | OpenAI 전용 | 이미지 품질/크기 힌트. `quality: "low" \| "medium" \| "high"`, `size: "1024x1024" \| "1024x1536" \| "1536x1024"` (기본: `medium` / `1536x1024`) |
-| `fallbackModels` | `string[]` | 예약 | 향후 서버 fallback routing용 예약 필드. 현재 동작하지 않음 |
+| `fallbackModels` | `string[]` | 예약 | 향후 qgrid 서버 fallback routing용 예약 필드. 현재 동작하지 않으며 Claude Code의 Fable refusal fallback과 무관 |
 
 ### 멀티턴 prompt cache (sessionKey)
 
@@ -279,6 +282,7 @@ type QgridSupportedModel =
   | "openai/gpt-5.3-codex"
   | "openai/gpt-5.3-codex-spark"
   // Anthropic
+  | "anthropic/claude-fable-5"
   | "anthropic/claude-haiku-4-5"
   | "anthropic/claude-sonnet-4"
   | "anthropic/claude-sonnet-4-5"
@@ -302,6 +306,12 @@ type QgridSupportedModel =
 | `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
 
 세 모델 모두 `max` reasoning effort를 지원합니다. OpenAI native API 사양은 1.05M context / 128K 최대 출력이지만, qgrid는 codex app-server 구독 경로로 실행되어 세 모델 모두 context window가 372K(95% effective, 실사용 입력 약 353K)로 보고되며 설정으로 올릴 수 없습니다. 입력이 272K tokens를 넘으면 요청 전체에 input 2x, output 1.5x 장문 컨텍스트 할증이 적용되며, cache write는 uncached input 단가의 1.25x입니다.
+
+`anthropic/claude-fable-5`는 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 표준 단가는 input $10, cache read $1, 5분 cache write $12.50, 1시간 cache write $20, output $50입니다. qgrid는 Claude 응답의 5분/1시간 cache creation breakdown을 보존해 TTL별 단가를 각각 적용하며, breakdown이 없는 구버전 응답에서만 Claude Code가 subscription OAuth 경로에 자동 적용하는 1시간 TTL 단가로 fallback합니다. Fable은 adaptive thinking이 항상 켜져 있어야 하므로 qgrid는 이 모델에서만 adaptive thinking을 보존하고, 기존 Anthropic 모델은 계속 thinking을 비활성화합니다.
+
+Claude Code는 Fable의 safety refusal을 Opus 4.8로 자동 재시도할 수 있습니다. 이 경우 AI SDK 응답의 `response.modelId`와 `providerMetadata.qgrid.model`은 실제 serving 모델인 Opus를 가리킵니다. `providerMetadata.qgrid.requestedModel`은 Fable로 유지되고, `providerMetadata.qgrid.modelFallbacks`에 refusal fallback 이력이 담깁니다. 같은 metadata에서 `costSource`와 5분/1시간 cache-write 토큰 분해도 확인할 수 있습니다.
+
+`openai/gpt-5.3-codex-spark`는 아직 token 단가가 확정·공개되지 않은 research preview입니다. 따라서 qgrid는 generic fallback 추정치를 보고하며, 이를 공식 단가로 취급하지 않습니다.
 
 ## 설정
 
