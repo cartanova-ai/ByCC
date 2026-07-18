@@ -28,8 +28,10 @@ Key decisions:
 - `packages/ai-sdk` is the active public SDK. `packages/sdk` is deprecated and should be read only for legacy context.
 - qgrid's AI SDK provider follows the AI SDK `LanguageModelV3` contract. Generic usage belongs to AI SDK docs; qgrid-specific docs should focus on qgrid routing, logging, cache/session behavior, and `providerOptions.qgrid`.
 - qgrid-specific options live under `providerOptions.qgrid`, not under provider-specific namespaces such as `providerOptions.openai`. Consumers should not need to branch on Codex versus Claude internals.
+- AI SDK exposes the outer `providerOptions` as a generic JSON record. `QgridProviderOptions` intentionally types the nested `providerOptions.qgrid` value, and examples should apply `satisfies` there to restore qgrid-specific inference without replacing AI SDK's outer contract.
 - `projectName` is provider config/payload camelCase. `project_name` is the Sonamu/database request-log column. Prefer `QGRID_PROJECT_NAME` as the project-wide default so request logs and metrics remain filterable at volume.
 - `fallbackModels` may exist as a typed future option, but it is not a server wire contract until the server implements fallback routing. Do not forward it as behavior just because the type exists.
+- Fable 5 refusal fallback is an upstream Claude Code safety path to Opus 4.8, not qgrid's reserved `fallbackModels` feature or Claude Code's overload-only `--fallback-model` flag. qgrid observes and reports the actual route and provider cost; it must not retry again.
 - The SDK should stay a thin adapter. Server APIs own request-log lifecycle, provider dispatch, structured-output emulation, and provider runtime details.
 
 ## Tool Calling And Request-Log Lifecycle

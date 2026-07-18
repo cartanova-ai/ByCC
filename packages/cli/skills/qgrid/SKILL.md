@@ -32,12 +32,16 @@ When helping a user set up local `@cartanova/qgrid-ai-sdk`, `createQgridLogger`,
 
 Prefer `QGRID_PROJECT_NAME` as the project-wide default. Use config `projectName` only for a deliberate per-call/per-provider override. Do not add `projectName` or `project_name` under `providerOptions.qgrid`; current code does not read it there.
 
+When writing AI SDK examples or setup code, import the public `QgridProviderOptions` type and apply `satisfies QgridProviderOptions` to the value under `providerOptions.qgrid`. AI SDK types the outer `providerOptions` as a generic JSON record, so it cannot infer qgrid's option names and values by itself. `QgridProviderOptions` is the inner qgrid namespace type, not the outer record type.
+
 ## Non-Negotiable Boundaries
 
 - Use `packages/ai-sdk` as the active public SDK surface.
 - Treat `packages/sdk` as deprecated. Read it only for legacy context or migration clues. Do not add new examples or features on top of it unless explicitly asked for legacy work.
 - Route provider models by prefix: `openai/*` goes to the OpenAI Codex runtime, `anthropic/*` goes to the Anthropic Claude Code runtime. Prefix-less model fallback is not implemented.
+- Treat Fable 5 safety fallback as upstream Claude Code behavior, not qgrid routing: a classifier refusal can retry on Opus 4.8. Do not add a second qgrid retry. Preserve requested Fable versus actual serving Opus, fallback history, and provider-reported cost; a fresh Claude Code process means the fallback is not sticky across qgrid requests.
 - Treat dashboard work as Sonamu API/model/generated-client/web work, not isolated frontend work.
+- Never hand-author migration files for Sonamu-managed schema. Change the entity definition, inspect `sonamu migrate status`, and create migration files with `pnpm --dir packages/api sonamu migrate generate`. Inspect the generated files before applying them. If Sonamu cannot express a required schema change, stop and ask rather than silently replacing its workflow with a custom migration.
 - Keep OpenAI Codex built-in tools, apps, plugins, skills, web search, shell, and environment instruction blocks disabled unless the user explicitly asks for agentic Codex behavior.
 - Treat OpenAI image generation as an opt-in Codex `image_generation` tool path. Inspect current code before modifying it; it is not a direct Images API call and its image cost is an estimate.
 

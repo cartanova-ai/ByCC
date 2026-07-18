@@ -21,6 +21,19 @@ qgrid dashboard work is usually a Sonamu API/model/generated-client/web change, 
 - Web components under `packages/web/src/components/qgrid` consume generated API shapes.
 - The main dashboard sidebar version should stay synced to `packages/cli/package.json`. `packages/web/vite.config.ts` reads that package version and exposes it as `__QGRID_CLI_VERSION__`; `Sidebar.tsx` displays it.
 
+## Migration workflow
+
+Sonamu entity definitions are the source of truth for managed database schema.
+
+1. Change the relevant `*.entity.json` files.
+2. Run `pnpm --dir packages/api sonamu migrate status` and inspect `preparedCodes`.
+3. Run `pnpm --dir packages/api sonamu migrate generate`.
+4. Inspect the generated, table-scoped migration files without rewriting them by hand.
+5. Apply them through Sonamu's migration target flow or qgrid's startup migration runner.
+6. Re-run migration status and require `pending: []` and `preparedCodes: []`.
+
+Do not hand-author a migration that Sonamu can derive from entity changes. If generation cannot represent the required operation, stop and make the exception explicit before changing migration code or database state. Never delete or edit a migration that has already shipped to another environment.
+
 ## Request log dashboard
 
 Request log changes usually touch:

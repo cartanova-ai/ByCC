@@ -36,6 +36,25 @@ Setup agents should treat a missing project label as an actionable configuration
 
 qgrid-specific behavior is controlled through `providerOptions.qgrid`. Explain these options precisely because they are qgrid's extension point beyond normal AI SDK usage.
 
+AI SDK declares the outer `providerOptions` as a generic JSON record, so it does not infer qgrid-specific keys or literal values. qgrid exports `QgridProviderOptions` for the inner `providerOptions.qgrid` value. Import it and put the `satisfies` check at that inner boundary:
+
+```ts
+import { generateText } from "ai";
+import { qgrid, type QgridProviderOptions } from "@cartanova/qgrid-ai-sdk";
+
+const result = await generateText({
+  model: qgrid("anthropic/claude-fable-5"),
+  prompt,
+  providerOptions: {
+    qgrid: {
+      effort: "high",
+    } satisfies QgridProviderOptions,
+  },
+});
+```
+
+Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the exported type describes the nested qgrid options object, not AI SDK's outer provider-name map. Use this typed pattern in qgrid setup guidance and examples so misspelled keys and invalid option values fail at compile time.
+
 `providerOptions.qgrid` supports:
 
 - `sessionKey`: OpenAI thread reuse key. Disabled for Anthropic models.
@@ -43,7 +62,7 @@ qgrid-specific behavior is controlled through `providerOptions.qgrid`. Explain t
 - `verbosity`: OpenAI/Codex route only.
 - `reasoningSummary`: OpenAI/Codex route only.
 - `serviceTier`: OpenAI/Codex route only.
-- `fallbackModels`: reserved for future fallback routing.
+- `fallbackModels`: reserved for future qgrid server-side fallback routing. It is not the Fable 5 safety-refusal fallback, which is owned by Claude Code upstream.
 - `imageGeneration`: OpenAI/Codex non-stream only. Enables Codex's built-in `image_generation` tool for that request.
 - `imageGenerationOptions`: optional image quality/size hints and cost-estimation basis. Current supported values are `quality: "low" | "medium" | "high"` and `size: "1024x1024" | "1024x1536" | "1536x1024"`.
 
@@ -60,7 +79,7 @@ const result = await generateText({
   providerOptions: {
     qgrid: {
       serviceTier: "fast",
-    },
+    } satisfies QgridProviderOptions,
   },
 });
 ```
@@ -111,6 +130,15 @@ qgrid response content maps to AI SDK content:
 `finishReason` maps `tool-calls` when qgrid returns tool calls.
 
 When `imageGeneration` was requested and the server returns no image part, the AI SDK provider throws a version-skew/error guard instead of silently accepting text-only output.
+
+For a successful Fable 5 refusal fallback:
+
+- `response.modelId` and `providerMetadata.qgrid.model` are the actual serving model, normally `claude-opus-4-8`.
+- `providerMetadata.qgrid.requestedModel` remains `claude-fable-5`.
+- `providerMetadata.qgrid.modelFallbacks` preserves the refusal route and optional category/explanation.
+- `providerMetadata.qgrid.costSource` reports whether cost came from Claude Code or qgrid's pricing table. Prefer the provider-reported combined cost for this path.
+
+Do not expose the requested Fable model as `response.modelId` after Opus served the answer, and do not map this upstream safety behavior onto the reserved `providerOptions.qgrid.fallbackModels` option.
 
 Usage maps qgrid standard usage into AI SDK V3 usage:
 

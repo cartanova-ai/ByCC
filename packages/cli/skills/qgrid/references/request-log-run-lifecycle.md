@@ -47,14 +47,18 @@ Stored request log usage uses qgrid-standard semantics:
 - `input_tokens`: total input, including cache read/write.
 - `cache_read_tokens`: cached input read.
 - `cache_creation_tokens`: prompt cache write input.
+- `cache_creation_5m_tokens` / `cache_creation_1h_tokens`: nullable Anthropic TTL breakdown.
 - `output_tokens`: output tokens.
 - `cost_usd`: integer micro-USD in DB; displayed USD is `cost_usd / 1_000_000`.
+- `cost_source`: `provider`, `pricing_table`, or `mixed`. New rows keep the cost calculated at request time.
+- `requested_model_name` / `model_name`: requested and actual serving models; they differ on Fable refusal fallback.
+- `fallback_count`: number of observed model fallbacks in the run/step.
 - `image_cost_usd`: integer micro-USD estimate for Codex image generation output.
 - `image_cost_method`: string such as `assumed:gpt-image-2:medium:1536x1024:png`.
 
 OpenAI/Codex: use per-turn `.last` usage from `thread/tokenUsage/updated`.
 
-Anthropic: normalize native mutually exclusive categories by summing input + cache creation + cache read into total input.
+Anthropic: normalize native mutually exclusive categories by summing input + cache creation + cache read into total input. Prefer positive Claude Code `total_cost_usd`; otherwise calculate from the actual serving model and TTL split.
 
 For image requests, keep `cost_usd` as the Codex driver model token cost. Image output cost is separate because qgrid observes Codex's `image_generation` result, not the OpenAI Images API usage object. Treat `image_cost_usd` as a price-table estimate that may be inaccurate if Codex changes its underlying image accounting.
 
@@ -62,7 +66,7 @@ Reference images for image generation are not stored in `request_logs.user_promp
 
 ## Legacy normalization
 
-`RequestLogModel` normalizes legacy Anthropic rows where stored `input_tokens` may not include cache read/write. Keep this in mind when changing cost or display logic.
+`RequestLogModel` normalizes legacy Anthropic rows where stored `input_tokens` may not include cache read/write. Rows with `cost_source = NULL` are legacy and can be repriced from the current table; rows with a source retain their exact stored cost across price/promotion changes.
 
 ## TTFT
 

@@ -12,6 +12,7 @@ Use this reference before changing Anthropic provider behavior, Claude Code spaw
 - Config isolation
 - Input adaptation
 - Output adaptation
+- Fable refusal fallback
 - Structured output
 - 1M context
 
@@ -70,7 +71,7 @@ claude -p
   --model <canonical-model-or-1m-suffix>
   --system-prompt <text>                  # small system prompt
   --system-prompt-file <path>             # large system prompt
-  --thinking disabled
+  --thinking disabled                       # omitted for Fable 5
   --effort <effort-or-low>
   --disable-slash-commands
   --session-id <uuid>
@@ -83,7 +84,7 @@ Important details:
 - `--setting-sources project` plus seeded settings isolates user configuration.
 - `--system-prompt` or `--system-prompt-file` is always supplied. Omitting it would allow Claude Code default system prompt injection.
 - Large system prompts over 64 KiB are written to a temporary file to avoid argv `E2BIG`.
-- `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off.
+- `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 requires always-on adaptive thinking, so qgrid omits all three suppressors for it.
 
 ## Spawn env
 
@@ -96,13 +97,13 @@ Included env:
 - `CLAUDE_CODE_OAUTH_TOKEN`
 - `CLAUDE_CONFIG_DIR`
 - `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
-- `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1`
+- `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` except for Fable 5
 - `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`
 - `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`
 - `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
 - `CLAUDE_CODE_DISABLE_WORKFLOWS=1`
 - `CLAUDE_CODE_ATTRIBUTION_HEADER=0`
-- `MAX_THINKING_TOKENS=0`
+- `MAX_THINKING_TOKENS=0` except for Fable 5
 - `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` when model does not support qgrid's 1M path
 - `MAX_STRUCTURED_OUTPUT_RETRIES` for structured output only
 
@@ -144,7 +145,42 @@ Anthropic native usage categories are mutually exclusive. qgrid normalizes them 
 inputTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
 cachedInputTokens = cache_read_input_tokens
 cacheCreationInputTokens = cache_creation_input_tokens
+cacheCreationInputTokens5m = cache_creation.ephemeral_5m_input_tokens
+cacheCreationInputTokens1h = cache_creation.ephemeral_1h_input_tokens
 ```
+
+## Fable refusal fallback
+
+Fable 5 runs upstream safety classifiers. A refusal is a successful HTTP response with
+`stop_reason: "refusal"`, not an HTTP/provider error, and can happen before output or after
+partial streamed output. Claude Code handles the refusal fallback and can retry on Opus 4.8.
+This is distinct from the CLI `--fallback-model` flag, which is for overload on the default
+model. qgrid does not configure either mechanism or add another retry.
+
+The stream adapter must preserve all observable routing evidence:
+
+- `system.subtype = "model_refusal_fallback"` provides the original/fallback models and refusal details.
+- `assistant.message.model` identifies the model that produced that message.
+- `usage.iterations` contains the original `message` and `fallback_message` when available.
+- Treat `stop_reason`, rather than `stop_details` or empty content, as the authoritative refusal signal. Category and explanation are optional metadata.
+- `model_refusal_no_fallback` or a terminal `stop_reason: "refusal"` is an error, even if the outer result subtype says `success`. A successfully served fallback has a non-refusal terminal reason and a `fallback_message` iteration.
+
+`QueryOutput.model` is the actual serving model. `requestedModel` and `modelFallbacks` preserve
+the caller's requested model and routing history. Because qgrid uses a fresh Claude Code process
+for each request, any Claude Code session-sticky fallback state does not carry to the next request;
+each new Fable request may independently refuse and fall back again.
+
+Cost and usage must follow the upstream combined result. Prefer Claude Code's `total_cost_usd` and
+preserve `usage.iterations` only as attribution evidence; do not independently price every iteration
+and add them together. An upstream pre-output refusal is not billed, while work completed before a
+mid-stream refusal can be billed. Upstream fallback handling applies fallback credit where applicable,
+so a qgrid-side retry would risk duplicate work and incorrect cache-write billing.
+
+Upstream references:
+
+- [Refusals and fallback](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback)
+- [Fallback credit](https://platform.claude.com/docs/en/build-with-claude/fallback-credit)
+- [Claude Code CLI `--fallback-model`](https://code.claude.com/docs/en/cli-reference)
 
 ## Structured output
 
@@ -156,8 +192,10 @@ qgrid strictifies schemas before provider dispatch. Claude Code `--json-schema` 
 
 Model normalization strips provider prefix and `[1m]` for canonical model/cost keys.
 
-qgrid's measured 1M support set currently includes:
+qgrid's exact 1M support set currently includes:
 
+- `claude-fable-5`
+- `claude-sonnet-5`
 - `claude-sonnet-4-6`
 - `claude-opus-4-6`
 - `claude-opus-4-8`

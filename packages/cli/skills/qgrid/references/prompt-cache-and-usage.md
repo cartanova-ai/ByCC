@@ -97,7 +97,10 @@ Do not double-count cache subfields. This was a real dashboard bug: OpenAI cache
 - OpenAI cost normally uses qgrid's price table.
 - OpenAI image generation stores a separate `image_cost_usd` estimate. It assumes Codex's image tool is priced as `gpt-image-2` for the selected/default quality and size, because qgrid does not receive exact image tool usage from Codex.
 - Anthropic Claude Code may return `total_cost_usd`; qgrid prefers provider cost when present and positive.
-- Anthropic cache creation uses 5-minute cache write price in fallback tables.
+- Anthropic responses can split cache creation into `ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`; preserve that split and price each TTL separately.
+- Claude Code automatically requests 1-hour cache TTL for subscription OAuth and 5-minute TTL for API-key or usage-credit paths. Only legacy responses without a TTL breakdown use the subscription path's 1-hour rate as qgrid's fallback.
+- Persist per-step `cost_usd`, `cost_source`, and the 5m/1h split. New request logs use that exact stored cost; only legacy rows with no `cost_source` are repriced from the current table.
+- When Fable refuses and Claude Code serves Opus, prefer Claude Code's positive `total_cost_usd`. Persist Fable as the requested model and Opus as the serving model instead of pricing the combined turn as Fable.
 - OpenAI long-context surcharge applies to the whole request when input exceeds the model threshold, not just the excess tokens.
 
 When changing models or prices, verify against current official pricing before editing the table.
