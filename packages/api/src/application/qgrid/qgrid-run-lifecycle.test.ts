@@ -33,6 +33,7 @@ function queryOutput(overrides: Partial<QueryOutput> = {}): QueryOutput {
     durationMs: 120,
     ttftMs: 39,
     costUsd: 0.001,
+    costSource: "pricing_table",
     ...overrides,
   };
 }
@@ -195,6 +196,73 @@ describe("qgrid run lifecycle TTFT", () => {
       expect.objectContaining({
         image_cost_usd: 211000,
         image_cost_method: "assumed:gpt-image-2:high:1024x1024:png",
+      }),
+    );
+  });
+
+  it("preserves serving model, fallback count, TTL split, and exact step cost", async () => {
+    aggregateStepUsageMock.mockResolvedValueOnce({
+      input_tokens: 100_000,
+      output_tokens: 20,
+      cache_read_tokens: 10_000,
+      cache_creation_tokens: 80_000,
+      cache_creation_5m_tokens: 30_000,
+      cache_creation_1h_tokens: 50_000,
+      duration_ms: 120,
+      cost_usd: 3_000,
+      cost_source: "provider",
+      fallback_count: 1,
+    });
+
+    await afterQuery(
+      10,
+      2,
+      { prompt: "hi", model: "anthropic/claude-fable-5" },
+      queryOutput({
+        model: "claude-opus-4-8",
+        requestedModel: "claude-fable-5",
+        modelFallbacks: [
+          {
+            trigger: "refusal",
+            fromModel: "claude-fable-5",
+            toModel: "claude-opus-4-8",
+          },
+        ],
+        costUsd: 0.003,
+        costSource: "provider",
+        usage: {
+          input_tokens: 100_000,
+          output_tokens: 20,
+          cache_read_input_tokens: 10_000,
+          cache_creation_input_tokens: 80_000,
+          cache_creation_5m_input_tokens: 30_000,
+          cache_creation_1h_input_tokens: 50_000,
+        },
+      }),
+    );
+
+    expect(appendStepMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        requested_model_name: "claude-fable-5",
+        model_name: "claude-opus-4-8",
+        fallback_count: 1,
+        cache_creation_5m_tokens: 30_000,
+        cache_creation_1h_tokens: 50_000,
+        cost_usd: 3_000,
+        cost_source: "provider",
+      }),
+    );
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        requested_model_name: "claude-fable-5",
+        model_name: "claude-opus-4-8",
+        fallback_count: 1,
+        cache_creation_5m_tokens: 30_000,
+        cache_creation_1h_tokens: 50_000,
+        cost_usd: 3_000,
+        cost_source: "provider",
       }),
     );
   });

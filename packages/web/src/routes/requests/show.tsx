@@ -285,12 +285,23 @@ function ErrorPanel({ message }: { message: string }) {
 
 function HeaderBar({ data }: { data: RequestLog }) {
   const status = (data as Record<string, unknown>).status as string | undefined;
+  const hasFallback =
+    data.requested_model_name !== null &&
+    data.model_name !== null &&
+    data.requested_model_name !== data.model_name;
 
   return (
     <div className="panel overflow-hidden px-5 py-3 flex items-center gap-2">
       <span className="text-[15px] font-semibold text-sand-900">
-        {data.model_name ?? "Unknown model"}
+        {hasFallback
+          ? `${data.requested_model_name} → ${data.model_name}`
+          : (data.model_name ?? "Unknown model")}
       </span>
+      {(data.fallback_count ?? 0) > 0 && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-caution-400/15 text-caution-500 font-medium uppercase">
+          fallback ×{data.fallback_count}
+        </span>
+      )}
       {status && status !== "succeeded" && (
         <span
           className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase ${STATUS_STYLE[status] ?? "bg-sand-100 text-sand-500"}`}
@@ -331,6 +342,7 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
           label="Driver Cost"
           value={data.cost_usd !== null ? formatMicroUsd(data.cost_usd) : "—"}
         />
+        <Metric label="Cost Source" value={data.cost_source ?? "legacy"} />
         <Metric
           label="Image Cost"
           value={data.image_cost_usd !== null ? formatMicroUsd(data.image_cost_usd) : "—"}
@@ -342,6 +354,18 @@ function MetricsPanel({ data, toolCallCount }: { data: RequestLog; toolCallCount
         <Metric label="Output" value={formatNum(data.output_tokens)} />
         <Metric label="Cache Read" value={formatNum(data.cache_read_tokens)} />
         <Metric label="Cache Write" value={formatNum(data.cache_creation_tokens)} />
+        <Metric
+          label="Cache Write (5m)"
+          value={
+            data.cache_creation_5m_tokens === null ? "—" : formatNum(data.cache_creation_5m_tokens)
+          }
+        />
+        <Metric
+          label="Cache Write (1h)"
+          value={
+            data.cache_creation_1h_tokens === null ? "—" : formatNum(data.cache_creation_1h_tokens)
+          }
+        />
         <Metric label="Cache Hit" value={cacheHitRate(data)} />
       </div>
     </div>
@@ -368,10 +392,17 @@ type ToolInputImage = {
 type GenerateStepEntry = {
   id: number;
   stepIndex: number;
+  modelName: string | null;
+  requestedModelName: string | null;
+  fallbackCount: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
   cacheReadTokens: number | null;
   cacheCreationTokens: number | null;
+  cacheCreation5mTokens: number | null;
+  cacheCreation1hTokens: number | null;
+  costUsd: number | null;
+  costSource: string | null;
   durationMs: number | null;
   ttftMs: number | null;
   finishReason: string | null;
@@ -677,6 +708,11 @@ function StepTreeItem({
             {generate.finishReason}
           </span>
         )}
+        {generate && (generate.fallbackCount ?? 0) > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-caution-400/15 text-caution-500 font-medium uppercase shrink-0">
+            {generate.requestedModelName} → {generate.modelName}
+          </span>
+        )}
         {hasReasoning && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium shrink-0">
             reasoning
@@ -714,6 +750,15 @@ function StepTreeItem({
                 label="Cache Write"
                 value={formatNum(generate.cacheCreationTokens ?? 0)}
               />
+              <CompactMetric
+                label="Cache 5m / 1h"
+                value={`${generate.cacheCreation5mTokens === null ? "—" : formatNum(generate.cacheCreation5mTokens)} / ${generate.cacheCreation1hTokens === null ? "—" : formatNum(generate.cacheCreation1hTokens)}`}
+              />
+              <CompactMetric
+                label="Cost"
+                value={generate.costUsd === null ? "—" : formatMicroUsd(generate.costUsd)}
+              />
+              <CompactMetric label="Cost Source" value={generate.costSource ?? "legacy"} />
               <CompactMetric
                 label="Reasoning"
                 value={
@@ -784,10 +829,17 @@ function buildStepTree(steps: RequestLogStep[]): StepTreeEntry[] {
       group.generate = {
         id: step.id,
         stepIndex: step.step_index,
+        modelName: step.model_name,
+        requestedModelName: step.requested_model_name,
+        fallbackCount: step.fallback_count,
         inputTokens: step.input_tokens,
         outputTokens: step.output_tokens,
         cacheReadTokens: step.cache_read_tokens,
         cacheCreationTokens: step.cache_creation_tokens,
+        cacheCreation5mTokens: step.cache_creation_5m_tokens,
+        cacheCreation1hTokens: step.cache_creation_1h_tokens,
+        costUsd: step.cost_usd,
+        costSource: step.cost_source,
         durationMs: step.duration_ms,
         ttftMs: step.ttft_ms,
         finishReason: step.finish_reason,

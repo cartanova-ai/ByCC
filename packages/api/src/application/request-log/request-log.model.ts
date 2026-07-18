@@ -24,7 +24,10 @@ type RequestLogUsageRow = {
   output_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  cache_creation_5m_tokens?: number | null;
+  cache_creation_1h_tokens?: number | null;
   cost_usd?: number | null;
+  cost_source?: string | null;
 };
 
 function isAnthropicUsageRow(row: Pick<RequestLogUsageRow, "token_name" | "model_name">): boolean {
@@ -45,6 +48,8 @@ function normalizedUsageForCost(row: RequestLogUsageRow): {
   outputTokens: number;
   cachedInputTokens: number;
   cacheCreationInputTokens: number;
+  cacheCreationInputTokens5m?: number;
+  cacheCreationInputTokens1h?: number;
 } {
   const cacheRead = row.cache_read_tokens;
   const cacheCreation = row.cache_creation_tokens;
@@ -57,10 +62,18 @@ function normalizedUsageForCost(row: RequestLogUsageRow): {
     outputTokens: row.output_tokens,
     cachedInputTokens: cacheRead,
     cacheCreationInputTokens: cacheCreation,
+    ...(row.cache_creation_5m_tokens !== null && row.cache_creation_5m_tokens !== undefined
+      ? { cacheCreationInputTokens5m: row.cache_creation_5m_tokens }
+      : {}),
+    ...(row.cache_creation_1h_tokens !== null && row.cache_creation_1h_tokens !== undefined
+      ? { cacheCreationInputTokens1h: row.cache_creation_1h_tokens }
+      : {}),
   };
 }
 
 function normalizeLegacyAnthropicRow<T extends RequestLogUsageRow>(row: T): T {
+  // 새 row 는 당시의 provider/가격표 비용을 확정 저장한다. 현재 가격표로 덮어쓰지 않는다.
+  if (row.cost_source) return row;
   const usage = normalizedUsageForCost(row);
   if (usage.inputTokens === row.input_tokens) return row;
   const normalized = { ...row, input_tokens: usage.inputTokens };
@@ -258,7 +271,14 @@ class RequestLogModelClass extends BaseModelClass<
       output_tokens?: number;
       cache_read_tokens?: number;
       cache_creation_tokens?: number;
+      cache_creation_5m_tokens?: number | null;
+      cache_creation_1h_tokens?: number | null;
       duration_ms?: number;
+      requested_model_name?: string | null;
+      model_name?: string | null;
+      fallback_count?: number | null;
+      cost_usd?: number | null;
+      cost_source?: string | null;
       history?: unknown;
       error_message?: string;
       tool_call_count?: number;
@@ -277,7 +297,14 @@ class RequestLogModelClass extends BaseModelClass<
       "output_tokens",
       "cache_read_tokens",
       "cache_creation_tokens",
+      "cache_creation_5m_tokens",
+      "cache_creation_1h_tokens",
       "duration_ms",
+      "requested_model_name",
+      "model_name",
+      "fallback_count",
+      "cost_usd",
+      "cost_source",
       "error_message",
       "tool_call_count",
       "image_cost_usd",
@@ -289,21 +316,30 @@ class RequestLogModelClass extends BaseModelClass<
     if (params.history !== undefined) update.history = params.history;
     update.ttft_ms = (await this.firstGenerateStepTtft(requestLogId)) ?? 0;
 
-    if (params.input_tokens !== undefined && params.output_tokens !== undefined) {
+    // 서버 run 경로는 step 에서 확정한 exact cost 를 넘긴다. 외부/legacy caller 가 비용을
+    // 생략한 경우에만 저장된 모델+usage 로 계산한다.
+    if (
+      params.cost_usd === undefined &&
+      params.input_tokens !== undefined &&
+      params.output_tokens !== undefined
+    ) {
       const db = this.getDB("r");
       const [row] = await db("request_logs")
         .select("model_name")
         .where("id", requestLogId)
         .limit(1);
-      if (row?.model_name) {
-        const model = canonicalModelName(row.model_name);
+      const effectiveModelName = params.model_name ?? row?.model_name;
+      if (effectiveModelName) {
+        const model = canonicalModelName(effectiveModelName);
         const usage = normalizedUsageForCost({
           token_name: params.token_name,
-          model_name: row.model_name,
+          model_name: effectiveModelName,
           input_tokens: params.input_tokens,
           output_tokens: params.output_tokens,
           cache_read_tokens: params.cache_read_tokens ?? 0,
           cache_creation_tokens: params.cache_creation_tokens ?? 0,
+          cache_creation_5m_tokens: params.cache_creation_5m_tokens,
+          cache_creation_1h_tokens: params.cache_creation_1h_tokens,
         });
         update.cost_usd = Math.round(
           calculateCostUsd(model, {
@@ -311,8 +347,11 @@ class RequestLogModelClass extends BaseModelClass<
             outputTokens: usage.outputTokens,
             cachedInputTokens: usage.cachedInputTokens,
             cacheCreationInputTokens: usage.cacheCreationInputTokens,
+            cacheCreationInputTokens5m: usage.cacheCreationInputTokens5m,
+            cacheCreationInputTokens1h: usage.cacheCreationInputTokens1h,
           }) * 1_000_000,
         );
+        update.cost_source = "pricing_table";
       }
     }
 
@@ -341,25 +380,62 @@ class RequestLogModelClass extends BaseModelClass<
     output_tokens: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
+    cache_creation_5m_tokens?: number;
+    cache_creation_1h_tokens?: number;
     duration_ms: number;
+    requested_model_name?: string;
+    model_name?: string;
+    fallback_count: number;
+    cost_usd: number;
+    cost_source?: string;
   }> {
     const db = this.getDB("r");
-    const [row] = await db("request_log_steps")
+    const rows = (await db("request_log_steps")
+      .select(
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "cache_creation_5m_tokens",
+        "cache_creation_1h_tokens",
+        "duration_ms",
+        "requested_model_name",
+        "model_name",
+        "fallback_count",
+        "cost_usd",
+        "cost_source",
+      )
       .where("request_log_id", requestLogId)
-      .where("type", "generate")
-      .sum({
-        input_tokens: "input_tokens",
-        output_tokens: "output_tokens",
-        cache_read_tokens: "cache_read_tokens",
-        cache_creation_tokens: "cache_creation_tokens",
-        duration_ms: "duration_ms",
-      });
+      .where("type", "generate")) as Array<Record<string, unknown>>;
+
+    const sum = (field: string): number =>
+      rows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+    const optionalSum = (field: string): number | undefined =>
+      rows.some((row) => row[field] !== null && row[field] !== undefined) ? sum(field) : undefined;
+    const collapse = (field: string): string | undefined => {
+      const values = [
+        ...new Set(
+          rows
+            .map((row) => row[field])
+            .filter((value): value is string => typeof value === "string" && value.length > 0),
+        ),
+      ];
+      if (values.length === 0) return undefined;
+      return values.length === 1 ? values[0] : "mixed";
+    };
     return {
-      input_tokens: Number(row?.input_tokens ?? 0),
-      output_tokens: Number(row?.output_tokens ?? 0),
-      cache_read_tokens: Number(row?.cache_read_tokens ?? 0),
-      cache_creation_tokens: Number(row?.cache_creation_tokens ?? 0),
-      duration_ms: Number(row?.duration_ms ?? 0),
+      input_tokens: sum("input_tokens"),
+      output_tokens: sum("output_tokens"),
+      cache_read_tokens: sum("cache_read_tokens"),
+      cache_creation_tokens: sum("cache_creation_tokens"),
+      cache_creation_5m_tokens: optionalSum("cache_creation_5m_tokens"),
+      cache_creation_1h_tokens: optionalSum("cache_creation_1h_tokens"),
+      duration_ms: sum("duration_ms"),
+      requested_model_name: collapse("requested_model_name"),
+      model_name: collapse("model_name"),
+      fallback_count: sum("fallback_count"),
+      cost_usd: sum("cost_usd"),
+      cost_source: collapse("cost_source"),
     };
   }
 
@@ -419,17 +495,28 @@ class RequestLogModelClass extends BaseModelClass<
       "output_tokens",
       "cache_read_tokens",
       "cache_creation_tokens",
+      "cache_creation_5m_tokens",
+      "cache_creation_1h_tokens",
       "cost_usd",
+      "cost_source",
     )) as Array<{
       model_name: string | null;
       input_tokens: number;
       output_tokens: number;
       cache_read_tokens: number;
       cache_creation_tokens: number;
+      cache_creation_5m_tokens: number | null;
+      cache_creation_1h_tokens: number | null;
       cost_usd: number | null;
+      cost_source: string | null;
     }>;
 
     return rows.reduce((sum, row) => {
+      // cost_source 가 있으면 새 계약으로 확정 저장된 값이다. 프로모션/가격 변경 이후에도
+      // 당시 비용을 유지한다. NULL인 legacy row 만 현재 가격표로 보정한다.
+      if (row.cost_source && row.cost_usd !== null) {
+        return sum + Math.max(row.cost_usd, 0) / MICRO_USD;
+      }
       const usage = normalizedUsageForCost(row);
       if (!usage.model) return sum + Math.max(row.cost_usd ?? 0, 0) / MICRO_USD;
       return (
@@ -439,6 +526,8 @@ class RequestLogModelClass extends BaseModelClass<
           outputTokens: usage.outputTokens,
           cachedInputTokens: usage.cachedInputTokens,
           cacheCreationInputTokens: usage.cacheCreationInputTokens,
+          cacheCreationInputTokens5m: usage.cacheCreationInputTokens5m,
+          cacheCreationInputTokens1h: usage.cacheCreationInputTokens1h,
         })
       );
     }, 0);

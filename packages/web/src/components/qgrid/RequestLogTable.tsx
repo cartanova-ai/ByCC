@@ -193,7 +193,18 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                       <span className="text-xs text-sand-500">{row.token_name}</span>
                     </td>
                     <td className="px-4 py-1.5 whitespace-nowrap">
-                      <span className="text-xs text-sand-500">{row.model_name ?? "—"}</span>
+                      <span className="text-xs text-sand-500">
+                        {row.requested_model_name &&
+                        row.model_name &&
+                        row.requested_model_name !== row.model_name
+                          ? `${row.requested_model_name} → ${row.model_name}`
+                          : (row.model_name ?? "—")}
+                      </span>
+                      {(row.fallback_count ?? 0) > 0 && (
+                        <span className="ml-1 text-[9px] text-caution-500">
+                          ×{row.fallback_count}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-1.5 text-left tabular-nums text-sand-500 whitespace-nowrap">
                       {formatTtft(row.ttft_ms)}

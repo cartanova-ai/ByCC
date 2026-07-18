@@ -17,6 +17,26 @@
     },
     { "name": "step_index", "type": "integer", "desc": "ai-sdk step number (0-based)" },
     { "name": "type", "type": "enum", "id": "RequestLogStepType", "desc": "step 타입" },
+    {
+      "name": "model_name",
+      "type": "string",
+      "length": 50,
+      "nullable": true,
+      "desc": "실제 serving 모델"
+    },
+    {
+      "name": "requested_model_name",
+      "type": "string",
+      "length": 50,
+      "nullable": true,
+      "desc": "요청 모델 (fallback 전)"
+    },
+    {
+      "name": "fallback_count",
+      "type": "integer",
+      "nullable": true,
+      "desc": "모델 fallback 횟수"
+    },
     { "name": "input_tokens", "type": "integer", "nullable": true, "desc": "입력 토큰 (generate)" },
     {
       "name": "output_tokens",
@@ -30,6 +50,26 @@
       "type": "integer",
       "nullable": true,
       "desc": "캐시 생성 토큰"
+    },
+    {
+      "name": "cache_creation_5m_tokens",
+      "type": "integer",
+      "nullable": true,
+      "desc": "5분 TTL 캐시 생성 토큰"
+    },
+    {
+      "name": "cache_creation_1h_tokens",
+      "type": "integer",
+      "nullable": true,
+      "desc": "1시간 TTL 캐시 생성 토큰"
+    },
+    { "name": "cost_usd", "type": "integer", "nullable": true, "desc": "step 비용 (micro-USD)" },
+    {
+      "name": "cost_source",
+      "type": "string",
+      "length": 20,
+      "nullable": true,
+      "desc": "비용 출처(provider/pricing_table)"
     },
     { "name": "duration_ms", "type": "integer", "nullable": true, "desc": "소요시간(ms)" },
     { "name": "ttft_ms", "type": "integer", "nullable": true, "desc": "Gen TTFT(ms)" },
@@ -95,10 +135,17 @@
       "created_at",
       "step_index",
       "type",
+      "model_name",
+      "requested_model_name",
+      "fallback_count",
       "input_tokens",
       "output_tokens",
       "cache_read_tokens",
       "cache_creation_tokens",
+      "cache_creation_5m_tokens",
+      "cache_creation_1h_tokens",
+      "cost_usd",
+      "cost_source",
       "duration_ms",
       "ttft_ms",
       "finish_reason",
@@ -117,10 +164,17 @@
       "created_at",
       "step_index",
       "type",
+      "model_name",
+      "requested_model_name",
+      "fallback_count",
       "input_tokens",
       "output_tokens",
       "cache_read_tokens",
       "cache_creation_tokens",
+      "cache_creation_5m_tokens",
+      "cache_creation_1h_tokens",
+      "cost_usd",
+      "cost_source",
       "duration_ms",
       "ttft_ms",
       "finish_reason",

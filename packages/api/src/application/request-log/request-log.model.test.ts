@@ -90,3 +90,61 @@ describe("RequestLogModel TTFT", () => {
     );
   });
 });
+
+describe("RequestLogModel cost provenance", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses exact stored cost for rows with a cost source", async () => {
+    const chain = {
+      where: vi.fn(),
+      select: vi.fn(async () => [
+        {
+          model_name: "claude-opus-4-8",
+          input_tokens: 1_000_000,
+          output_tokens: 1_000_000,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          cache_creation_5m_tokens: null,
+          cache_creation_1h_tokens: null,
+          cost_usd: 3_000,
+          cost_source: "provider",
+        },
+      ]),
+    };
+    chain.where.mockReturnValue(chain);
+    const db = vi.fn(() => chain);
+    vi.spyOn(RequestLogModel as unknown as { getDB: () => typeof db }, "getDB").mockReturnValue(
+      db,
+    );
+
+    await expect(RequestLogModel.totalCost()).resolves.toBe(0.003);
+  });
+
+  it("keeps TTL-aware price-table recomputation for legacy rows", async () => {
+    const chain = {
+      where: vi.fn(),
+      select: vi.fn(async () => [
+        {
+          model_name: "claude-sonnet-4-6",
+          input_tokens: 100_000,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 80_000,
+          cache_creation_5m_tokens: 30_000,
+          cache_creation_1h_tokens: 50_000,
+          cost_usd: null,
+          cost_source: null,
+        },
+      ]),
+    };
+    chain.where.mockReturnValue(chain);
+    const db = vi.fn(() => chain);
+    vi.spyOn(RequestLogModel as unknown as { getDB: () => typeof db }, "getDB").mockReturnValue(
+      db,
+    );
+
+    await expect(RequestLogModel.totalCost()).resolves.toBeCloseTo(0.4725, 10);
+  });
+});
