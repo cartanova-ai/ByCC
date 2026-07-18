@@ -30,6 +30,7 @@ import {
   assertSupportedOneMillionSuffix,
   canonicalAnthropicModel,
   needsCli1mSuffix,
+  requiresAdaptiveThinking,
   supports1MContext,
 } from "./anthropic-constants";
 import {
@@ -145,6 +146,18 @@ export function oneMillionEnv(supported: boolean): { CLAUDE_CODE_DISABLE_1M_CONT
   return supported ? {} : { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" };
 }
 
+export function thinkingEnv(model: string): {
+  CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING?: "1";
+  MAX_THINKING_TOKENS?: "0";
+} {
+  return requiresAdaptiveThinking(model)
+    ? {}
+    : {
+        CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
+        MAX_THINKING_TOKENS: "0",
+      };
+}
+
 // SON-495: structured output retry 를 1 로 고정한다. CC 가 attempt 를 reject 하고 retry 하면
 // `{rejected}{accepted}` 누적이 AI-SDK 의 JSON.parse 를 깨뜨리므로, retry 자체를 막아 그 경로를
 // 원천 차단한다. `0` 은 CC query loop(`callsThisQuery >= maxRetries`)가 첫 attempt emit 전에
@@ -211,8 +224,8 @@ export function buildClaudeArgs(opts: {
     // inline [System] 금지 — 정식 채널만(R7). 생략 시 CC default(23k) 주입되므로 반드시 명시.
     // 크기에 따라 --system-prompt(작음) / --system-prompt-file(큼)로 분기(systemArgs).
     ...systemArgs,
-    "--thinking",
-    "disabled",
+    // Fable 5 는 adaptive thinking 이 항상 켜져 있어 disabled 를 거부한다.
+    ...(requiresAdaptiveThinking(opts.model) ? [] : ["--thinking", "disabled"]),
     "--effort",
     opts.effort ?? ANTHROPIC_DEFAULT_EFFORT,
     "--disable-slash-commands",
@@ -291,14 +304,13 @@ export function runClaudeSession(
           CLAUDE_CODE_OAUTH_TOKEN: req.token,
           CLAUDE_CONFIG_DIR: configDir,
           CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-          CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
+          ...thinkingEnv(model),
           ...oneMillionEnv(supportsOneMillion),
           CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
           CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1",
           CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1",
           CLAUDE_CODE_DISABLE_WORKFLOWS: "1",
           CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
-          MAX_THINKING_TOKENS: "0",
           // structured output 일 때만 retry 를 고정한다(SON-495). text 모드는 영향 없음.
           ...(useStructured ? structuredOutputRetriesEnv() : {}),
         },

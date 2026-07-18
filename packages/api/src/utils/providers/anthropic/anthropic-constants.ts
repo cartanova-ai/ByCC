@@ -42,15 +42,18 @@ export function hasOneMillionSuffix(model?: string): boolean {
   return model !== undefined && ONE_MILLION_SUFFIX_RE.test(model);
 }
 
-// 1M 지원 여부는 Claude Code 유출본의 prefix 판정이 아니라 qgrid 실측 기준 exact set 으로 고정한다.
-// opus-4-7 은 실측 전까지 미포함. 새 모델 추가 시 실제 claude CLI contextWindow 동작으로 확인한다.
+// 1M 지원 여부는 Claude Code 내부의 광범위한 prefix 판정이 아니라 qgrid에서 확인한 exact set 으로
+// 고정한다. opus-4-7 은 실측 전까지 미포함. 새 모델 추가 시 공식 사양과 실제 CLI 동작을 확인한다.
 const ONE_MILLION_CONTEXT_MODELS = new Set([
+  "claude-fable-5",
+  "claude-sonnet-5",
   "claude-sonnet-4-6",
   "claude-opus-4-6",
   "claude-opus-4-8",
 ]);
 
 const CLI_ONE_MILLION_SUFFIX_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-6"]);
+const ALWAYS_ADAPTIVE_THINKING_MODELS = new Set(["claude-fable-5"]);
 
 // 불변 계약: suffix 가 필요한 모델은 반드시 1M 지원 모델의 부분집합이어야 한다. 역방향 불일치(suffix
 // 대상인데 지원 집합엔 없음)면 needsCli1mSuffix=true·supports1MContext=false 가 동시에 나서
@@ -68,6 +71,12 @@ export function supports1MContext(model?: string): boolean {
 
 export function needsCli1mSuffix(model?: string): boolean {
   return CLI_ONE_MILLION_SUFFIX_MODELS.has(canonicalAnthropicModel(model));
+}
+
+// Fable 5 는 adaptive thinking 이 유일한 thinking mode 이므로 disabled 로 실행할 수 없다.
+// 나머지 모델은 qgrid 의 기존 저비용/비추론 경로를 그대로 유지한다.
+export function requiresAdaptiveThinking(model?: string): boolean {
+  return ALWAYS_ADAPTIVE_THINKING_MODELS.has(canonicalAnthropicModel(model));
 }
 
 export function assertSupportedOneMillionSuffix(model?: string): void {

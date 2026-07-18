@@ -12,6 +12,7 @@ import {
   oneMillionEnv,
   runClaudeSession,
   structuredOutputRetriesEnv,
+  thinkingEnv,
   SYSTEM_PROMPT_ARGV_MAX_BYTES,
   withSessionLock,
 } from "./claude-session";
@@ -132,6 +133,15 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(oneMillionEnv(false)).toEqual({ CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" });
   });
 
+  it("thinkingEnv: Fable 은 always-on adaptive thinking 을 보존하고 나머지는 비활성화", () => {
+    expect(thinkingEnv("claude-fable-5")).toEqual({});
+    expect(thinkingEnv("anthropic/claude-fable-5")).toEqual({});
+    expect(thinkingEnv("claude-opus-4-8")).toEqual({
+      CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
+      MAX_THINKING_TOKENS: "0",
+    });
+  });
+
   // SON-495: structured output retry 를 1 로 고정한다.
   it("structuredOutputRetriesEnv: 미설정/비정상 값은 1 로 기본 고정", () => {
     expect(structuredOutputRetriesEnv(undefined)).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
@@ -219,6 +229,22 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
       needsOneMillionSuffix: false,
     });
     expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-4-8");
+  });
+
+  it("Fable 5 는 항상 켜진 adaptive thinking 을 끄지 않고 effort 만 전달한다", () => {
+    const args = buildClaudeArgs({
+      model: "claude-fable-5",
+      sessionId: "u",
+      effort: "low",
+    });
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-fable-5");
+    expect(args).not.toContain("--thinking");
+    expect(args[args.indexOf("--effort") + 1]).toBe("low");
+  });
+
+  it("기존 Anthropic 모델은 thinking disabled 계약을 유지한다", () => {
+    const args = buildClaudeArgs({ model: "claude-opus-4-8", sessionId: "u" });
+    expect(args[args.indexOf("--thinking") + 1]).toBe("disabled");
   });
 
   it("non-structured(jsonSchema 없음): --allowed-tools 미부여 (P2-7)", () => {

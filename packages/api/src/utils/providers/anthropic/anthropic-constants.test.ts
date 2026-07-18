@@ -6,6 +6,7 @@ import {
   canonicalAnthropicModel,
   hasOneMillionSuffix,
   needsCli1mSuffix,
+  requiresAdaptiveThinking,
   supports1MContext,
 } from "./anthropic-constants";
 
@@ -16,6 +17,7 @@ describe("canonicalAnthropicModel", () => {
 
   it("provider prefix 를 제거한다", () => {
     expect(canonicalAnthropicModel("anthropic/claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(canonicalAnthropicModel("anthropic/claude-fable-5")).toBe("claude-fable-5");
   });
 
   it("[1m] suffix 를 base canonical 에서 제거한다", () => {
@@ -26,6 +28,8 @@ describe("canonicalAnthropicModel", () => {
 
 describe("Anthropic 1M context policy", () => {
   it("지원 모델은 실측 확인된 exact set 만 true", () => {
+    expect(supports1MContext("claude-fable-5")).toBe(true);
+    expect(supports1MContext("claude-sonnet-5")).toBe(true);
     expect(supports1MContext("claude-sonnet-4-6")).toBe(true);
     expect(supports1MContext("claude-opus-4-6")).toBe(true);
     expect(supports1MContext("claude-opus-4-8")).toBe(true);
@@ -37,6 +41,8 @@ describe("Anthropic 1M context policy", () => {
   });
 
   it("CLI suffix 필요 모델과 기본 1M 모델을 분리한다", () => {
+    expect(needsCli1mSuffix("claude-fable-5")).toBe(false);
+    expect(needsCli1mSuffix("claude-sonnet-5")).toBe(false);
     expect(needsCli1mSuffix("claude-sonnet-4-6")).toBe(true);
     expect(needsCli1mSuffix("claude-opus-4-6")).toBe(true);
     expect(needsCli1mSuffix("claude-opus-4-8")).toBe(false);
@@ -56,5 +62,14 @@ describe("Anthropic 1M context policy", () => {
       /Unsupported Anthropic 1M model suffix/,
     );
     expect(() => assertSupportedOneMillionSuffix("anthropic/claude-sonnet-4-6[1m]")).not.toThrow();
+  });
+});
+
+describe("Anthropic thinking policy", () => {
+  it("Fable 5 만 always-on adaptive thinking 으로 실행한다", () => {
+    expect(requiresAdaptiveThinking("claude-fable-5")).toBe(true);
+    expect(requiresAdaptiveThinking("anthropic/claude-fable-5")).toBe(true);
+    expect(requiresAdaptiveThinking("claude-sonnet-5")).toBe(false);
+    expect(requiresAdaptiveThinking("claude-opus-4-8")).toBe(false);
   });
 });
