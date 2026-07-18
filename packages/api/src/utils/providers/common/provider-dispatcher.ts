@@ -13,6 +13,8 @@ import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 // provider 전용 cache write 세부 필드는 여기서 확장해 보존한다.
 export type ProviderTokenUsageBreakdown = TokenUsageBreakdown & {
   cacheCreationInputTokens?: number;
+  cacheCreationInputTokens5m?: number;
+  cacheCreationInputTokens1h?: number;
 };
 
 // thread 재사용 라우팅 좌표. 상위(qgrid.dispatcher)에서 conv 핸들 검증을 통과한 경우에만 전달.
@@ -29,6 +31,19 @@ export interface GeneratedImage {
   data: string; // base64 PNG
   revisedPrompt: string | null;
 }
+
+// Provider/런타임이 요청 모델 대신 다른 모델로 실제 응답을 생성한 이력.
+// 현재 Claude Code 의 Fable refusal → Opus 안전 fallback 을 표현하며, 향후 provider
+// fallback 도 같은 계약으로 올릴 수 있다.
+export interface ModelFallback {
+  trigger: "refusal";
+  fromModel: string;
+  toModel: string;
+  category?: string;
+  explanation?: string;
+}
+
+export type CostSource = "provider" | "pricing_table" | "mixed";
 
 export interface GenerateRequest {
   // 미지정이면 dispatcher 가 provider 별 default 를 적용한다(Anthropic: ANTHROPIC_DEFAULT_MODEL).
@@ -65,7 +80,10 @@ export interface GenerateResult {
   // Provider 가 직접 산출한 비용. Anthropic Claude Code 는 total_cost_usd 를 주므로 이 값을
   // 우선 사용하고, 없으면 상위가 모델별 가격표로 계산한다.
   costUsd?: number;
+  // model 은 실제 응답을 생성한 serving model. fallback 이 없으면 requestedModel 과 같다.
   model: string;
+  requestedModel?: string;
+  modelFallbacks?: Array<ModelFallback>;
   // 이번 turn 이 사용한 thread 좌표. 상위가 conv 핸들을 발급/갱신하는 데 쓴다.
   threadCoord: ReuseThreadCoord;
   // 이미지 turn 에서만 채워짐(OpenAI 경로). 완성 이미지가 없으면 undefined.

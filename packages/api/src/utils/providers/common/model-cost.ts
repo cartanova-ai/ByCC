@@ -14,7 +14,10 @@ export interface ModelCosts {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  /** TTL breakdown 이 없는 usage 에 적용할 cache write fallback 단가. */
   cacheCreationInputTokens?: number;
+  cacheCreationInputTokens5m?: number;
+  cacheCreationInputTokens1h?: number;
   /**
    * long-context 할증. 전체 입력 토큰(input_tokens, cache_read 포함)이 threshold 초과 시
    * 초과분만이 아니라 요청 전체(full session)에 배율 적용.
@@ -29,7 +32,7 @@ export interface ModelCosts {
 
 // ── OpenAI — codex app-server 에서 사용 가능한 모델 ─────────────────
 //
-// 가격 출처: https://openai.com/api/pricing (2026-06-11 확인)
+// 가격 출처: https://developers.openai.com/api/docs/models (2026-07-18 확인)
 // 신모델 출시마다 단가가 바뀌므로(5.2→5.4→5.5) 모델 추가 시 반드시 공식 페이지 재확인해야함
 
 // GPT-5.4에서 처음 도입된 long-context 할증 (5.2/5.3-codex는 해당 없음, 5.4-mini/nano는 공식 표에서 long-context 단가 없음)
@@ -97,105 +100,56 @@ const OPENAI_COSTS: Record<string, ModelCosts> = {
 
 // ── Anthropic ───────────────────────────────────────────────────────
 
+function anthropicCosts(inputTokens: number, outputTokens: number): ModelCosts {
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: inputTokens / 10,
+    // Claude Code subscription OAuth 는 1h TTL 을 자동 선택한다. 구버전처럼 응답에
+    // TTL breakdown 이 없을 때만 이 1h 단가를 fallback 으로 사용한다.
+    cacheCreationInputTokens: inputTokens * 2,
+    cacheCreationInputTokens5m: inputTokens * 1.25,
+    cacheCreationInputTokens1h: inputTokens * 2,
+  };
+}
+
 const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
-  // Claude Code 는 별도 ttl:"1h" 옵션 없이 실행되므로 fallback 가격표는 5분 cache write(1.25x)를 기준으로 둔다.
-  // 1시간 cache write 는 input 2x 이지만 현재 qgrid 실행 경로의 기본값이 아니다.
-  sonnet: {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-3-5-haiku": {
-    inputTokens: 0.8,
-    outputTokens: 4,
-    cachedInputTokens: 0.08,
-    cacheCreationInputTokens: 1,
-  },
-  "claude-haiku-4-5": {
-    inputTokens: 1,
-    outputTokens: 5,
-    cachedInputTokens: 0.1,
-    cacheCreationInputTokens: 1.25,
-  },
-  "claude-3-5-sonnet": {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-3-7-sonnet": {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-sonnet-4": {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-sonnet-4-5": {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-sonnet-4-6": {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-sonnet-4-7": {
-    inputTokens: 3,
-    outputTokens: 15,
-    cachedInputTokens: 0.3,
-    cacheCreationInputTokens: 3.75,
-  },
-  "claude-opus-4": {
-    inputTokens: 15,
-    outputTokens: 75,
-    cachedInputTokens: 1.5,
-    cacheCreationInputTokens: 18.75,
-  },
-  "claude-opus-4-1": {
-    inputTokens: 15,
-    outputTokens: 75,
-    cachedInputTokens: 1.5,
-    cacheCreationInputTokens: 18.75,
-  },
-  "claude-opus-4-5": {
-    inputTokens: 5,
-    outputTokens: 25,
-    cachedInputTokens: 0.5,
-    cacheCreationInputTokens: 6.25,
-  },
-  "claude-opus-4-6": {
-    inputTokens: 5,
-    outputTokens: 25,
-    cachedInputTokens: 0.5,
-    cacheCreationInputTokens: 6.25,
-  },
-  "claude-opus-4-7": {
-    inputTokens: 5,
-    outputTokens: 25,
-    cachedInputTokens: 0.5,
-    cacheCreationInputTokens: 6.25,
-  },
-  "claude-opus-4-8": {
-    inputTokens: 5,
-    outputTokens: 25,
-    cachedInputTokens: 0.5,
-    cacheCreationInputTokens: 6.25,
-  },
+  "claude-fable-5": anthropicCosts(10, 50),
+  sonnet: anthropicCosts(3, 15),
+  "claude-3-5-haiku": anthropicCosts(0.8, 4),
+  "claude-haiku-4-5": anthropicCosts(1, 5),
+  "claude-3-5-sonnet": anthropicCosts(3, 15),
+  "claude-3-7-sonnet": anthropicCosts(3, 15),
+  "claude-sonnet-4": anthropicCosts(3, 15),
+  "claude-sonnet-4-5": anthropicCosts(3, 15),
+  "claude-sonnet-4-6": anthropicCosts(3, 15),
+  "claude-sonnet-4-7": anthropicCosts(3, 15),
+  "claude-opus-4": anthropicCosts(15, 75),
+  "claude-opus-4-1": anthropicCosts(15, 75),
+  "claude-opus-4-5": anthropicCosts(5, 25),
+  "claude-opus-4-6": anthropicCosts(5, 25),
+  "claude-opus-4-7": anthropicCosts(5, 25),
+  "claude-opus-4-8": anthropicCosts(5, 25),
 };
 
+// Anthropic 공식 introductory pricing: 2026-08-31까지 $2/$10, 이후 $3/$15.
+// qgrid 는 요청 시점에 계산하므로 배포를 다시 하지 않아도 2026-09-01 UTC부터 표준 단가로 전환한다.
+const CLAUDE_SONNET_5_INTRO_PRICING_END_MS = Date.UTC(2026, 8, 1);
+const CLAUDE_SONNET_5_INTRO_COSTS = anthropicCosts(2, 10);
+const CLAUDE_SONNET_5_STANDARD_COSTS = anthropicCosts(3, 15);
+
+// gpt-5.3-codex-spark 는 research preview 로 공식 token 단가가 아직 final 이 아니다.
+// 지원 타입은 유지하되, 공식 단가가 공개될 때까지 아래 generic estimate 로 계산한다.
+// @see https://help.openai.com/en/articles/20001106-codex-rate-card
 const DEFAULT_COSTS: ModelCosts = { inputTokens: 3, outputTokens: 15, cachedInputTokens: 0.3 };
 
-export function getModelCosts(model: string): ModelCosts {
-  const normalizedModel = model.replace(/\[1m\]$/i, "");
+export function getModelCosts(model: string, atMs = Date.now()): ModelCosts {
+  const normalizedModel = (model.split("/").pop() ?? model).replace(/\[1m\]$/i, "");
+  if (normalizedModel === "claude-sonnet-5") {
+    return atMs < CLAUDE_SONNET_5_INTRO_PRICING_END_MS
+      ? CLAUDE_SONNET_5_INTRO_COSTS
+      : CLAUDE_SONNET_5_STANDARD_COSTS;
+  }
   return OPENAI_COSTS[normalizedModel] ?? ANTHROPIC_COSTS[normalizedModel] ?? DEFAULT_COSTS;
 }
 
@@ -206,11 +160,26 @@ export function calculateCostUsd(
     outputTokens: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreationInputTokens5m?: number;
+    cacheCreationInputTokens1h?: number;
   },
+  atMs = Date.now(),
 ): number {
-  const costs = getModelCosts(model);
+  const costs = getModelCosts(model, atMs);
   const cachedInput = usage.cachedInputTokens ?? 0;
-  const cacheCreationInput = usage.cacheCreationInputTokens ?? 0;
+  const cacheCreationInput5m = Math.max(usage.cacheCreationInputTokens5m ?? 0, 0);
+  const cacheCreationInput1h = Math.max(usage.cacheCreationInputTokens1h ?? 0, 0);
+  const cacheCreationInput = Math.max(
+    usage.cacheCreationInputTokens ?? 0,
+    cacheCreationInput5m + cacheCreationInput1h,
+  );
+  const classifiedCacheCreationInput5m = Math.min(cacheCreationInput5m, cacheCreationInput);
+  const classifiedCacheCreationInput1h = Math.min(
+    cacheCreationInput1h,
+    cacheCreationInput - classifiedCacheCreationInput5m,
+  );
+  const unclassifiedCacheCreationInput =
+    cacheCreationInput - classifiedCacheCreationInput5m - classifiedCacheCreationInput1h;
   const nonCachedInput = Math.max(usage.inputTokens - cachedInput - cacheCreationInput, 0);
 
   // long-context 할증: 전체 입력(input_tokens, cache 포함)이 threshold 초과 시 요청 전체에 배율 적용
@@ -218,8 +187,14 @@ export function calculateCostUsd(
   const isLongContext = lc !== undefined && usage.inputTokens > lc.threshold;
   const inputRate = costs.inputTokens * (isLongContext ? lc.inputMultiplier : 1);
   const cachedRate = costs.cachedInputTokens * (isLongContext ? lc.cachedInputMultiplier : 1);
-  const cacheCreationRate =
+  const cacheCreationFallbackRate =
     (costs.cacheCreationInputTokens ?? costs.inputTokens) *
+    (isLongContext ? lc.inputMultiplier : 1);
+  const cacheCreation5mRate =
+    (costs.cacheCreationInputTokens5m ?? costs.cacheCreationInputTokens ?? costs.inputTokens) *
+    (isLongContext ? lc.inputMultiplier : 1);
+  const cacheCreation1hRate =
+    (costs.cacheCreationInputTokens1h ?? costs.cacheCreationInputTokens ?? costs.inputTokens) *
     (isLongContext ? lc.inputMultiplier : 1);
   const outputRate = costs.outputTokens * (isLongContext ? lc.outputMultiplier : 1);
 
@@ -227,6 +202,8 @@ export function calculateCostUsd(
     (nonCachedInput / 1_000_000) * inputRate +
     (usage.outputTokens / 1_000_000) * outputRate +
     (cachedInput / 1_000_000) * cachedRate +
-    (cacheCreationInput / 1_000_000) * cacheCreationRate
+    (unclassifiedCacheCreationInput / 1_000_000) * cacheCreationFallbackRate +
+    (classifiedCacheCreationInput5m / 1_000_000) * cacheCreation5mRate +
+    (classifiedCacheCreationInput1h / 1_000_000) * cacheCreation1hRate
   );
 }
