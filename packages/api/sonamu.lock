@@ -45,7 +45,7 @@
   },
   {
     "path": "api/src/application/sonamu.generated.http",
-    "checksum": "97c4d3f78e696abf8c79c42b672f80437440a5e8"
+    "checksum": "da15ef24d7df776ae11ad825336e8f7e787f2b32"
   },
   {
     "path": "api/src/application/sonamu.generated.sso.ts",
@@ -113,7 +113,7 @@
   },
   {
     "path": "web/src/services/services.generated.ts",
-    "checksum": "b5b8ab436cc68dc968be2b4e3b70c5df938f51ec"
+    "checksum": "858281cacd22d8be2ae6d6245ab67c4dea8b1be6"
   },
   {
     "path": "web/src/services/sonamu.generated.ts",

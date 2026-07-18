@@ -493,17 +493,28 @@ export namespace QgridService {
         done: {
           text: string;
           model?: string;
+          requestedModel?: string;
+          modelFallbacks?: {
+            trigger: "refusal";
+            fromModel: string;
+            toModel: string;
+            category?: string;
+            explanation?: string;
+          }[];
           tokenName?: string;
           finishReason: "stop" | "tool-calls";
           usage: {
             input_tokens: number;
             output_tokens: number;
             cache_creation_input_tokens: number;
+            cache_creation_5m_input_tokens?: number;
+            cache_creation_1h_input_tokens?: number;
             cache_read_input_tokens: number;
           };
           durationMs: number;
           ttftMs: number;
           costUsd: number;
+          costSource: "provider" | "pricing_table" | "mixed";
           content:
             | {
                 type: "text";
@@ -549,17 +560,28 @@ export namespace QgridService {
       done: {
         text: string;
         model?: string;
+        requestedModel?: string;
+        modelFallbacks?: {
+          trigger: "refusal";
+          fromModel: string;
+          toModel: string;
+          category?: string;
+          explanation?: string;
+        }[];
         tokenName?: string;
         finishReason: "stop" | "tool-calls";
         usage: {
           input_tokens: number;
           output_tokens: number;
           cache_creation_input_tokens: number;
+          cache_creation_5m_input_tokens?: number;
+          cache_creation_1h_input_tokens?: number;
           cache_read_input_tokens: number;
         };
         durationMs: number;
         ttftMs: number;
         costUsd: number;
+        costSource: "provider" | "pricing_table" | "mixed";
         content:
           | {
               type: "text";
