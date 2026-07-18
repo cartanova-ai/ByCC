@@ -10,7 +10,10 @@
 
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
-import { type ProviderTokenUsageBreakdown } from "../common/provider-dispatcher";
+import {
+  type ModelFallback,
+  type ProviderTokenUsageBreakdown,
+} from "../common/provider-dispatcher";
 
 // ── 입력 어댑터 ────────────────────────────────────────────────────
 
@@ -122,6 +125,14 @@ interface ClaudeUsage {
   output_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  };
+  iterations?: Array<{
+    type?: string;
+    model?: string;
+  }>;
 }
 
 export interface ClaudeStreamResult {
@@ -137,10 +148,26 @@ export interface ClaudeStreamResult {
   // isError 판정 사유를 에러 메시지에 드러내기 위해 보존한다(SON-495).
   subtype?: string;
   terminalReason?: string;
+  // 실제 최종 응답을 만든 모델. Fable refusal fallback 때 requested model 과 다르다.
+  servedModel?: string;
+  stopReason?: string;
+  refusal?: {
+    category?: string;
+    explanation?: string;
+  };
+  modelFallbacks?: Array<ModelFallback>;
 }
 
 export interface ClaudeStreamJsonState {
   structuredOutputText?: string;
+  servedModel?: string;
+  stopReason?: string;
+  refusal?: {
+    category?: string;
+    explanation?: string;
+  };
+  modelFallbacks?: Array<ModelFallback>;
+  refusalWithoutFallback?: boolean;
 }
 
 // Anthropic usage 4 카테고리 → TokenUsageBreakdown.
@@ -154,11 +181,15 @@ function toUsageBreakdown(u: ClaudeUsage): ProviderTokenUsageBreakdown {
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
   const totalInput = input + cacheCreate + cacheRead;
+  const cacheCreate5m = u.cache_creation?.ephemeral_5m_input_tokens;
+  const cacheCreate1h = u.cache_creation?.ephemeral_1h_input_tokens;
   return {
     totalTokens: totalInput + output,
     inputTokens: totalInput,
     cachedInputTokens: cacheRead,
     cacheCreationInputTokens: cacheCreate,
+    ...(typeof cacheCreate5m === "number" ? { cacheCreationInputTokens5m: cacheCreate5m } : {}),
+    ...(typeof cacheCreate1h === "number" ? { cacheCreationInputTokens1h: cacheCreate1h } : {}),
     outputTokens: output,
     reasoningOutputTokens: 0,
   };
@@ -190,6 +221,91 @@ function structuredOutputToolUseText(j: ResponseItem): string | undefined {
   return undefined;
 }
 
+function canonicalEventModel(model: string): string {
+  const withoutProvider = model.startsWith("anthropic/") ? model.slice("anthropic/".length) : model;
+  return withoutProvider.replace(/\[1m\]$/, "");
+}
+
+function optionalString(value: JsonValue | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function recordFallback(state: ClaudeStreamJsonState | undefined, fallback: ModelFallback): void {
+  if (!state) return;
+  const normalized: ModelFallback = {
+    ...fallback,
+    fromModel: canonicalEventModel(fallback.fromModel),
+    toModel: canonicalEventModel(fallback.toModel),
+  };
+  const existing = state.modelFallbacks?.find(
+    (item) =>
+      item.trigger === normalized.trigger &&
+      item.fromModel === normalized.fromModel &&
+      item.toModel === normalized.toModel,
+  );
+  if (existing) {
+    existing.category ??= normalized.category;
+    existing.explanation ??= normalized.explanation;
+  } else {
+    (state.modelFallbacks ??= []).push(normalized);
+  }
+  state.servedModel = normalized.toModel;
+  state.refusalWithoutFallback = false;
+}
+
+function updateRoutingFromUsage(
+  usage: ResponseItem | null,
+  state: ClaudeStreamJsonState | undefined,
+): void {
+  if (!state || !usage || !Array.isArray(usage.iterations)) return;
+
+  let previousModel: string | undefined;
+  for (const raw of usage.iterations) {
+    const iteration = asObject(raw);
+    if (!iteration) continue;
+    const model = optionalString(iteration.model);
+    const type = optionalString(iteration.type);
+    if (!model) continue;
+    const canonicalModel = canonicalEventModel(model);
+    if (type === "fallback_message" && previousModel) {
+      recordFallback(state, {
+        trigger: "refusal",
+        fromModel: previousModel,
+        toModel: canonicalModel,
+      });
+    }
+    previousModel = canonicalModel;
+    state.servedModel = canonicalModel;
+  }
+}
+
+function updateRoutingFromMessage(
+  message: ResponseItem | null,
+  state: ClaudeStreamJsonState | undefined,
+): void {
+  if (!state || !message) return;
+  const model = optionalString(message.model);
+  const canonicalModel = model ? canonicalEventModel(model) : undefined;
+  if (canonicalModel) state.servedModel = canonicalModel;
+  const stopReason = optionalString(message.stop_reason);
+  if (stopReason) {
+    state.stopReason = stopReason;
+    if (stopReason === "refusal") state.refusalWithoutFallback = true;
+    else if (state.modelFallbacks?.some((fallback) => fallback.toModel === canonicalModel)) {
+      state.refusalWithoutFallback = false;
+    }
+  }
+
+  const stopDetails = asObject(message.stop_details);
+  if (stopDetails?.type === "refusal" || stopReason === "refusal") {
+    state.refusal = {
+      category: optionalString(stopDetails?.category),
+      explanation: optionalString(stopDetails?.explanation),
+    };
+  }
+  updateRoutingFromUsage(asObject(message.usage), state);
+}
+
 // Processes one Claude stdout JSONL line. Returns final result on result event.
 export function handleStreamJsonLine(
   line: string,
@@ -210,6 +326,16 @@ export function handleStreamJsonLine(
 
   if (j.type === "stream_event") {
     const event = asObject(j.event);
+    if (event?.type === "message_start") {
+      updateRoutingFromMessage(asObject(event.message), state);
+    } else if (event?.type === "message_delta") {
+      const delta = asObject(event.delta);
+      const stopReason = optionalString(delta?.stop_reason);
+      if (state && stopReason) {
+        state.stopReason = stopReason;
+        if (stopReason === "refusal") state.refusalWithoutFallback = true;
+      }
+    }
     if (event && event.type === "content_block_delta") {
       const delta = asObject(event.delta);
       if (delta) {
@@ -227,14 +353,55 @@ export function handleStreamJsonLine(
     return null;
   }
 
-  if (
-    j.type === "assistant" &&
-    structuredOutput &&
-    state &&
-    state.structuredOutputText === undefined
-  ) {
-    const text = structuredOutputToolUseText(j);
-    if (text !== undefined) state.structuredOutputText = text;
+  if (j.type === "system") {
+    const subtype = optionalString(j.subtype);
+    if (subtype === "model_refusal_fallback") {
+      const fromModel = optionalString(j.originalModel) ?? optionalString(j.original_model);
+      const toModel = optionalString(j.fallbackModel) ?? optionalString(j.fallback_model);
+      if (fromModel && toModel) {
+        recordFallback(state, {
+          trigger: "refusal",
+          fromModel,
+          toModel,
+          category:
+            optionalString(j.apiRefusalCategory) ??
+            optionalString(j.api_refusal_category) ??
+            optionalString(j.refusalCategory) ??
+            optionalString(j.refusal_category),
+          explanation:
+            optionalString(j.apiRefusalExplanation) ??
+            optionalString(j.api_refusal_explanation) ??
+            optionalString(j.refusalExplanation) ??
+            optionalString(j.refusal_explanation),
+        });
+      }
+    } else if (subtype === "model_refusal_no_fallback" && state) {
+      const originalModel = optionalString(j.originalModel) ?? optionalString(j.original_model);
+      if (originalModel) state.servedModel = canonicalEventModel(originalModel);
+      state.stopReason = "refusal";
+      state.refusalWithoutFallback = true;
+      state.refusal = {
+        category:
+          optionalString(j.apiRefusalCategory) ??
+          optionalString(j.api_refusal_category) ??
+          optionalString(j.refusalCategory) ??
+          optionalString(j.refusal_category),
+        explanation:
+          optionalString(j.apiRefusalExplanation) ??
+          optionalString(j.api_refusal_explanation) ??
+          optionalString(j.refusalExplanation) ??
+          optionalString(j.refusal_explanation),
+      };
+    }
+    return null;
+  }
+
+  if (j.type === "assistant") {
+    updateRoutingFromMessage(asObject(j.message), state);
+    if (structuredOutput && state && state.structuredOutputText === undefined) {
+      const text = structuredOutputToolUseText(j);
+      if (text !== undefined) state.structuredOutputText = text;
+    }
     return null;
   }
 
@@ -249,7 +416,18 @@ export function handleStreamJsonLine(
       text = stripCodeFence(typeof j.result === "string" ? j.result : "");
     }
 
-    const usage = toUsageBreakdown((asObject(j.usage) ?? {}) as ClaudeUsage);
+    const rawUsage = asObject(j.usage) ?? {};
+    updateRoutingFromUsage(rawUsage, state);
+    const resultModel = optionalString(j.model);
+    if (state && resultModel && !state.servedModel) {
+      state.servedModel = canonicalEventModel(resultModel);
+    }
+    const resultStopReason = optionalString(j.stop_reason);
+    if (state && resultStopReason) {
+      state.stopReason = resultStopReason;
+      if (resultStopReason === "refusal") state.refusalWithoutFallback = true;
+    }
+    const usage = toUsageBreakdown(rawUsage as ClaudeUsage);
     const quotaExhausted = text.startsWith("You've hit");
     const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
     const terminalReason = typeof j.terminal_reason === "string" ? j.terminal_reason : undefined;
@@ -264,7 +442,8 @@ export function handleStreamJsonLine(
     const isError =
       j.is_error === true ||
       j.terminal_reason === "model_error" ||
-      (subtype !== undefined && subtype !== "success");
+      (subtype !== undefined && subtype !== "success") ||
+      state?.refusalWithoutFallback === true;
 
     return {
       text,
@@ -275,6 +454,10 @@ export function handleStreamJsonLine(
       isError,
       subtype,
       terminalReason,
+      servedModel: state?.servedModel,
+      stopReason: state?.stopReason,
+      refusal: state?.refusal,
+      modelFallbacks: state?.modelFallbacks,
     };
   }
 

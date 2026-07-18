@@ -125,21 +125,38 @@ export const QueryInput = z.object({
 });
 export type QueryInput = z.infer<typeof QueryInput>;
 
+export const ModelFallback = z.object({
+  trigger: z.literal("refusal"),
+  fromModel: z.string(),
+  toModel: z.string(),
+  category: z.string().optional(),
+  explanation: z.string().optional(),
+});
+export type ModelFallback = z.infer<typeof ModelFallback>;
+
+export const CostSource = z.enum(["provider", "pricing_table", "mixed"]);
+export type CostSource = z.infer<typeof CostSource>;
+
 export const QueryOutput = z.object({
   text: z.string(),
   content: z.array(QgridContent),
   finishReason: FinishReason,
   tokenName: z.string().optional(),
   model: z.string().optional(),
+  requestedModel: z.string().optional(),
+  modelFallbacks: z.array(ModelFallback).optional(),
   usage: z.object({
     input_tokens: z.number(),
     output_tokens: z.number(),
     cache_creation_input_tokens: z.number(),
+    cache_creation_5m_input_tokens: z.number().optional(),
+    cache_creation_1h_input_tokens: z.number().optional(),
     cache_read_input_tokens: z.number(),
   }),
   durationMs: z.number(),
   ttftMs: z.number(),
   costUsd: z.number(),
+  costSource: CostSource,
   runContext: QgridRunContext.optional(),
 });
 export type QueryOutput = z.infer<typeof QueryOutput>;
@@ -156,17 +173,22 @@ export const StreamEvents = z.object({
   done: z.object({
     text: z.string(),
     model: z.string().optional(),
+    requestedModel: z.string().optional(),
+    modelFallbacks: z.array(ModelFallback).optional(),
     tokenName: z.string().optional(),
     finishReason: FinishReason,
     usage: z.object({
       input_tokens: z.number(),
       output_tokens: z.number(),
       cache_creation_input_tokens: z.number(),
+      cache_creation_5m_input_tokens: z.number().optional(),
+      cache_creation_1h_input_tokens: z.number().optional(),
       cache_read_input_tokens: z.number(),
     }),
     durationMs: z.number(),
     ttftMs: z.number(),
     costUsd: z.number(),
+    costSource: CostSource,
     content: z.array(QgridContent),
     runContext: QgridRunContext.optional(),
   }),
@@ -190,10 +212,17 @@ export const AppendStepInput = z.object({
   requestLogId: z.number(),
   stepIndex: z.number(),
   type: z.enum(["generate", "tool_call"]),
+  modelName: z.string().optional(),
+  requestedModelName: z.string().optional(),
+  fallbackCount: z.number().optional(),
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   cacheReadTokens: z.number().optional(),
   cacheCreationTokens: z.number().optional(),
+  cacheCreation5mTokens: z.number().optional(),
+  cacheCreation1hTokens: z.number().optional(),
+  costUsd: z.number().optional(),
+  costSource: CostSource.optional(),
   durationMs: z.number().optional(),
   ttftMs: z.number().nullable().optional(),
   finishReason: z.string().optional(),
@@ -214,10 +243,17 @@ export const FinishRunInput = z.object({
   status: z.enum(["succeeded", "error", "aborted"]),
   response: z.string().optional(),
   tokenName: z.string().optional(),
+  modelName: z.string().optional(),
+  requestedModelName: z.string().optional(),
+  fallbackCount: z.number().optional(),
   totalInputTokens: z.number().optional(),
   totalOutputTokens: z.number().optional(),
   totalCacheReadTokens: z.number().optional(),
   totalCacheCreationTokens: z.number().optional(),
+  totalCacheCreation5mTokens: z.number().optional(),
+  totalCacheCreation1hTokens: z.number().optional(),
+  costUsd: z.number().optional(),
+  costSource: CostSource.optional(),
   totalDurationMs: z.number().optional(),
   history: z.string().optional(),
   errorMessage: z.string().optional(),

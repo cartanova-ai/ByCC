@@ -340,6 +340,10 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
           input_tokens: 10,
           cache_creation_input_tokens: 2274,
           cache_read_input_tokens: 14853,
+          cache_creation: {
+            ephemeral_5m_input_tokens: 274,
+            ephemeral_1h_input_tokens: 2000,
+          },
           output_tokens: 111,
         },
       }),
@@ -349,6 +353,8 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
       inputTokens: 10 + 2274 + 14853,
       cachedInputTokens: 14853,
       cacheCreationInputTokens: 2274,
+      cacheCreationInputTokens5m: 274,
+      cacheCreationInputTokens1h: 2000,
       outputTokens: 111,
       reasoningOutputTokens: 0,
     });
@@ -390,6 +396,131 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     expect(ok1.result!.isError).toBe(false);
     const ok2 = runLines([JSON.stringify({ type: "result", result: "ok", usage: {} })]);
     expect(ok2.result!.isError).toBe(false);
+  });
+
+  it("Fable refusal fallback: Opus 응답은 성공으로 유지하고 실제 serving model을 보존", () => {
+    const { result } = runLines([
+      JSON.stringify({
+        type: "system",
+        subtype: "model_refusal_fallback",
+        trigger: "refusal",
+        originalModel: "claude-fable-5",
+        fallbackModel: "claude-opus-4-8",
+        apiRefusalCategory: "cyber",
+        apiRefusalExplanation: "classifier declined the request",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          model: "claude-opus-4-8",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "safe answer" }],
+          usage: {
+            iterations: [
+              { type: "message", model: "claude-fable-5", input_tokens: 100 },
+              {
+                type: "fallback_message",
+                model: "claude-opus-4-8",
+                input_tokens: 100,
+                output_tokens: 20,
+              },
+            ],
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "safe answer",
+        usage: { input_tokens: 100, output_tokens: 20 },
+        total_cost_usd: 0.003,
+      }),
+    ]);
+
+    expect(result).toMatchObject({
+      isError: false,
+      stopReason: "end_turn",
+      servedModel: "claude-opus-4-8",
+      modelFallbacks: [
+        {
+          trigger: "refusal",
+          fromModel: "claude-fable-5",
+          toModel: "claude-opus-4-8",
+          category: "cyber",
+          explanation: "classifier declined the request",
+        },
+      ],
+    });
+  });
+
+  it("Fable final refusal: success envelope라도 fallback이 없으면 에러", () => {
+    const { result } = runLines([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          model: "claude-fable-5",
+          stop_reason: "refusal",
+          stop_details: { type: "refusal", category: "bio", explanation: "declined" },
+          content: [],
+        },
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "model_refusal_no_fallback",
+        trigger: "refusal",
+        originalModel: "claude-fable-5",
+        apiRefusalCategory: "bio",
+        apiRefusalExplanation: "declined",
+      }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "",
+        usage: { input_tokens: 412, output_tokens: 0 },
+        total_cost_usd: 0,
+      }),
+    ]);
+
+    expect(result).toMatchObject({
+      isError: true,
+      stopReason: "refusal",
+      servedModel: "claude-fable-5",
+      refusal: { category: "bio", explanation: "declined" },
+    });
+  });
+
+  it("usage.iterations만 있어도 Fable → Opus fallback을 복원", () => {
+    const { result } = runLines([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          model: "claude-opus-4-8",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "answer" }],
+          usage: {
+            iterations: [
+              { type: "message", model: "claude-fable-5" },
+              { type: "fallback_message", model: "claude-opus-4-8" },
+            ],
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "answer",
+        usage: { input_tokens: 10, output_tokens: 2 },
+      }),
+    ]);
+
+    expect(result!.servedModel).toBe("claude-opus-4-8");
+    expect(result!.modelFallbacks).toEqual([
+      {
+        trigger: "refusal",
+        fromModel: "claude-fable-5",
+        toModel: "claude-opus-4-8",
+      },
+    ]);
   });
 
   it("quota: result text가 'You've hit'로 시작 → quotaExhausted true", () => {

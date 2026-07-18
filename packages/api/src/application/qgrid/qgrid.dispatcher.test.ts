@@ -369,6 +369,87 @@ describe("QgridDispatcherClass", () => {
     expect(result.usage.cache_creation_input_tokens).toBe(600);
   });
 
+  it("provider cost 가 0이면 Anthropic 5m/1h cache breakdown 으로 fallback cost 를 계산한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(
+      async (_req: GenerateRequest): Promise<GenerateResult> => ({
+        text: "ok",
+        tokenName: "anthropic/test",
+        usage: {
+          totalTokens: 100_000,
+          inputTokens: 100_000,
+          cachedInputTokens: 0,
+          cacheCreationInputTokens: 80_000,
+          cacheCreationInputTokens5m: 30_000,
+          cacheCreationInputTokens1h: 50_000,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        },
+        durationMs: 12,
+        costUsd: 0,
+        model: "claude-sonnet-4-6",
+        threadCoord: { workerId: 1, threadId: "sess-1", epoch: 0 },
+      }),
+    );
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    const result = await dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" });
+
+    expect(result.costUsd).toBeCloseTo(0.4725, 10);
+    expect(result.usage.cache_creation_input_tokens).toBe(80_000);
+    expect(result.usage.cache_creation_5m_input_tokens).toBe(30_000);
+    expect(result.usage.cache_creation_1h_input_tokens).toBe(50_000);
+    expect(result.costSource).toBe("pricing_table");
+  });
+
+  it("Fable refusal fallback은 실제 serving model과 requested model을 구분한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(
+      async (_req: GenerateRequest): Promise<GenerateResult> => ({
+        text: "served by opus",
+        tokenName: "anthropic/test",
+        usage: {
+          totalTokens: 120,
+          inputTokens: 100,
+          cachedInputTokens: 0,
+          outputTokens: 20,
+          reasoningOutputTokens: 0,
+        },
+        durationMs: 12,
+        costUsd: 0.003,
+        requestedModel: "claude-fable-5",
+        model: "claude-opus-4-8",
+        modelFallbacks: [
+          {
+            trigger: "refusal",
+            fromModel: "claude-fable-5",
+            toModel: "claude-opus-4-8",
+            category: "cyber",
+          },
+        ],
+        threadCoord: { workerId: 1, threadId: "sess-1", epoch: 0 },
+      }),
+    );
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    const result = await dispatcher.query({ prompt: "hi", model: "anthropic/claude-fable-5" });
+
+    expect(result).toMatchObject({
+      model: "claude-opus-4-8",
+      requestedModel: "claude-fable-5",
+      costUsd: 0.003,
+      costSource: "provider",
+      modelFallbacks: [
+        {
+          trigger: "refusal",
+          fromModel: "claude-fable-5",
+          toModel: "claude-opus-4-8",
+          category: "cyber",
+        },
+      ],
+    });
+  });
+
   it("provider ttftMs 를 QueryOutput.ttftMs 로 매핑하고 누락 값은 0 으로 둔다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi

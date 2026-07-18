@@ -256,27 +256,34 @@ function buildRawOutputSchema(
 function toEmulationResult(
   result: GenerateResult,
 ): Omit<QueryOutput, "content" | "finishReason" | "runContext"> {
+  const hasProviderCost = result.costUsd !== undefined && result.costUsd > 0;
   return {
     text: result.text,
     tokenName: result.tokenName,
     model: result.model,
+    requestedModel: result.requestedModel,
+    modelFallbacks: result.modelFallbacks,
     usage: {
       input_tokens: result.usage.inputTokens,
       output_tokens: result.usage.outputTokens,
       cache_creation_input_tokens: result.usage.cacheCreationInputTokens ?? 0,
+      cache_creation_5m_input_tokens: result.usage.cacheCreationInputTokens5m,
+      cache_creation_1h_input_tokens: result.usage.cacheCreationInputTokens1h,
       cache_read_input_tokens: result.usage.cachedInputTokens,
     },
     durationMs: result.durationMs,
     ttftMs: result.ttftMs ?? 0,
-    costUsd:
-      result.costUsd !== undefined && result.costUsd > 0
-        ? result.costUsd
-        : calculateCostUsd(result.model, {
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            cachedInputTokens: result.usage.cachedInputTokens,
-            cacheCreationInputTokens: result.usage.cacheCreationInputTokens ?? 0,
-          }),
+    costUsd: hasProviderCost
+      ? result.costUsd!
+      : calculateCostUsd(result.model, {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cachedInputTokens: result.usage.cachedInputTokens,
+          cacheCreationInputTokens: result.usage.cacheCreationInputTokens ?? 0,
+          cacheCreationInputTokens5m: result.usage.cacheCreationInputTokens5m,
+          cacheCreationInputTokens1h: result.usage.cacheCreationInputTokens1h,
+        }),
+    costSource: hasProviderCost ? "provider" : "pricing_table",
   };
 }
 

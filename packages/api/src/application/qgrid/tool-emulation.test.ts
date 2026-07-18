@@ -63,6 +63,7 @@ describe("applyToolCallEmulation image parts", () => {
     durationMs: 10,
     ttftMs: 0,
     costUsd: 0,
+    costSource: "pricing_table" as const,
   };
   const img = { data: "iVBORw0KGgoBAgM", revisedPrompt: "a red circle" };
 

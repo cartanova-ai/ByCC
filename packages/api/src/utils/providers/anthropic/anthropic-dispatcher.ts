@@ -347,7 +347,8 @@ export class AnthropicDispatcher implements ProviderDispatcher {
             ? `${session.text.slice(0, 500)}…(${session.text.length} chars)`
             : session.text
           : `empty text, outputTokens=${session.usage.outputTokens}`;
-        throw new Error(`claude error (${token.name}) [${reason}]: ${body}`);
+        const refusal = session.refusal ? ` refusal=${JSON.stringify(session.refusal)}` : "";
+        throw new Error(`claude error (${token.name}) [${reason}]: ${body}${refusal}`);
       }
 
       return {
@@ -357,7 +358,11 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         durationMs: session.durationMs,
         ttftMs: session.ttftMs,
         costUsd: session.costUsd,
-        model,
+        // Claude Code 는 Fable refusal 을 Opus 로 자동 fallback 할 수 있다. 요청 모델을
+        // 그대로 serving model 로 기록하면 비용/감사 로그가 모두 틀어지므로 둘을 구분한다.
+        model: session.servedModel ?? model,
+        requestedModel: model,
+        modelFallbacks: session.modelFallbacks,
         // systemHash 는 상위 issueConvContext 가 채운다(여기선 비운다).
         threadCoord: {
           workerId: makeAnthropicWorkerId(token.id),
