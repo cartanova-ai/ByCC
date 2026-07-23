@@ -11,6 +11,11 @@ export type QgridProviderConfig = {
  */
 export type QgridProviderOptions = {
   /**
+   * qgrid request log 저장 여부. 기본값은 true.
+   * false여도 client tool 실행과 multi-step 연결은 계속 동작한다.
+   */
+  logger?: boolean;
+  /**
    * 멀티턴 시 codex thread reuse를 위한 대화 식별자, 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면
    * provider가 같은 sessionKey 의 thread 좌표를 내부에서 회송해 prompt cache 를 적중시킨다
    * 좌표는 sessionKey 별로 격리된다.

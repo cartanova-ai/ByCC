@@ -125,22 +125,23 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
   const effort = config?.defaultEffort ?? DEFAULT_QGRID_EFFORT;
   const projectName = config?.projectName ?? process.env.QGRID_PROJECT_NAME;
 
+  type ClientRunContext = NonNullable<QueryOutput["runContext"]>;
   type ClientRunState = {
-    runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord };
+    runContext?: ClientRunContext;
     pendingToolCallIds: Set<string>;
   };
   type MatchedClientRun = {
     key: string;
-    runContext: ClientRunState["runContext"];
+    runContext?: ClientRunContext;
     toolResultsPayload: Array<{ toolCallId: string; output: string; isError?: boolean }>;
   };
 
   const clientRuns = new Map<string, ClientRunState>();
   let anonymousClientRunId = 0;
 
-  function clientRunKey(runContext: ClientRunState["runContext"]): string {
-    if (runContext.requestLogId !== undefined) return `request:${runContext.requestLogId}`;
-    if (runContext.threadCoord) {
+  function clientRunKey(runContext?: ClientRunContext): string {
+    if (runContext?.requestLogId !== undefined) return `request:${runContext.requestLogId}`;
+    if (runContext?.threadCoord) {
       const { workerId, epoch, threadId } = runContext.threadCoord;
       return `thread:${workerId}:${epoch}:${threadId}`;
     }
@@ -148,7 +149,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
     return `anonymous:${anonymousClientRunId}`;
   }
 
-  function rememberClientRun(runContext: ClientRunState["runContext"], toolCallIds: string[]) {
+  function rememberClientRun(runContext: ClientRunContext | undefined, toolCallIds: string[]) {
     if (toolCallIds.length === 0) return;
     clientRuns.set(clientRunKey(runContext), {
       runContext,
@@ -200,6 +201,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
+      const logger = qgridOptions.logger;
       const imageGenerationOptions = qgridOptions.imageGenerationOptions;
       if (imageGeneration) {
         assertImageInputFitsJsonTransport(imageUrls);
@@ -222,28 +224,24 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         !hasTools && rawSchema && schemaType === "object" ? JSON.stringify(rawSchema) : undefined;
 
       // follow-up 판단 + toolResults 구성
-      let runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord } | undefined;
+      let runContext: ClientRunContext | undefined;
       let toolResultsPayload:
         | Array<{ toolCallId: string; output: string; isError?: boolean }>
         | undefined;
-      let logMode: "auto" | "run" | undefined;
 
       const matchedClientRun = matchClientRun(options.prompt);
       if (matchedClientRun) {
         // follow-up (tool-call 루프)
         runContext = matchedClientRun.runContext;
         toolResultsPayload = matchedClientRun.toolResultsPayload;
-        logMode = "run";
       }
 
       // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송.
-      // tool-result follow-up 과 동시 활성되지 않게, runContext 미설정 시에만 적용.
+      // locally matched tool-result follow-up에는 stale session 좌표를 새로 섞지 않는다.
       const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
-      if (!runContext && storedCoord) {
+      if (!matchedClientRun && storedCoord) {
         runContext = { threadCoord: storedCoord };
       }
-
-      if (!logMode && hasTools) logMode = "run";
 
       const data = await fetch(`${serverUrl}/api/qgrid/query`, {
         method: "POST",
@@ -262,7 +260,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
             ...(projectName ? { projectName } : {}),
-            ...(logMode ? { logMode } : {}),
+            ...(logger === false ? { logger: false } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
             ...(imageGeneration ? { imageGeneration } : {}),
@@ -304,9 +302,13 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         content.push({ type: "text", text: data.text });
       }
 
-      // version skew 방어: imageGeneration 을 요청했는데 응답에 이미지가 없으면(구버전 서버가
-      // 플래그를 strip 해 조용히 텍스트만 반환) 명시적 에러. R6 의 "조용한 폴백 금지"를 wire 경계에서 유지.
-      if (imageGeneration && !content.some((c) => c.type === "file")) {
+      // version skew 방어: imageGeneration의 최종 응답에 이미지가 없으면(구버전 서버가
+      // 플래그를 strip 해 조용히 텍스트만 반환) 명시적 에러. 중간 client tool-call은 계속한다.
+      if (
+        imageGeneration &&
+        finishReason.unified !== "tool-calls" &&
+        !content.some((c) => c.type === "file")
+      ) {
         throw new Error(
           "qgrid: imageGeneration was requested but the response contained no image — the server may be an older version that does not support image generation.",
         );
@@ -314,7 +316,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 
       // client run state 업데이트
       if (matchedClientRun) clientRuns.delete(matchedClientRun.key);
-      if (data.runContext && finishReason.unified === "tool-calls") {
+      if (finishReason.unified === "tool-calls") {
         rememberClientRun(
           data.runContext,
           content
@@ -351,6 +353,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
+      const logger = qgridOptions.logger;
       // 이미지 생성은 non-stream 전용(R2). 서버 왕복 전에 클라이언트에서 명시적으로 거부한다.
       if (qgridOptions.imageGeneration) {
         throw new Error(
@@ -373,27 +376,23 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
           : undefined;
 
       // follow-up 판단
-      let runContext: { requestLogId?: number; threadCoord?: QgridThreadCoord } | undefined;
+      let runContext: ClientRunContext | undefined;
       let toolResultsPayload:
         | Array<{ toolCallId: string; output: string; isError?: boolean }>
         | undefined;
-      let logMode: "auto" | "run" | undefined;
 
       const matchedClientRun = matchClientRun(options.prompt);
       if (matchedClientRun) {
         runContext = matchedClientRun.runContext;
         toolResultsPayload = matchedClientRun.toolResultsPayload;
-        logMode = "run";
       }
 
-      // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송 (tool-result follow-up 미설정 시에만).
+      // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송. locally matched tool
+      // follow-up에는 stale session 좌표를 새로 섞지 않는다.
       const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
-      if (!runContext && storedCoord) {
+      if (!matchedClientRun && storedCoord) {
         runContext = { threadCoord: storedCoord };
       }
-
-      // tool이 있을 때만 run lifecycle. tool 없는 단일 stream은 서버가 auto로 처리(step 없이 request_log 1건).
-      if (!logMode && hasTools) logMode = "run";
 
       const prepRes = await fetch(`${serverUrl}/api/qgrid/prepareStream`, {
         method: "POST",
@@ -411,7 +410,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
             ...(projectName ? { projectName } : {}),
-            ...(logMode ? { logMode } : {}),
+            ...(logger === false ? { logger: false } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
           },
@@ -463,7 +462,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 
                 // client run state 업데이트
                 if (matchedClientRun) clientRuns.delete(matchedClientRun.key);
-                if (done.runContext && done.finishReason === "tool-calls") {
+                if (done.finishReason === "tool-calls") {
                   rememberClientRun(
                     done.runContext,
                     (done.content ?? [])

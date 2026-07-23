@@ -133,6 +133,7 @@ describe("qgrid AI SDK provider", () => {
           verbosity: "medium",
           reasoningSummary: "concise",
           serviceTier: "flex",
+          logger: false,
           fallbackModels: ["openai/gpt-5.4-mini"],
         },
       },
@@ -144,6 +145,7 @@ describe("qgrid AI SDK provider", () => {
         verbosity: "medium",
         reasoningSummary: "concise",
         serviceTier: "flex",
+        logger: false,
       },
     });
     expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty(
@@ -192,10 +194,10 @@ describe("qgrid AI SDK provider", () => {
     expect(queryBody).toMatchObject({
       args: {
         prompt: "weather",
-        logMode: "run",
         tools: [{ name: "getWeather", description: "Get weather" }],
       },
     });
+    expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty("logMode");
     expect(result.finishReason).toEqual({ unified: "tool-calls", raw: "tool_call" });
     expect(result.content).toEqual([
       {
@@ -275,10 +277,10 @@ describe("qgrid AI SDK provider", () => {
     // follow-up 호출에 runContext + toolResults가 포함되어야 함
     const followUpQuery = calls.filter((c) => c.url.includes("/query"))[1];
     expect(followUpQuery?.body.args).toMatchObject({
-      logMode: "run",
       runContext: { requestLogId: 42 },
       toolResults: [{ toolCallId: "call_1" }],
     });
+    expect(followUpQuery?.body.args).not.toHaveProperty("logMode");
 
     // SDK는 직접 createRun/appendStep/finishRun 호출 안 함
     expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
@@ -288,7 +290,89 @@ describe("qgrid AI SDK provider", () => {
     expect(result.content).toEqual([{ type: "text", text: "Seoul is 22°C" }]);
   });
 
-  it("keeps parallel tool-call runs isolated on one model instance", async () => {
+  it("continues logger-disabled image generation through a client tool without runContext", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        calls.push({ url, body });
+
+        if (!url.includes("/query")) return new Response("{}", { status: 200 });
+
+        if (Array.isArray(body.args.toolResults)) {
+          return new Response(
+            JSON.stringify({
+              text: "",
+              content: [{ type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: null }],
+              finishReason: "stop",
+              model: "gpt-5.4",
+              usage,
+              durationMs: 80,
+              costUsd: 0.005,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            text: "",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_palette",
+                toolName: "getWeather",
+                input: '{"city":"palette"}',
+              },
+            ],
+            finishReason: "tool-calls",
+            model: "gpt-5.5",
+            usage,
+            durationMs: 100,
+            costUsd: 0.01,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const model = qgrid("openai/gpt-5.5");
+    const providerOptions = { qgrid: { imageGeneration: true, logger: false } };
+
+    const first = await model.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "draw with this palette" }] }],
+      tools: [tool()],
+      providerOptions,
+    } as never);
+    expect(first.finishReason).toEqual({ unified: "tool-calls", raw: "tool_call" });
+
+    const result = await model.doGenerate({
+      prompt: toolPrompt(["call_palette"]),
+      tools: [tool()],
+      providerOptions,
+    } as never);
+
+    const queryBodies = calls.filter((call) => call.url.includes("/query")).map((call) => call.body);
+    expect(queryBodies).toHaveLength(2);
+    expect(queryBodies[0]?.args).toMatchObject({
+      logger: false,
+      imageGeneration: true,
+    });
+    expect(queryBodies[1]?.args).toMatchObject({
+      logger: false,
+      imageGeneration: true,
+      toolResults: [{ toolCallId: "call_palette" }],
+    });
+    expect(queryBodies[1]?.args).not.toHaveProperty("runContext");
+    expect(result.content).toEqual([
+      { type: "file", mediaType: "image/png", data: "iVBORw0KGgoBAgM" },
+    ]);
+    expect(result.response?.modelId).toBe("gpt-5.4");
+  });
+
+  it("keeps parallel logger-disabled tool runs isolated without server run contexts", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     vi.stubGlobal(
@@ -332,7 +416,6 @@ describe("qgrid AI SDK provider", () => {
               usage,
               durationMs: 100,
               costUsd: 0.01,
-              runContext: { requestLogId: suffix === "a" ? 101 : 102 },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
@@ -347,20 +430,24 @@ describe("qgrid AI SDK provider", () => {
       model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "weather a" }] }],
         tools: [tool()],
+        providerOptions: { qgrid: { logger: false } },
       } as never),
       model.doGenerate({
         prompt: [{ role: "user", content: [{ type: "text", text: "weather b" }] }],
         tools: [tool()],
+        providerOptions: { qgrid: { logger: false } },
       } as never),
     ]);
 
     await model.doGenerate({
       prompt: toolPrompt(["call_a"]),
       tools: [tool()],
+      providerOptions: { qgrid: { logger: false } },
     } as never);
     await model.doGenerate({
       prompt: toolPrompt(["call_b"]),
       tools: [tool()],
+      providerOptions: { qgrid: { logger: false } },
     } as never);
 
     const queryBodies = calls.filter((c) => c.url.includes("/query")).map((c) => c.body);
@@ -372,16 +459,18 @@ describe("qgrid AI SDK provider", () => {
     );
 
     expect(followUpA?.args).toMatchObject({
-      runContext: { requestLogId: 101 },
+      logger: false,
       toolResults: [{ toolCallId: "call_a" }],
     });
     expect(followUpB?.args).toMatchObject({
-      runContext: { requestLogId: 102 },
+      logger: false,
       toolResults: [{ toolCallId: "call_b" }],
     });
+    expect(followUpA?.args).not.toHaveProperty("runContext");
+    expect(followUpB?.args).not.toHaveProperty("runContext");
   });
 
-  it("does not send logMode for non-tool doGenerate", async () => {
+  it("keeps request logging enabled by default without sending a wire override", async () => {
     let queryBody: unknown;
     vi.stubGlobal(
       "fetch",
@@ -410,8 +499,8 @@ describe("qgrid AI SDK provider", () => {
       prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
     } as never);
 
-    // logMode가 없어야 함 (서버 auto 경로)
     expect((queryBody as Record<string, unknown>).args).not.toHaveProperty("logMode");
+    expect((queryBody as Record<string, unknown>).args).not.toHaveProperty("logger");
   });
 
   it("maps usage without negative noCache tokens when cache read is present", async () => {
@@ -510,7 +599,7 @@ describe("qgrid AI SDK provider", () => {
     });
   });
 
-  it("does not send logMode for non-tool doStream (server treats as auto)", async () => {
+  it("sends logger false to prepareStream", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     vi.stubGlobal(
@@ -545,18 +634,99 @@ describe("qgrid AI SDK provider", () => {
 
     const result = await qgrid("openai/gpt-5.5").doStream({
       prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      providerOptions: { qgrid: { logger: false } },
     } as never);
     for await (const _part of result.stream) {
       // drain
     }
 
     const prepareCall = calls.find((c) => c.url.includes("/prepareStream"));
-    // tool이 없으면 logMode를 보내지 않는다 → 서버가 auto로 처리(step 없이 request_log 1건).
+    expect(prepareCall?.body.args).toMatchObject({ logger: false });
     expect(prepareCall?.body.args).not.toHaveProperty("logMode");
 
     // SDK는 직접 lifecycle 호출 안 함
     expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
     expect(calls.filter((c) => c.url.includes("/finishRun"))).toHaveLength(0);
+  });
+
+  it("continues a logger-disabled streamed tool run without server runContext", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let streamNumber = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        calls.push({ url, body });
+
+        if (url.includes("/prepareStream")) {
+          return new Response(JSON.stringify({ streamId: `s${++streamNumber}` }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.includes("streamId=s1")) {
+          return new Response(
+            sseDone({
+              text: "",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call_stream",
+                  toolName: "getWeather",
+                  input: '{"city":"Seoul"}',
+                },
+              ],
+              finishReason: "tool-calls",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 100,
+              costUsd: 0.01,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          sseDone({
+            text: "done",
+            content: [{ type: "text", text: "done" }],
+            finishReason: "stop",
+            model: "gpt-5.5",
+            usage,
+            durationMs: 80,
+            costUsd: 0.005,
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const model = qgrid("openai/gpt-5.5");
+    const first = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
+      tools: [tool()],
+      providerOptions: { qgrid: { logger: false } },
+    } as never);
+    for await (const _part of first.stream) {
+      // drain so the done event records the pending client tool call
+    }
+
+    const second = await model.doStream({
+      prompt: toolPrompt(["call_stream"]),
+      tools: [tool()],
+      providerOptions: { qgrid: { logger: false } },
+    } as never);
+    for await (const _part of second.stream) {
+      // drain
+    }
+
+    const prepares = calls.filter((call) => call.url.includes("/prepareStream"));
+    expect(prepares).toHaveLength(2);
+    expect(prepares[1]?.body.args).toMatchObject({
+      logger: false,
+      toolResults: [{ toolCallId: "call_stream" }],
+    });
+    expect(prepares[1]?.body.args).not.toHaveProperty("runContext");
   });
 
   it("does not store or replay qgrid sessionKey threadCoord for Anthropic models", async () => {
@@ -668,7 +838,7 @@ describe("qgrid AI SDK provider", () => {
 
     const secondQuery = calls.filter((c) => c.url.includes("/query"))[1];
     expect(secondQuery?.body.args).not.toHaveProperty("runContext");
-    expect(secondQuery?.body.args).toMatchObject({ logMode: "run" });
+    expect(secondQuery?.body.args).not.toHaveProperty("logMode");
   });
 
   it("sends imageGeneration flag and maps image content to a file part", async () => {
