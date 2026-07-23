@@ -284,29 +284,35 @@ function ErrorPanel({ message }: { message: string }) {
 }
 
 function HeaderBar({ data }: { data: RequestLog }) {
-  const status = (data as Record<string, unknown>).status as string | undefined;
+  const isRunning = data.status === "running";
   const hasFallback =
+    !isRunning &&
     data.requested_model_name !== null &&
     data.model_name !== null &&
     data.requested_model_name !== data.model_name;
+  const hasRequestedOnly =
+    !isRunning && data.requested_model_name !== null && data.model_name === null;
 
   return (
     <div className="panel overflow-hidden px-5 py-3 flex items-center gap-2">
       <span className="text-[15px] font-semibold text-sand-900">
-        {hasFallback
-          ? `${data.requested_model_name} → ${data.model_name}`
-          : (data.model_name ?? "Unknown model")}
+        {isRunning
+          ? "실행 중"
+          : hasFallback
+            ? `${data.requested_model_name} → ${data.model_name}`
+            : (data.model_name ?? data.requested_model_name ?? "Unknown model")}
       </span>
-      {(data.fallback_count ?? 0) > 0 && (
+      {hasRequestedOnly && <span className="text-[10px] text-sand-400">요청</span>}
+      {!isRunning && (data.fallback_count ?? 0) > 0 && (
         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-caution-400/15 text-caution-500 font-medium uppercase">
           fallback ×{data.fallback_count}
         </span>
       )}
-      {status && status !== "succeeded" && (
+      {!isRunning && data.status !== "succeeded" && (
         <span
-          className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase ${STATUS_STYLE[status] ?? "bg-sand-100 text-sand-500"}`}
+          className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium uppercase ${STATUS_STYLE[data.status] ?? "bg-sand-100 text-sand-500"}`}
         >
-          {status}
+          {data.status}
         </span>
       )}
       {data.effort && (

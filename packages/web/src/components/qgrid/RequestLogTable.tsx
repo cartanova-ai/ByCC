@@ -29,6 +29,44 @@ function formatDuration(ms: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+function RequestModel({
+  status,
+  requestedModel,
+  servedModel,
+  fallbackCount,
+}: {
+  status: string;
+  requestedModel: string | null;
+  servedModel: string | null;
+  fallbackCount: number | null;
+}) {
+  if (status === "running") {
+    return (
+      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-600 font-medium whitespace-nowrap">
+        실행 중
+      </span>
+    );
+  }
+
+  const hasFallback =
+    requestedModel !== null && servedModel !== null && requestedModel !== servedModel;
+  const hasRequestedOnly = requestedModel !== null && servedModel === null;
+
+  return (
+    <>
+      <span className="text-xs text-sand-500">
+        {hasFallback
+          ? `${requestedModel} → ${servedModel}`
+          : (servedModel ?? requestedModel ?? "—")}
+      </span>
+      {hasRequestedOnly && <span className="ml-1 text-[9px] text-sand-400">요청</span>}
+      {(fallbackCount ?? 0) > 0 && (
+        <span className="ml-1 text-[9px] text-caution-500">×{fallbackCount}</span>
+      )}
+    </>
+  );
+}
+
 // request_logs.ttft_ms stores 0 as the run-level "unknown/no measured TTFT" fallback.
 // Non-zero TTFT is usually sub-second, so use adaptive ms/s formatting.
 function formatTtft(ms: number): string {
@@ -193,18 +231,12 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                       <span className="text-xs text-sand-500">{row.token_name}</span>
                     </td>
                     <td className="px-4 py-1.5 whitespace-nowrap">
-                      <span className="text-xs text-sand-500">
-                        {row.requested_model_name &&
-                        row.model_name &&
-                        row.requested_model_name !== row.model_name
-                          ? `${row.requested_model_name} → ${row.model_name}`
-                          : (row.model_name ?? "—")}
-                      </span>
-                      {(row.fallback_count ?? 0) > 0 && (
-                        <span className="ml-1 text-[9px] text-caution-500">
-                          ×{row.fallback_count}
-                        </span>
-                      )}
+                      <RequestModel
+                        status={row.status}
+                        requestedModel={row.requested_model_name}
+                        servedModel={row.model_name}
+                        fallbackCount={row.fallback_count}
+                      />
                     </td>
                     <td className="px-4 py-1.5 text-left tabular-nums text-sand-500 whitespace-nowrap">
                       {formatTtft(row.ttft_ms)}
