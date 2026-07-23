@@ -20,14 +20,14 @@
     {
       "name": "model_name",
       "type": "string",
-      "length": 50,
+      "length": 255,
       "nullable": true,
       "desc": "실제 serving 모델"
     },
     {
       "name": "requested_model_name",
       "type": "string",
-      "length": 50,
+      "length": 255,
       "nullable": true,
       "desc": "요청 모델 (fallback 전)"
     },

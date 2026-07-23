@@ -6,6 +6,8 @@ import {
   exhaustive,
   type ListResult,
   NotFoundException,
+  Puri,
+  transactional,
 } from "sonamu";
 
 import { SD } from "../../i18n/sd.generated";
@@ -16,6 +18,69 @@ import { type RequestLogListParams, type RequestLogSaveParams } from "./request-
 
 // cost_usd는 정수 micro-USD로 저장. 실제 USD = cost_usd / MICRO_USD.
 export const MICRO_USD = 1_000_000;
+const REQUEST_LOG_RUN_LOCK_CLASS_ID = 718;
+
+type ToolResultContinuation = {
+  toolCallId: string;
+  output: string;
+  isError?: boolean;
+};
+
+type RequestLogStepAggregate = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_creation_5m_tokens?: number;
+  cache_creation_1h_tokens?: number;
+  duration_ms: number;
+  fallback_count: number;
+  cost_usd: number;
+  cost_source?: string;
+};
+
+const STEP_AGGREGATE_SELECT = {
+  input_tokens: "input_tokens",
+  output_tokens: "output_tokens",
+  cache_read_tokens: "cache_read_tokens",
+  cache_creation_tokens: "cache_creation_tokens",
+  cache_creation_5m_tokens: "cache_creation_5m_tokens",
+  cache_creation_1h_tokens: "cache_creation_1h_tokens",
+  duration_ms: "duration_ms",
+  fallback_count: "fallback_count",
+  cost_usd: "cost_usd",
+  cost_source: "cost_source",
+} as const;
+
+function aggregateGenerateStepRows(rows: Array<Record<string, unknown>>): RequestLogStepAggregate {
+  const sum = (field: string): number =>
+    rows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+  const optionalSum = (field: string): number | undefined =>
+    rows.some((row) => row[field] !== null && row[field] !== undefined) ? sum(field) : undefined;
+  const collapse = (field: string): string | undefined => {
+    const values = [
+      ...new Set(
+        rows
+          .map((row) => row[field])
+          .filter((value): value is string => typeof value === "string" && value.length > 0),
+      ),
+    ];
+    if (values.length === 0) return undefined;
+    return values.length === 1 ? values[0] : "mixed";
+  };
+  return {
+    input_tokens: sum("input_tokens"),
+    output_tokens: sum("output_tokens"),
+    cache_read_tokens: sum("cache_read_tokens"),
+    cache_creation_tokens: sum("cache_creation_tokens"),
+    cache_creation_5m_tokens: optionalSum("cache_creation_5m_tokens"),
+    cache_creation_1h_tokens: optionalSum("cache_creation_1h_tokens"),
+    duration_ms: sum("duration_ms"),
+    fallback_count: sum("fallback_count"),
+    cost_usd: sum("cost_usd"),
+    cost_source: collapse("cost_source"),
+  };
+}
 
 type RequestLogUsageRow = {
   token_name?: string | null;
@@ -218,7 +283,7 @@ class RequestLogModelClass extends BaseModelClass<
   async createRun(params: {
     user_prompt: string;
     system_prompt?: string | null;
-    model_name?: string | null;
+    requested_model_name?: string | null;
     effort?: string | null;
     project_name?: string | null;
     history?: unknown;
@@ -228,7 +293,9 @@ class RequestLogModelClass extends BaseModelClass<
     wdb.ubRegister("request_logs", {
       user_prompt: params.user_prompt,
       system_prompt: params.system_prompt ?? null,
-      model_name: params.model_name ?? null,
+      // provider 실행 전이므로 serving model은 아직 알 수 없다.
+      requested_model_name: params.requested_model_name ?? null,
+      model_name: null,
       effort: params.effort ?? null,
       project_name: params.project_name ?? null,
       status: "running",
@@ -323,11 +390,11 @@ class RequestLogModelClass extends BaseModelClass<
       params.input_tokens !== undefined &&
       params.output_tokens !== undefined
     ) {
-      const db = this.getDB("r");
-      const [row] = await db("request_logs")
-        .select("model_name")
+      const row = await this.getPuri("r")
+        .from("request_logs")
+        .select({ model_name: "model_name" })
         .where("id", requestLogId)
-        .limit(1);
+        .first();
       const effectiveModelName = params.model_name ?? row?.model_name;
       if (effectiveModelName) {
         const model = canonicalModelName(effectiveModelName);
@@ -363,153 +430,194 @@ class RequestLogModelClass extends BaseModelClass<
   }
 
   async firstGenerateStepTtft(requestLogId: number): Promise<number | null> {
-    const db = this.getDB("r");
-    const [row] = await db("request_log_steps")
-      .select("ttft_ms")
+    const row = await this.getPuri("r")
+      .from("request_log_steps")
+      .select({ ttft_ms: "ttft_ms" })
       .where("request_log_id", requestLogId)
       .where("type", "generate")
-      .whereNotNull("ttft_ms")
+      .where("ttft_ms", "!=", null)
       .orderBy("step_index", "asc")
       .orderBy("id", "asc")
-      .limit(1);
+      .first();
     return row?.ttft_ms === null || row?.ttft_ms === undefined ? null : Number(row.ttft_ms);
   }
 
-  async aggregateStepUsage(requestLogId: number): Promise<{
-    input_tokens: number;
-    output_tokens: number;
-    cache_read_tokens: number;
-    cache_creation_tokens: number;
-    cache_creation_5m_tokens?: number;
-    cache_creation_1h_tokens?: number;
-    duration_ms: number;
-    requested_model_name?: string;
-    model_name?: string;
-    fallback_count: number;
-    cost_usd: number;
-    cost_source?: string;
-  }> {
-    const db = this.getDB("r");
-    const rows = (await db("request_log_steps")
-      .select(
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_creation_tokens",
-        "cache_creation_5m_tokens",
-        "cache_creation_1h_tokens",
-        "duration_ms",
-        "requested_model_name",
-        "model_name",
-        "fallback_count",
-        "cost_usd",
-        "cost_source",
-      )
+  async aggregateStepUsage(requestLogId: number): Promise<RequestLogStepAggregate> {
+    const rows = await this.getPuri("r")
+      .from("request_log_steps")
+      .select(STEP_AGGREGATE_SELECT)
       .where("request_log_id", requestLogId)
-      .where("type", "generate")) as Array<Record<string, unknown>>;
-
-    const sum = (field: string): number =>
-      rows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
-    const optionalSum = (field: string): number | undefined =>
-      rows.some((row) => row[field] !== null && row[field] !== undefined) ? sum(field) : undefined;
-    const collapse = (field: string): string | undefined => {
-      const values = [
-        ...new Set(
-          rows
-            .map((row) => row[field])
-            .filter((value): value is string => typeof value === "string" && value.length > 0),
-        ),
-      ];
-      if (values.length === 0) return undefined;
-      return values.length === 1 ? values[0] : "mixed";
-    };
-    return {
-      input_tokens: sum("input_tokens"),
-      output_tokens: sum("output_tokens"),
-      cache_read_tokens: sum("cache_read_tokens"),
-      cache_creation_tokens: sum("cache_creation_tokens"),
-      cache_creation_5m_tokens: optionalSum("cache_creation_5m_tokens"),
-      cache_creation_1h_tokens: optionalSum("cache_creation_1h_tokens"),
-      duration_ms: sum("duration_ms"),
-      requested_model_name: collapse("requested_model_name"),
-      model_name: collapse("model_name"),
-      fallback_count: sum("fallback_count"),
-      cost_usd: sum("cost_usd"),
-      cost_source: collapse("cost_source"),
-    };
+      .where("type", "generate");
+    return aggregateGenerateStepRows(rows as Array<Record<string, unknown>>);
   }
 
-  async findStaleRunningIds(thresholdMs: number, limit: number = 10): Promise<number[]> {
-    const db = this.getDB("r");
+  /**
+   * Finds stale candidates, then expires each run in its own short transaction.
+   * The candidate query is only a hint; the transactional operation rechecks it
+   * after acquiring the advisory lock shared with tool follow-ups.
+   */
+  async expireStaleToolWaitingRuns(
+    thresholdMs: number,
+    errorMessage: string,
+    limit: number = 10,
+  ): Promise<number[]> {
     const threshold = new Date(Date.now() - thresholdMs);
-    const rows = await db("request_logs")
-      .select("id")
-      .where("status", "running")
-      .where("created_at", "<", threshold)
+    const candidateIds = await this.findStaleToolWaitingRunCandidates(threshold, limit);
+    const expiredIds: number[] = [];
+    for (const requestLogId of candidateIds) {
+      if (await this.tryExpireStaleToolWaitingRun(requestLogId, threshold, errorMessage)) {
+        expiredIds.push(requestLogId);
+      }
+    }
+    return expiredIds;
+  }
+
+  async findStaleToolWaitingRunCandidates(threshold: Date, limit: number): Promise<number[]> {
+    const rows = await this.getPuri("w")
+      .from("request_logs")
+      .join("request_log_steps", "request_logs.id", "request_log_steps.request_log_id")
+      .distinct("request_logs.id")
+      .select({ id: "request_logs.id" })
+      .where("request_logs.status", "running")
+      .where("request_log_steps.type", "tool_call")
+      .where("request_log_steps.created_at", "<", threshold)
+      .where("request_log_steps.tool_result", null)
+      .where("request_log_steps.error", null)
       .limit(limit);
-    return rows.map((r: { id: number }) => r.id);
+    return rows.map(({ id }) => id);
   }
 
-  async getNextStepIndex(requestLogId: number): Promise<number> {
-    const db = this.getDB("r");
-    const [row] = await db("request_log_steps")
-      .where("request_log_id", requestLogId)
-      .max("step_index as maxStep");
-    return ((row as { maxStep: number | null })?.maxStep ?? -1) + 1;
-  }
-
-  async completeToolCall(
+  @transactional({ dbPreset: "w" })
+  async tryExpireStaleToolWaitingRun(
     requestLogId: number,
-    toolCallId: string,
-    params: { tool_result?: string; tool_duration_ms?: number; error?: string },
+    threshold: Date,
+    errorMessage: string,
+  ): Promise<boolean> {
+    const wdb = this.getPuri("w");
+    const lockResult = (await wdb.knex.raw("SELECT pg_try_advisory_xact_lock(?, ?) AS acquired", [
+      REQUEST_LOG_RUN_LOCK_CLASS_ID,
+      requestLogId,
+    ])) as { rows?: Array<{ acquired?: boolean }> };
+    if (lockResult.rows?.[0]?.acquired !== true) return false;
+
+    // The follow-up path uses the same writer transaction lock. Recheck after
+    // locking so a result committed during candidate discovery makes this a no-op.
+    const unresolved = await wdb
+      .from("request_log_steps")
+      .select({ id: "id" })
+      .where("request_log_id", requestLogId)
+      .where("type", "tool_call")
+      .where("created_at", "<", threshold)
+      .where("tool_result", null)
+      .where("error", null)
+      .first();
+    if (!unresolved) return false;
+
+    const stepRows = await wdb
+      .from("request_log_steps")
+      .select(STEP_AGGREGATE_SELECT)
+      .where("request_log_id", requestLogId)
+      .where("type", "generate");
+    const aggregate = aggregateGenerateStepRows(stepRows as Array<Record<string, unknown>>);
+    const firstTtft = await wdb
+      .from("request_log_steps")
+      .select({ ttft_ms: "ttft_ms" })
+      .where("request_log_id", requestLogId)
+      .where("type", "generate")
+      .where("ttft_ms", "!=", null)
+      .orderBy("step_index", "asc")
+      .orderBy("id", "asc")
+      .first();
+
+    const updated = await wdb
+      .from("request_logs")
+      .where("id", requestLogId)
+      .where("status", "running")
+      .update({
+        status: "error",
+        error_message: errorMessage,
+        input_tokens: aggregate.input_tokens,
+        output_tokens: aggregate.output_tokens,
+        cache_read_tokens: aggregate.cache_read_tokens,
+        cache_creation_tokens: aggregate.cache_creation_tokens,
+        ...(aggregate.cache_creation_5m_tokens !== undefined
+          ? { cache_creation_5m_tokens: aggregate.cache_creation_5m_tokens }
+          : {}),
+        ...(aggregate.cache_creation_1h_tokens !== undefined
+          ? { cache_creation_1h_tokens: aggregate.cache_creation_1h_tokens }
+          : {}),
+        duration_ms: aggregate.duration_ms,
+        fallback_count: aggregate.fallback_count,
+        cost_usd: aggregate.cost_usd,
+        ...(aggregate.cost_source !== undefined ? { cost_source: aggregate.cost_source } : {}),
+        ttft_ms:
+          firstTtft?.ttft_ms === null || firstTtft?.ttft_ms === undefined
+            ? 0
+            : Number(firstTtft.ttft_ms),
+      });
+    return updated > 0;
+  }
+
+  /**
+   * Applies a native qgrid tool follow-up and computes its next step index while
+   * holding the per-run advisory lock shared with stale cleanup.
+   */
+  @transactional({ dbPreset: "w" })
+  async continueToolRun(
+    requestLogId: number,
+    toolResults: ToolResultContinuation[],
   ): Promise<number> {
     const wdb = this.getPuri("w");
-    return wdb.transaction(async (trx) => {
-      const updated = await trx
+    await wdb.knex.raw("SELECT pg_advisory_xact_lock(?, ?)", [
+      REQUEST_LOG_RUN_LOCK_CLASS_ID,
+      requestLogId,
+    ]);
+
+    const run = await wdb
+      .from("request_logs")
+      .select({ status: "status" })
+      .where("id", requestLogId)
+      .first();
+    if (!run) throw new Error(`request log run ${requestLogId} not found`);
+    if (run.status !== "running") {
+      throw new Error(`request log run ${requestLogId} is already ${run.status}`);
+    }
+
+    for (const result of toolResults) {
+      await wdb
         .from("request_log_steps")
         .where("request_log_id", requestLogId)
-        .where("tool_call_id", toolCallId)
+        .where("tool_call_id", result.toolCallId)
         .where("type", "tool_call")
-        .update({
-          ...(params.tool_result !== undefined ? { tool_result: params.tool_result } : {}),
-          ...(params.tool_duration_ms !== undefined
-            ? { tool_duration_ms: params.tool_duration_ms }
-            : {}),
-          ...(params.error !== undefined ? { error: params.error } : {}),
-        });
-      return updated;
-    });
+        .update(result.isError ? { error: result.output } : { tool_result: result.output });
+    }
+
+    const row = await wdb
+      .from("request_log_steps")
+      .select({ max_step: Puri.max("step_index") })
+      .where("request_log_id", requestLogId)
+      .first();
+    return (row?.max_step ?? -1) + 1;
   }
 
-  // Sonamu findMany는 subset 전체 컬럼(text 포함)을 페치해서 aggregate엔 너무 무거움 → raw sum 사용.
+  // Sonamu findMany는 subset 전체 컬럼(text 포함)을 페치하므로 비용 계산에 필요한 컬럼만 조회한다.
   async totalCost(params: { token_name?: string } = {}): Promise<number> {
-    const qb = this.getDB("r")("request_logs");
-    if (params.token_name) {
-      qb.where("token_name", params.token_name);
-    }
     // 기존 cost_usd 에는 과거 Anthropic cache 계산 버그로 음수가 저장된 row 가 있을 수 있다.
     // 화면 집계는 저장값 sum 이 아니라 현재 계산식으로 usage 를 재계산해 과거 로그도 즉시 보정한다.
-    const rows = (await qb.select(
-      "model_name",
-      "input_tokens",
-      "output_tokens",
-      "cache_read_tokens",
-      "cache_creation_tokens",
-      "cache_creation_5m_tokens",
-      "cache_creation_1h_tokens",
-      "cost_usd",
-      "cost_source",
-    )) as Array<{
-      model_name: string | null;
-      input_tokens: number;
-      output_tokens: number;
-      cache_read_tokens: number;
-      cache_creation_tokens: number;
-      cache_creation_5m_tokens: number | null;
-      cache_creation_1h_tokens: number | null;
-      cost_usd: number | null;
-      cost_source: string | null;
-    }>;
+    const rows = await this.getPuri("r")
+      .from("request_logs")
+      .where(params.token_name ? { token_name: params.token_name } : {})
+      .select({
+        model_name: "model_name",
+        input_tokens: "input_tokens",
+        output_tokens: "output_tokens",
+        cache_read_tokens: "cache_read_tokens",
+        cache_creation_tokens: "cache_creation_tokens",
+        cache_creation_5m_tokens: "cache_creation_5m_tokens",
+        cache_creation_1h_tokens: "cache_creation_1h_tokens",
+        cost_usd: "cost_usd",
+        cost_source: "cost_source",
+      });
 
     return rows.reduce((sum, row) => {
       // cost_source 가 있으면 새 계약으로 확정 저장된 값이다. 프로모션/가격 변경 이후에도

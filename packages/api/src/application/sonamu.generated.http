@@ -253,7 +253,7 @@ Content-Type: application/json
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
     "isStep": false,
-    "logMode": "auto",
+    "logger": false,
     "runContext": {
       "requestLogId": 0,
       "threadCoord": {
@@ -314,7 +314,7 @@ Content-Type: application/json
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
     "isStep": false,
-    "logMode": "auto",
+    "logger": false,
     "runContext": {
       "requestLogId": 0,
       "threadCoord": {

@@ -26,14 +26,14 @@
       "toFilter": true,
       "desc": "모델 이름",
       "type": "string",
-      "length": 50,
+      "length": 255,
       "nullable": true
     },
     {
       "name": "requested_model_name",
       "desc": "요청 모델 이름 (fallback 전)",
       "type": "string",
-      "length": 50,
+      "length": 255,
       "nullable": true
     },
     {

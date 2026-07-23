@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Sonamu } from "sonamu";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QgridFrame } from "./qgrid.frame";
+import { QueryInput } from "./qgrid.types";
 
 const {
   findOneMock,
@@ -8,8 +10,14 @@ const {
   saveMock,
   updateFieldsMock,
   requestLogSaveMock,
+  requestLogCreateRunMock,
   appendStepMock,
   dispatcherQueryMock,
+  dispatcherQueryStreamMock,
+  beforeQueryMock,
+  afterQueryMock,
+  finishRunWithErrorMock,
+  finishRunAbortedMock,
   getRateLimitsByTokenIdMock,
 } = vi.hoisted(() => ({
   findOneMock: vi.fn(),
@@ -17,8 +25,14 @@ const {
   saveMock: vi.fn(),
   updateFieldsMock: vi.fn(),
   requestLogSaveMock: vi.fn(),
+  requestLogCreateRunMock: vi.fn(),
   appendStepMock: vi.fn(),
   dispatcherQueryMock: vi.fn(),
+  dispatcherQueryStreamMock: vi.fn(),
+  beforeQueryMock: vi.fn(),
+  afterQueryMock: vi.fn(),
+  finishRunWithErrorMock: vi.fn(),
+  finishRunAbortedMock: vi.fn(),
   getRateLimitsByTokenIdMock: vi.fn(),
 }));
 
@@ -26,6 +40,7 @@ vi.mock("../request-log/request-log.model", () => ({
   MICRO_USD: 1_000_000,
   RequestLogModel: {
     save: requestLogSaveMock,
+    createRun: requestLogCreateRunMock,
     appendStep: appendStepMock,
   },
 }));
@@ -42,10 +57,18 @@ vi.mock("../token/token.model", () => ({
 vi.mock("./qgrid.dispatcher", () => ({
   QgridDispatcher: {
     query: dispatcherQueryMock,
+    queryStream: dispatcherQueryStreamMock,
     openaiDispatcher: {
       getRateLimitsByTokenId: getRateLimitsByTokenIdMock,
     },
   },
+}));
+
+vi.mock("./qgrid-run-lifecycle", () => ({
+  beforeQuery: beforeQueryMock,
+  afterQuery: afterQueryMock,
+  finishRunWithError: finishRunWithErrorMock,
+  finishRunAborted: finishRunAbortedMock,
 }));
 
 const tokenEntry = {
@@ -120,15 +143,15 @@ describe("QgridFrame.updateToken", () => {
   });
 });
 
-describe("QgridFrame.query auto logging", () => {
+describe("QgridFrame.query request logging", () => {
   beforeEach(() => {
-    requestLogSaveMock.mockReset();
-    requestLogSaveMock.mockResolvedValue([1]);
-    appendStepMock.mockReset();
+    beforeQueryMock.mockReset().mockResolvedValue({ requestLogId: 41, stepIndex: 0 });
+    afterQueryMock.mockReset().mockResolvedValue({});
+    finishRunWithErrorMock.mockReset();
     dispatcherQueryMock.mockReset();
   });
 
-  function queryOutput(ttftMs: number) {
+  function queryOutput() {
     return {
       text: "hello",
       content: [{ type: "text", text: "hello" }],
@@ -142,117 +165,106 @@ describe("QgridFrame.query auto logging", () => {
         cache_read_input_tokens: 0,
       },
       durationMs: 120,
-      ttftMs,
+      ttftMs: 39,
       costUsd: 0.001,
+      costSource: "pricing_table",
+      runContext: {
+        threadCoord: {
+          workerId: 1,
+          threadId: "thread-1",
+          epoch: 2,
+          systemHash: "system-hash",
+        },
+      },
     };
   }
 
-  it("persists auto request ttft_ms from QueryOutput", async () => {
-    dispatcherQueryMock.mockResolvedValueOnce(queryOutput(39));
-
-    await QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex", logMode: "auto" });
-
-    expect(requestLogSaveMock).toHaveBeenCalledWith([
-      expect.objectContaining({ duration_ms: 120, ttft_ms: 39 }),
-    ]);
-  });
-
-  it("persists auto request ttft_ms zero when no first-token timing is available", async () => {
-    dispatcherQueryMock.mockResolvedValueOnce(queryOutput(0));
-
-    await QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex", logMode: "auto" });
-
-    expect(requestLogSaveMock).toHaveBeenCalledWith([
-      expect.objectContaining({ ttft_ms: 0 }),
-    ]);
-  });
-
-  it("persists image parts in response as data-url img tags", async () => {
-    dispatcherQueryMock.mockResolvedValueOnce({
-      ...queryOutput(39),
-      text: "image ready",
-      content: [
-        { type: "text", text: "image ready" },
-        { type: "image", data: "iVBORw0KGgoBAgM", revisedPrompt: "green triangle" },
-      ],
+  it("creates a run before dispatch when logger is omitted", async () => {
+    const order: string[] = [];
+    beforeQueryMock.mockImplementationOnce(async () => {
+      order.push("before");
+      return { requestLogId: 41, stepIndex: 0 };
+    });
+    dispatcherQueryMock.mockImplementationOnce(async () => {
+      order.push("dispatch");
+      return queryOutput();
+    });
+    afterQueryMock.mockImplementationOnce(async () => {
+      order.push("after");
+      return {};
     });
 
-    await QgridFrame.query({
-      prompt: "draw",
-      input: [
-        { type: "text", text: "draw", text_elements: [] },
-        { type: "image", url: "data:image/webp;base64,UklGRg==" },
-      ],
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const result = await QgridFrame.query(args);
+
+    expect(order).toEqual(["before", "dispatch", "after"]);
+    expect(beforeQueryMock).toHaveBeenCalledWith(args);
+    expect(afterQueryMock).toHaveBeenCalledWith(41, 0, args, expect.objectContaining({ text: "hello" }));
+    expect(result.runContext).toEqual(queryOutput().runContext);
+  });
+
+  it("does not create or update logs when logger is false", async () => {
+    const output = queryOutput();
+    dispatcherQueryMock.mockResolvedValueOnce(output);
+
+    await expect(
+      QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex", logger: false }),
+    ).resolves.toEqual(output);
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(afterQueryMock).not.toHaveBeenCalled();
+    expect(finishRunWithErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("merges a tool run id with the provider thread coordinate", async () => {
+    dispatcherQueryMock.mockResolvedValueOnce(queryOutput());
+    afterQueryMock.mockResolvedValueOnce({ runContext: { requestLogId: 41 } });
+
+    const result = await QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex" });
+
+    expect(result.runContext).toEqual({
+      requestLogId: 41,
+      threadCoord: queryOutput().runContext.threadCoord,
+    });
+  });
+
+  it("finishes the pre-created run when provider execution fails", async () => {
+    dispatcherQueryMock.mockRejectedValueOnce(new Error("provider failed"));
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+
+    await expect(QgridFrame.query(args)).rejects.toThrow("provider failed");
+
+    expect(finishRunWithErrorMock).toHaveBeenCalledWith(41, "provider failed", args);
+  });
+
+  it("returns the provider result when afterQuery persistence fails", async () => {
+    const output = queryOutput();
+    dispatcherQueryMock.mockResolvedValueOnce(output);
+    afterQueryMock.mockRejectedValueOnce(new Error("request log unavailable"));
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+
+    await expect(QgridFrame.query(args)).resolves.toBe(output);
+
+    expect(finishRunWithErrorMock).toHaveBeenCalledWith(41, "request log unavailable", args);
+  });
+
+  it("rejects legacy logMode instead of silently enabling logging", async () => {
+    const legacyInput = {
+      prompt: "hi",
       model: "openai/gpt-5-codex",
-      logMode: "auto",
-      imageGeneration: true,
-    });
+      logMode: "none",
+    } as unknown as Parameters<typeof QgridFrame.query>[0];
 
-    expect(requestLogSaveMock).toHaveBeenCalledWith([
-      expect.objectContaining({
-        response:
-          'image ready\n<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
-        tool_call_count: 0,
-        is_image_generation: true,
-        image_cost_usd: 41000,
-        image_cost_method: "assumed:gpt-image-2:medium:1536x1024:png",
-      }),
-    ]);
-    expect(appendStepMock).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        step_index: 0,
-        type: "tool_call",
-        tool_call_index: 0,
-        tool_call_id: "image_generation:0:0",
-        tool_name: "image_generation",
-        tool_args: JSON.stringify({
-          prompt: "draw",
-          inputImages: [{ mediaType: "image/webp", data: "UklGRg==", byteSize: 4 }],
-          driverModel: "openai/gpt-5-codex",
-          tool: {
-            type: "image_generation",
-            outputFormat: "png",
-          },
-          pricingAssumption: {
-            model: "gpt-image-2",
-            quality: "medium",
-            size: "1536x1024",
-          },
-        }),
-        tool_result: '<img src="data:image/png;base64,iVBORw0KGgoBAgM" alt="green triangle" />',
-      }),
-    );
+    await expect(QgridFrame.query(legacyInput)).rejects.toThrow(/logMode is no longer supported/);
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
   });
 
-  it("stores input images only on the first image-generation tool step", async () => {
-    dispatcherQueryMock.mockResolvedValueOnce({
-      ...queryOutput(39),
-      text: "images ready",
-      content: [
-        { type: "image", data: "first", revisedPrompt: "first image" },
-        { type: "image", data: "second", revisedPrompt: "second image" },
-      ],
-    });
-
-    await QgridFrame.query({
-      prompt: "draw two",
-      input: [
-        { type: "text", text: "draw two", text_elements: [] },
-        { type: "image", url: "data:image/webp;base64,UklGRg==" },
-      ],
-      model: "openai/gpt-5-codex",
-      logMode: "auto",
-      imageGeneration: true,
-    });
-
-    const firstToolArgs = JSON.parse(appendStepMock.mock.calls[0]![1].tool_args);
-    const secondToolArgs = JSON.parse(appendStepMock.mock.calls[1]![1].tool_args);
-
-    expect(firstToolArgs.inputImages).toEqual([
-      { mediaType: "image/webp", data: "UklGRg==", byteSize: 4 },
-    ]);
-    expect(secondToolArgs.inputImages).toBeUndefined();
+  it("rejects legacy logMode in the wire schema", () => {
+    expect(QueryInput.safeParse({ prompt: "hi", logMode: "none" }).success).toBe(false);
+    expect(QueryInput.safeParse({ prompt: "hi", logMode: undefined }).success).toBe(false);
+    expect(QueryInput.safeParse({ prompt: "hi", logger: false }).success).toBe(true);
   });
 });
 
@@ -273,6 +285,298 @@ describe("QgridFrame.prepareStream", () => {
 
     expect(dispatcherQueryMock).not.toHaveBeenCalled();
     expect(requestLogSaveMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("QgridFrame raw lifecycle API", () => {
+  it("treats createRun.modelName as the requested model", async () => {
+    requestLogCreateRunMock.mockReset().mockResolvedValue(81);
+
+    await expect(
+      QgridFrame.createRun({
+        userPrompt: "hi",
+        modelName: "google/gemini-3-flash",
+        projectName: "external",
+      }),
+    ).resolves.toEqual({ requestLogId: 81 });
+
+    expect(requestLogCreateRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requested_model_name: "google/gemini-3-flash",
+      }),
+    );
+    expect(requestLogCreateRunMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ model_name: expect.anything() }),
+    );
+  });
+});
+
+describe("QgridFrame.queryStream request logging", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  beforeEach(() => {
+    beforeQueryMock.mockReset().mockResolvedValue({ requestLogId: 52, stepIndex: 0 });
+    afterQueryMock.mockReset().mockResolvedValue({});
+    finishRunWithErrorMock.mockReset();
+    finishRunAbortedMock.mockReset();
+    dispatcherQueryStreamMock.mockReset();
+  });
+
+  function streamOutput() {
+    return {
+      text: "hello",
+      content: [{ type: "text", text: "hello" }],
+      finishReason: "stop",
+      tokenName: "tok-A",
+      model: "gpt-5-codex",
+      usage: {
+        input_tokens: 5,
+        output_tokens: 7,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      durationMs: 120,
+      ttftMs: 39,
+      costUsd: 0.001,
+      costSource: "pricing_table",
+      runContext: {
+        threadCoord: {
+          workerId: 1,
+          threadId: "thread-1",
+          epoch: 2,
+          systemHash: "system-hash",
+        },
+      },
+    };
+  }
+
+  function installSseContext() {
+    let closeHandler: (() => void) | undefined;
+    const sse = {
+      closed: false,
+      publish: vi.fn(),
+      onClose: vi.fn((handler: () => void) => {
+        closeHandler = handler;
+      }),
+      end: vi.fn(async () => {}),
+      triggerClose: () => closeHandler?.(),
+    };
+    vi.spyOn(Sonamu, "getContext").mockReturnValue({
+      createSSE: vi.fn(() => sse),
+    } as never);
+    return sse;
+  }
+
+  it("creates the running row before starting provider streaming", async () => {
+    const order: string[] = [];
+    const sse = installSseContext();
+    beforeQueryMock.mockImplementationOnce(async () => {
+      order.push("before");
+      return { requestLogId: 52, stepIndex: 0 };
+    });
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (
+        _args: unknown,
+        callbacks: { onComplete: (result: ReturnType<typeof streamOutput>) => void },
+      ) => {
+      order.push("dispatch");
+      callbacks.onComplete(streamOutput());
+      },
+    );
+    afterQueryMock.mockImplementationOnce(async () => {
+      order.push("after");
+      return {};
+    });
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    await QgridFrame.queryStream(streamId);
+
+    expect(order).toEqual(["before", "dispatch", "after"]);
+    expect(sse.publish).toHaveBeenCalledWith(
+      "done",
+      expect.objectContaining({ runContext: streamOutput().runContext }),
+    );
+  });
+
+  it("captures client close while beforeQuery is pending and skips provider dispatch", async () => {
+    const sse = installSseContext();
+    let beforeQueryStarted!: () => void;
+    let resolveBeforeQuery!: (value: { requestLogId: number; stepIndex: number }) => void;
+    const started = new Promise<void>((resolve) => {
+      beforeQueryStarted = resolve;
+    });
+    beforeQueryMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBeforeQuery = resolve;
+          beforeQueryStarted();
+        }),
+    );
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    const streamPromise = QgridFrame.queryStream(streamId);
+    await started;
+    expect(sse.onClose).toHaveBeenCalledOnce();
+    sse.triggerClose();
+    resolveBeforeQuery({ requestLogId: 52, stepIndex: 0 });
+    await streamPromise;
+
+    expect(finishRunAbortedMock).toHaveBeenCalledWith(52, args);
+    expect(dispatcherQueryStreamMock).not.toHaveBeenCalled();
+    expect(sse.end).toHaveBeenCalledOnce();
+  });
+
+  it("publishes the provider result when afterQuery persistence fails", async () => {
+    const sse = installSseContext();
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (
+        _args: unknown,
+        callbacks: { onComplete: (result: ReturnType<typeof streamOutput>) => void },
+      ) => {
+        callbacks.onComplete(streamOutput());
+      },
+    );
+    afterQueryMock.mockRejectedValueOnce(new Error("request log unavailable"));
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    await QgridFrame.queryStream(streamId);
+
+    expect(finishRunWithErrorMock).toHaveBeenCalledWith(52, "request log unavailable", args);
+    expect(sse.publish).toHaveBeenCalledWith(
+      "done",
+      expect.objectContaining({ text: "hello", runContext: streamOutput().runContext }),
+    );
+    expect(sse.publish).not.toHaveBeenCalledWith("error", expect.anything());
+  });
+
+  it("publishes an error when provider execution fails while the client is connected", async () => {
+    const sse = installSseContext();
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (_args: unknown, callbacks: { onError: (error: Error) => void }) => {
+        callbacks.onError(new Error("provider failed"));
+      },
+    );
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    await QgridFrame.queryStream(streamId);
+
+    expect(finishRunWithErrorMock).toHaveBeenCalledWith(52, "provider failed", args);
+    expect(finishRunAbortedMock).not.toHaveBeenCalled();
+    expect(sse.publish).toHaveBeenCalledWith("error", { message: "provider failed" });
+  });
+
+  it("marks the run aborted on close regardless of the provider error message", async () => {
+    const sse = installSseContext();
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (
+        _args: unknown,
+        callbacks: { onError: (error: Error) => void },
+        signal: AbortSignal,
+      ) => {
+        expect(signal.aborted).toBe(false);
+        sse.triggerClose();
+        expect(signal.aborted).toBe(true);
+        callbacks.onError(new Error("provider connection reset"));
+      },
+    );
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    await QgridFrame.queryStream(streamId);
+
+    expect(finishRunAbortedMock).toHaveBeenCalledWith(52, args);
+    expect(finishRunWithErrorMock).not.toHaveBeenCalled();
+    expect(sse.publish).not.toHaveBeenCalled();
+  });
+
+  it("records a provider result after close but finishes the run as aborted", async () => {
+    const sse = installSseContext();
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (
+        _args: unknown,
+        callbacks: { onComplete: (result: ReturnType<typeof streamOutput>) => void },
+      ) => {
+        sse.triggerClose();
+        callbacks.onComplete(streamOutput());
+      },
+    );
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    await QgridFrame.queryStream(streamId);
+
+    expect(afterQueryMock).toHaveBeenCalledWith(52, 0, args, streamOutput());
+    expect(finishRunAbortedMock).toHaveBeenCalledWith(52, args);
+    expect(sse.publish).not.toHaveBeenCalled();
+  });
+
+  it("marks the run aborted when the client closes before afterQuery commits", async () => {
+    const sse = installSseContext();
+    let afterQueryStarted!: () => void;
+    let resolveAfterQuery!: (value: object) => void;
+    const started = new Promise<void>((resolve) => {
+      afterQueryStarted = resolve;
+    });
+    afterQueryMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveAfterQuery = resolve;
+          afterQueryStarted();
+        }),
+    );
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (
+        _args: unknown,
+        callbacks: { onComplete: (result: ReturnType<typeof streamOutput>) => void },
+      ) => {
+        callbacks.onComplete(streamOutput());
+      },
+    );
+    const args = { prompt: "hi", model: "openai/gpt-5-codex" };
+    const { streamId } = await QgridFrame.prepareStream(args);
+
+    const streamPromise = QgridFrame.queryStream(streamId);
+    await started;
+    sse.triggerClose();
+    resolveAfterQuery({});
+    await streamPromise;
+
+    expect(finishRunAbortedMock).toHaveBeenCalledWith(52, args);
+    expect(sse.publish).not.toHaveBeenCalledWith("done", expect.anything());
+  });
+
+  it("streams with thread context but no log writes when logger is false", async () => {
+    const sse = installSseContext();
+    dispatcherQueryStreamMock.mockImplementationOnce(
+      async (
+        _args: unknown,
+        callbacks: { onComplete: (result: ReturnType<typeof streamOutput>) => void },
+      ) => {
+        callbacks.onComplete(streamOutput());
+      },
+    );
+    const { streamId } = await QgridFrame.prepareStream({
+      prompt: "hi",
+      model: "openai/gpt-5-codex",
+      logger: false,
+    });
+
+    await QgridFrame.queryStream(streamId);
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(afterQueryMock).not.toHaveBeenCalled();
+    expect(finishRunWithErrorMock).not.toHaveBeenCalled();
+    expect(sse.onClose).toHaveBeenCalledOnce();
+    expect(sse.publish).toHaveBeenCalledWith(
+      "done",
+      expect.objectContaining({ runContext: streamOutput().runContext }),
+    );
   });
 });
 

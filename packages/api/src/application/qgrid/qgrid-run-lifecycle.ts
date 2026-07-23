@@ -10,15 +10,24 @@ import {
   formatResponseForLog,
   getImageParts,
 } from "./qgrid-response-format";
-import {
-  type QgridRunContext,
-  type QgridToolResultInput,
-  type QueryInput,
-  type QueryOutput,
-} from "./qgrid.types";
+import { type QgridRunContext, type QueryInput, type QueryOutput } from "./qgrid.types";
 
 const logger = getLogger(["qgrid", "run-lifecycle"]);
 const STALE_RUN_THRESHOLD_MS = 30 * 60 * 1000;
+const STALE_CLEANUP_INTERVAL_MS = 60 * 1000;
+let staleCleanupInFlight: Promise<void> | undefined;
+let lastStaleCleanupStartedAt = 0;
+
+function withProviderPrefix(
+  routeModel: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  if (!model) return undefined;
+  if (model.includes("/")) return model;
+  const slash = routeModel?.indexOf("/") ?? -1;
+  const provider = slash > 0 ? routeModel?.slice(0, slash) : undefined;
+  return provider ? `${provider}/${model}` : model;
+}
 
 /**
  * history는 원본 그대로 저장하기보다는, run 분석에 필요한 user/assistant 정보만 필터링해서 저장
@@ -43,36 +52,35 @@ export type RunLifecycleResult = {
 };
 
 /**
- * logMode:"run" 시 query/stream 응답 전후에 호출.
+ * logger-enabled query/stream 응답 전후에 호출.
  *
- * 1) beforeQuery: run 생성/계속 + tool result 완료 + stale cleanup
+ * 1) beforeQuery: run 생성/계속 + tool result 완료 + stale tool-wait cleanup
  * 2) afterQuery: generate step + tool-call step + finish/keep-open
  */
 export async function beforeQuery(args: QueryInput): Promise<{
   requestLogId: number;
   stepIndex: number;
 }> {
-  await cleanupStaleRuns();
-
   let requestLogId: number;
   let stepIndex = 0;
 
   // requestLogId 가 있을 때만 기존 run 연장. threadCoord 만 있는 conv 는 새 run 으로 시작.
   if (args.runContext?.requestLogId !== undefined) {
     requestLogId = args.runContext.requestLogId;
-
-    if (args.toolResults && args.toolResults.length > 0) {
-      await completeToolResults(requestLogId, args.toolResults);
-    }
-
-    stepIndex = await RequestLogModel.getNextStepIndex(requestLogId);
+    // cleanup과 같은 DB advisory lock을 잡고 tool 결과 반영 + 다음 step 예약을 한
+    // transaction에서 처리한다. 여러 qgrid 프로세스 사이에서도 stale expiry가
+    // 도착 중인 follow-up을 error로 덮어쓰지 못한다.
+    stepIndex = await RequestLogModel.continueToolRun(requestLogId, args.toolResults ?? []);
+    await cleanupStaleRuns();
   } else {
+    await cleanupStaleRuns();
     requestLogId = await RequestLogModel.createRun({
       user_prompt: args.prompt,
       system_prompt: args.system,
-      model_name: args.model,
+      requested_model_name: args.model,
       effort: args.effort,
       project_name: args.projectName,
+      history: filterHistoryForStorage(args.history),
       is_image_generation: args.imageGeneration,
     });
   }
@@ -86,12 +94,19 @@ export async function afterQuery(
   args: QueryInput,
   result: QueryOutput,
 ): Promise<RunLifecycleResult> {
+  // provider가 canonical model을 돌려줘도 요청 route 자체([1m] 등)는 보존한다.
+  const requestedModelName = withProviderPrefix(
+    args.model,
+    args.model ?? result.requestedModel ?? result.model,
+  );
+  const servedModelName = withProviderPrefix(args.model, result.model);
+
   // generate step 기록
   await RequestLogModel.appendStep(requestLogId, {
     step_index: stepIndex,
     type: "generate",
-    model_name: result.model,
-    requested_model_name: result.requestedModel ?? result.model ?? args.model,
+    model_name: servedModelName,
+    requested_model_name: requestedModelName,
     fallback_count: result.modelFallbacks?.length ?? 0,
     input_tokens: result.usage.input_tokens,
     output_tokens: result.usage.output_tokens,
@@ -116,7 +131,7 @@ export async function afterQuery(
   }
 
   if (result.finishReason === "tool-calls") {
-    // tool-call step 즉시 기록 (result는 나중에 completeToolCall로 채움)
+    // tool-call step을 즉시 기록하고, 다음 follow-up이 같은 row에 결과를 채운다.
     const toolCalls = result.content.filter((c) => c.type === "tool-call");
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i]!;
@@ -147,8 +162,9 @@ export async function afterQuery(
     cache_creation_5m_tokens: agg.cache_creation_5m_tokens,
     cache_creation_1h_tokens: agg.cache_creation_1h_tokens,
     duration_ms: agg.duration_ms,
-    requested_model_name: agg.requested_model_name ?? result.requestedModel ?? result.model,
-    model_name: agg.model_name ?? result.model,
+    // multi-step run 부모의 모델은 최종 turn을 서빙한 모델이다.
+    requested_model_name: requestedModelName,
+    model_name: servedModelName,
     fallback_count: agg.fallback_count,
     cost_usd: agg.cost_usd,
     cost_source: agg.cost_source,
@@ -166,56 +182,80 @@ export async function finishRunWithError(
   errorMessage: string,
   args?: QueryInput,
 ): Promise<void> {
-  try {
-    await RequestLogModel.finishRun(requestLogId, {
-      status: "error",
-      error_message: errorMessage,
-      history: args ? filterHistoryForStorage(args.history) : undefined,
-    });
-  } catch (e) {
-    logger.error(`finishRunWithError failed: ${(e as Error).message}`);
-  }
+  await finishTerminalRun(requestLogId, "error", errorMessage, args);
 }
 
 export async function finishRunAborted(requestLogId: number, args?: QueryInput): Promise<void> {
-  try {
-    await RequestLogModel.finishRun(requestLogId, {
-      status: "aborted",
-      error_message: "client disconnected",
-      history: args ? filterHistoryForStorage(args.history) : undefined,
-    });
-  } catch (e) {
-    logger.error(`finishRunAborted failed: ${(e as Error).message}`);
-  }
+  await finishTerminalRun(requestLogId, "aborted", "client disconnected", args);
 }
 
-async function completeToolResults(
+async function finishTerminalRun(
   requestLogId: number,
-  toolResults: QgridToolResultInput[],
+  status: "error" | "aborted",
+  errorMessage: string,
+  args?: QueryInput,
 ): Promise<void> {
-  for (const tr of toolResults) {
+  try {
+    let aggregate: Awaited<ReturnType<typeof RequestLogModel.aggregateStepUsage>> | undefined;
     try {
-      await RequestLogModel.completeToolCall(requestLogId, tr.toolCallId, {
-        tool_result: tr.isError ? undefined : tr.output,
-        error: tr.isError ? tr.output : undefined,
-      });
+      aggregate = await RequestLogModel.aggregateStepUsage(requestLogId);
     } catch (e) {
-      logger.error(`completeToolCall failed for ${tr.toolCallId}: ${(e as Error).message}`);
+      logger.error(`aggregateStepUsage failed while finishing ${status}: ${(e as Error).message}`);
     }
+
+    await RequestLogModel.finishRun(requestLogId, {
+      status,
+      error_message: errorMessage,
+      history: args ? filterHistoryForStorage(args.history) : undefined,
+      ...(aggregate
+        ? {
+            input_tokens: aggregate.input_tokens,
+            output_tokens: aggregate.output_tokens,
+            cache_read_tokens: aggregate.cache_read_tokens,
+            cache_creation_tokens: aggregate.cache_creation_tokens,
+            cache_creation_5m_tokens: aggregate.cache_creation_5m_tokens,
+            cache_creation_1h_tokens: aggregate.cache_creation_1h_tokens,
+            duration_ms: aggregate.duration_ms,
+            fallback_count: aggregate.fallback_count,
+            cost_usd: aggregate.cost_usd,
+            cost_source: aggregate.cost_source,
+          }
+        : {}),
+    });
+  } catch (e) {
+    logger.error(`finishTerminalRun(${status}) failed: ${(e as Error).message}`);
   }
 }
 
 async function cleanupStaleRuns(): Promise<void> {
+  if (staleCleanupInFlight) {
+    await staleCleanupInFlight;
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastStaleCleanupStartedAt < STALE_CLEANUP_INTERVAL_MS) return;
+  lastStaleCleanupStartedAt = now;
+
+  const cleanup = performStaleRunCleanup();
+  staleCleanupInFlight = cleanup;
   try {
-    const staleIds = await RequestLogModel.findStaleRunningIds(STALE_RUN_THRESHOLD_MS);
-    for (const id of staleIds) {
-      await RequestLogModel.finishRun(id, {
-        status: "error",
-        error_message: "tool-call run: no follow-up within 30 minutes",
-      });
-    }
-    if (staleIds.length > 0) {
-      logger.info(`cleaned up ${staleIds.length} stale running request logs`);
+    await cleanup;
+  } finally {
+    if (staleCleanupInFlight === cleanup) staleCleanupInFlight = undefined;
+  }
+}
+
+async function performStaleRunCleanup(): Promise<void> {
+  try {
+    const errorMessage = "tool-call run: no follow-up within 30 minutes";
+    const staleIds = await RequestLogModel.expireStaleToolWaitingRuns(
+      STALE_RUN_THRESHOLD_MS,
+      errorMessage,
+    );
+    const cleanedCount = staleIds.length;
+    if (cleanedCount > 0) {
+      logger.info(`cleaned up ${cleanedCount} stale running request logs`);
     }
   } catch (e) {
     logger.error(`stale cleanup failed: ${(e as Error).message}`);

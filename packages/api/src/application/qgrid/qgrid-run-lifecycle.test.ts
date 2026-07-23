@@ -1,12 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { afterQuery } from "./qgrid-run-lifecycle";
+import {
+  afterQuery,
+  beforeQuery,
+  finishRunAborted,
+  finishRunWithError,
+} from "./qgrid-run-lifecycle";
 import { type QueryOutput } from "./qgrid.types";
 
-const { appendStepMock, aggregateStepUsageMock, finishRunMock } = vi.hoisted(() => ({
+const {
+  appendStepMock,
+  aggregateStepUsageMock,
+  finishRunMock,
+  createRunMock,
+  expireStaleToolWaitingRunsMock,
+  continueToolRunMock,
+} = vi.hoisted(() => ({
   appendStepMock: vi.fn(),
   aggregateStepUsageMock: vi.fn(),
   finishRunMock: vi.fn(),
+  createRunMock: vi.fn(),
+  expireStaleToolWaitingRunsMock: vi.fn(),
+  continueToolRunMock: vi.fn(),
 }));
 
 vi.mock("../request-log/request-log.model", () => ({
@@ -14,6 +29,9 @@ vi.mock("../request-log/request-log.model", () => ({
     appendStep: appendStepMock,
     aggregateStepUsage: aggregateStepUsageMock,
     finishRun: finishRunMock,
+    createRun: createRunMock,
+    expireStaleToolWaitingRuns: expireStaleToolWaitingRunsMock,
+    continueToolRun: continueToolRunMock,
   },
 }));
 
@@ -37,6 +55,126 @@ function queryOutput(overrides: Partial<QueryOutput> = {}): QueryOutput {
     ...overrides,
   };
 }
+
+let lifecycleNow = Date.now();
+
+describe("qgrid run lifecycle start", () => {
+  beforeEach(() => {
+    lifecycleNow += 60_001;
+    vi.spyOn(Date, "now").mockReturnValue(lifecycleNow);
+    createRunMock.mockReset().mockResolvedValue(10);
+    expireStaleToolWaitingRunsMock.mockReset().mockResolvedValue([]);
+    continueToolRunMock.mockReset().mockResolvedValue(3);
+    aggregateStepUsageMock.mockReset().mockResolvedValue({
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      duration_ms: 0,
+      fallback_count: 0,
+      cost_usd: 0,
+    });
+    finishRunMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates a running parent with the full requested model before an initial query", async () => {
+    const history = JSON.stringify([
+      { type: "message", role: "user", content: "earlier" },
+      { type: "message", role: "system", content: "hidden" },
+      { type: "tool-result", output: "ignored" },
+    ]);
+
+    await expect(
+      beforeQuery({
+        prompt: "hi",
+        system: "system",
+        model: "openai/gpt-5-codex",
+        projectName: "project",
+        history,
+      }),
+    ).resolves.toEqual({ requestLogId: 10, stepIndex: 0 });
+
+    expect(createRunMock).toHaveBeenCalledWith({
+      user_prompt: "hi",
+      system_prompt: "system",
+      requested_model_name: "openai/gpt-5-codex",
+      effort: undefined,
+      project_name: "project",
+      history: [{ type: "message", role: "user", content: "earlier" }],
+      is_image_generation: undefined,
+    });
+  });
+
+  it("continues an existing parent and completes tool results before the next step", async () => {
+    const order: string[] = [];
+    continueToolRunMock.mockImplementationOnce(async () => {
+      order.push("continue-tool-run");
+      return 3;
+    });
+    expireStaleToolWaitingRunsMock.mockImplementationOnce(async () => {
+      order.push("cleanup-stale");
+      return [77];
+    });
+    const args = {
+      prompt: "continue",
+      runContext: { requestLogId: 10 },
+      toolResults: [{ toolCallId: "call-1", output: "sunny" }],
+    };
+
+    await expect(beforeQuery(args)).resolves.toEqual({ requestLogId: 10, stepIndex: 3 });
+
+    expect(createRunMock).not.toHaveBeenCalled();
+    expect(continueToolRunMock).toHaveBeenCalledWith(10, [
+      { toolCallId: "call-1", output: "sunny" },
+    ]);
+    expect(order).toEqual(["continue-tool-run", "cleanup-stale"]);
+    expect(finishRunMock).not.toHaveBeenCalled();
+  });
+
+  it("cleans up only stale unresolved tool-wait runs reported by the model", async () => {
+    expireStaleToolWaitingRunsMock.mockResolvedValueOnce([77]);
+
+    await beforeQuery({ prompt: "hi", model: "openai/gpt-5-codex" });
+
+    expect(expireStaleToolWaitingRunsMock).toHaveBeenCalledWith(
+      30 * 60 * 1000,
+      "tool-call run: no follow-up within 30 minutes",
+    );
+    expect(finishRunMock).not.toHaveBeenCalled();
+  });
+
+  it("throttles stale cleanup while still creating every requested run", async () => {
+    await beforeQuery({ prompt: "one", model: "openai/gpt-5-codex" });
+    await beforeQuery({ prompt: "two", model: "openai/gpt-5-codex" });
+
+    expect(expireStaleToolWaitingRunsMock).toHaveBeenCalledTimes(1);
+    expect(createRunMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one in-flight stale cleanup across concurrent requests", async () => {
+    let resolveCleanup: ((ids: number[]) => void) | undefined;
+    expireStaleToolWaitingRunsMock.mockReturnValueOnce(
+      new Promise<number[]>((resolve) => {
+        resolveCleanup = resolve;
+      }),
+    );
+
+    const first = beforeQuery({ prompt: "one", model: "openai/gpt-5-codex" });
+    await vi.waitFor(() => expect(expireStaleToolWaitingRunsMock).toHaveBeenCalledTimes(1));
+    const second = beforeQuery({ prompt: "two", model: "openai/gpt-5-codex" });
+
+    expect(expireStaleToolWaitingRunsMock).toHaveBeenCalledTimes(1);
+    resolveCleanup?.([]);
+    await Promise.all([first, second]);
+
+    expect(expireStaleToolWaitingRunsMock).toHaveBeenCalledTimes(1);
+    expect(createRunMock).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("qgrid run lifecycle TTFT", () => {
   beforeEach(() => {
@@ -200,7 +338,7 @@ describe("qgrid run lifecycle TTFT", () => {
     );
   });
 
-  it("preserves serving model, fallback count, TTL split, and exact step cost", async () => {
+  it("stores full routed models, fallback count, TTL split, and exact step cost", async () => {
     aggregateStepUsageMock.mockResolvedValueOnce({
       input_tokens: 100_000,
       output_tokens: 20,
@@ -244,8 +382,8 @@ describe("qgrid run lifecycle TTFT", () => {
     expect(appendStepMock).toHaveBeenCalledWith(
       10,
       expect.objectContaining({
-        requested_model_name: "claude-fable-5",
-        model_name: "claude-opus-4-8",
+        requested_model_name: "anthropic/claude-fable-5",
+        model_name: "anthropic/claude-opus-4-8",
         fallback_count: 1,
         cache_creation_5m_tokens: 30_000,
         cache_creation_1h_tokens: 50_000,
@@ -256,8 +394,8 @@ describe("qgrid run lifecycle TTFT", () => {
     expect(finishRunMock).toHaveBeenCalledWith(
       10,
       expect.objectContaining({
-        requested_model_name: "claude-fable-5",
-        model_name: "claude-opus-4-8",
+        requested_model_name: "anthropic/claude-fable-5",
+        model_name: "anthropic/claude-opus-4-8",
         fallback_count: 1,
         cache_creation_5m_tokens: 30_000,
         cache_creation_1h_tokens: 50_000,
@@ -265,5 +403,101 @@ describe("qgrid run lifecycle TTFT", () => {
         cost_source: "provider",
       }),
     );
+  });
+
+  it("preserves the exact Anthropic 1M requested route after provider canonicalization", async () => {
+    await afterQuery(
+      10,
+      2,
+      { prompt: "hi", model: "anthropic/claude-sonnet-4-6[1m]" },
+      queryOutput({
+        model: "claude-sonnet-4-6",
+        requestedModel: "claude-sonnet-4-6",
+      }),
+    );
+
+    expect(appendStepMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        requested_model_name: "anthropic/claude-sonnet-4-6[1m]",
+        model_name: "anthropic/claude-sonnet-4-6",
+      }),
+    );
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        requested_model_name: "anthropic/claude-sonnet-4-6[1m]",
+        model_name: "anthropic/claude-sonnet-4-6",
+      }),
+    );
+  });
+});
+
+describe("qgrid run lifecycle terminal rollup", () => {
+  beforeEach(() => {
+    aggregateStepUsageMock.mockReset().mockResolvedValue({
+      input_tokens: 120,
+      output_tokens: 30,
+      cache_read_tokens: 20,
+      cache_creation_tokens: 40,
+      cache_creation_5m_tokens: 15,
+      cache_creation_1h_tokens: 25,
+      duration_ms: 900,
+      fallback_count: 1,
+      cost_usd: 7_500,
+      cost_source: "mixed",
+    });
+    finishRunMock.mockReset();
+  });
+
+  it("keeps incurred step usage and cost when a run ends in error", async () => {
+    await finishRunWithError(10, "provider failed", {
+      prompt: "continue",
+      history: JSON.stringify([{ type: "message", role: "user", content: "prior" }]),
+    });
+
+    expect(finishRunMock).toHaveBeenCalledWith(10, {
+      status: "error",
+      error_message: "provider failed",
+      history: [{ type: "message", role: "user", content: "prior" }],
+      input_tokens: 120,
+      output_tokens: 30,
+      cache_read_tokens: 20,
+      cache_creation_tokens: 40,
+      cache_creation_5m_tokens: 15,
+      cache_creation_1h_tokens: 25,
+      duration_ms: 900,
+      fallback_count: 1,
+      cost_usd: 7_500,
+      cost_source: "mixed",
+    });
+  });
+
+  it("keeps incurred step usage and cost when a run is aborted", async () => {
+    await finishRunAborted(10, { prompt: "continue" });
+
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        status: "aborted",
+        error_message: "client disconnected",
+        input_tokens: 120,
+        output_tokens: 30,
+        cost_usd: 7_500,
+        cost_source: "mixed",
+      }),
+    );
+  });
+
+  it("still writes the terminal status when usage aggregation fails", async () => {
+    aggregateStepUsageMock.mockRejectedValueOnce(new Error("aggregate failed"));
+
+    await finishRunWithError(10, "provider failed");
+
+    expect(finishRunMock).toHaveBeenCalledWith(10, {
+      status: "error",
+      error_message: "provider failed",
+      history: undefined,
+    });
   });
 });

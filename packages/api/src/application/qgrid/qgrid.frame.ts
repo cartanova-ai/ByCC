@@ -24,15 +24,6 @@ import {
   refreshAccessToken,
 } from "./oauth";
 import {
-  estimateImageGenerationCostMicroUsd,
-  imageGenerationCostMethod,
-} from "./qgrid-image-generation";
-import {
-  buildImageGenerationToolSteps,
-  formatResponseForLog,
-  getImageParts,
-} from "./qgrid-response-format";
-import {
   afterQuery,
   beforeQuery,
   finishRunAborted,
@@ -102,6 +93,13 @@ function rejectImageGenerationStream(args: QueryInput): void {
   );
 }
 
+function rejectLegacyLogMode(args: QueryInput): void {
+  if (!Object.hasOwn(args, "logMode")) return;
+  throw new BadRequestException(
+    "qgrid: logMode is no longer supported; use logger: false to disable request logging." as LocalizedString,
+  );
+}
+
 const logger = getLogger(["qgrid"]);
 const oauthLogger = getLogger(["qgrid", "oauth"]);
 
@@ -112,102 +110,45 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
-    const effectiveLogMode = args.logMode ?? (args.isStep ? "run" : "auto");
-
-    // logMode: "run" → 서버가 lifecycle 관리
-    if (effectiveLogMode === "run") {
-      const { requestLogId, stepIndex } = await beforeQuery(args);
-      try {
-        const result = await QgridDispatcher.query(args, args.timeout);
-        const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
-        // lifecycle.runContext(requestLogId) 와 dispatcher 가 실은 threadCoord 를 병합.
-        return {
-          ...result,
-          runContext: { ...lifecycle.runContext, threadCoord: result.runContext?.threadCoord },
-        };
-      } catch (e) {
-        await finishRunWithError(requestLogId, (e as Error).message, args);
-        throw e;
-      }
+    rejectLegacyLogMode(args);
+    if (args.logger === false) {
+      return QgridDispatcher.query(args, args.timeout);
     }
 
-    // logMode: "auto" (기존 non-step 경로) 또는 "none"
-    const result = await QgridDispatcher.query(args, args.timeout);
-
-    if (effectiveLogMode === "auto") {
-      this.saveAutoRequestLog(args, result);
+    const { requestLogId, stepIndex } = await beforeQuery(args);
+    let result: QueryOutput;
+    try {
+      result = await QgridDispatcher.query(args, args.timeout);
+    } catch (e) {
+      await finishRunWithError(requestLogId, (e as Error).message, args);
+      throw e;
     }
 
-    return result;
-  }
-
-  // logMode "auto" 단일 요청 로깅: run lifecycle(step 분해) 없이 request_log 1건만 남긴다.
-  // query와 queryStream 양쪽에서 사용.
-  private saveAutoRequestLog(args: QueryInput, result: QueryOutput): void {
-    const imageParts = getImageParts(result);
-    const imageCostMicroUsd = estimateImageGenerationCostMicroUsd(
-      result,
-      args.imageGenerationOptions,
-    );
-    const toolCallCount = result.content.filter((item) => item.type === "tool-call").length;
-    const responseText = formatResponseForLog(result);
-
-    RequestLogModel.save([
-      {
-        token_name: result.tokenName,
-        project_name: args.projectName?.length ? args.projectName : null,
-        model_name: result.model ?? null,
-        requested_model_name: result.requestedModel ?? result.model ?? args.model ?? null,
-        fallback_count: result.modelFallbacks?.length ?? 0,
-        user_prompt: args.prompt,
-        system_prompt: args.system ?? null,
-        response: responseText,
-        input_tokens: result.usage.input_tokens,
-        output_tokens: result.usage.output_tokens,
-        cache_read_tokens: result.usage.cache_read_input_tokens,
-        cache_creation_tokens: result.usage.cache_creation_input_tokens,
-        cache_creation_5m_tokens: result.usage.cache_creation_5m_input_tokens ?? null,
-        cache_creation_1h_tokens: result.usage.cache_creation_1h_input_tokens ?? null,
-        duration_ms: result.durationMs,
-        ttft_ms: result.ttftMs,
-        cost_usd: result.costUsd !== null ? Math.round(result.costUsd * MICRO_USD) : null,
-        cost_source: result.costSource,
-        image_cost_usd: imageCostMicroUsd,
-        image_cost_method:
-          imageCostMicroUsd !== null
-            ? imageGenerationCostMethod(args.imageGenerationOptions)
-            : null,
-        effort: args.effort ?? null,
-        // malformed history가 와도 성공한 턴(특히 stream sse.end())을 깨지 않도록 방어.
-        history: ((): { type: string }[] | null => {
-          try {
-            return args.history ? JSON.parse(args.history) : null;
-          } catch {
-            return null;
-          }
-        })(),
-        status: "succeeded",
-        tool_call_count: toolCallCount,
-        // 이미지 turn 식별(R13): quota 소모를 이미지 워크로드에 귀속.
-        is_image_generation: args.imageGeneration ?? false,
-      },
-    ])
-      .then(async (ids) => {
-        const requestLogId = ids[0];
-        if (!requestLogId || imageParts.length === 0) return;
-        for (const step of buildImageGenerationToolSteps(args, imageParts, 0)) {
-          await RequestLogModel.appendStep(requestLogId, step);
-        }
-      })
-      .catch((e) => logger.error(`requestLog save failed: ${(e as Error).message}`));
+    try {
+      const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
+      // tool-call requestLogId와 provider threadCoord는 서로 독립적으로 유지한다.
+      const threadCoord = result.runContext?.threadCoord;
+      const runContext =
+        lifecycle.runContext || threadCoord
+          ? { ...lifecycle.runContext, ...(threadCoord ? { threadCoord } : {}) }
+          : undefined;
+      return { ...result, runContext };
+    } catch (e) {
+      logger.error(`query afterQuery failed: ${(e as Error).message}`);
+      await finishRunWithError(requestLogId, (e as Error).message, args);
+      // provider 응답은 성공했으므로 로깅 장애가 생성 결과를 덮어쓰지 않는다.
+      return result;
+    }
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async prepareStream(args: QueryInput): Promise<{ streamId: string }> {
+    rejectLegacyLogMode(args);
     rejectImageGenerationStream(args);
     const streamId = crypto.randomUUID();
     pendingStreams.set(streamId, args);
-    setTimeout(() => pendingStreams.delete(streamId), 30_000);
+    const expiry = setTimeout(() => pendingStreams.delete(streamId), 30_000);
+    expiry.unref?.();
     return { streamId };
   }
 
@@ -216,19 +157,8 @@ class QgridFrameClass extends BaseFrameClass {
     const args = pendingStreams.get(streamId);
     pendingStreams.delete(streamId);
     if (!args) throw new Error("invalid or expired streamId");
+    rejectLegacyLogMode(args);
     rejectImageGenerationStream(args);
-
-    const effectiveLogMode = args.logMode ?? (args.isStep ? "run" : "auto");
-    const shouldLog = effectiveLogMode === "run";
-
-    let runInfo: { requestLogId: number; stepIndex: number } | undefined;
-    if (shouldLog) {
-      try {
-        runInfo = await beforeQuery(args);
-      } catch (e) {
-        logger.error(`stream beforeQuery failed: ${(e as Error).message}`);
-      }
-    }
 
     const ctx = Sonamu.getContext();
     const sse = ctx.createSSE(StreamEvents);
@@ -236,6 +166,7 @@ class QgridFrameClass extends BaseFrameClass {
     let turnId: string | undefined;
     let streamResult: QueryOutput | undefined;
     let streamError: Error | undefined;
+    let clientClosed = false;
     const abortController = new AbortController();
 
     const interruptOpenAI = () => {
@@ -245,26 +176,40 @@ class QgridFrameClass extends BaseFrameClass {
     };
 
     sse.onClose(() => {
+      clientClosed = true;
       abortController.abort();
       interruptOpenAI();
     });
+
+    let runInfo: { requestLogId: number; stepIndex: number } | undefined;
+    if (args.logger !== false) {
+      // provider 실행 전 running row 생성에 실패하면 logged 요청으로 진행하지 않는다.
+      runInfo = await beforeQuery(args);
+    }
+
+    // beforeQuery DB 작업 중 close를 놓치지 않고 provider 실행 전에 마감한다.
+    if (clientClosed || sse.closed) {
+      if (runInfo) await finishRunAborted(runInfo.requestLogId, args);
+      await sse.end();
+      return;
+    }
 
     try {
       await QgridDispatcher.queryStream(
         args,
         {
           onDelta: (text) => {
-            if (!sse.closed) sse.publish("delta", { text });
+            if (!clientClosed && !sse.closed) sse.publish("delta", { text });
           },
           onThreadId: (id) => {
             threadId = id;
-            if (sse.closed && turnId) {
+            if ((clientClosed || sse.closed) && turnId) {
               interruptOpenAI();
             }
           },
           onTurnId: (id) => {
             turnId = id;
-            if (sse.closed && threadId) {
+            if ((clientClosed || sse.closed) && threadId) {
               interruptOpenAI();
             }
           },
@@ -281,38 +226,55 @@ class QgridFrameClass extends BaseFrameClass {
       streamError = e as Error;
     }
 
+    // provider 결과가 없는 close는 즉시 aborted로 마감한다.
+    if (clientClosed && !streamResult) {
+      if (runInfo) await finishRunAborted(runInfo.requestLogId, args);
+      await sse.end();
+      return;
+    }
+
     // dispatcher 완료 후 lifecycle 처리 (await 안전)
     if (streamResult) {
-      // dispatcher 가 실은 thread 재사용 좌표 (auto/run 공통으로 클라에 회송해야 함).
+      // dispatcher 가 실은 thread 재사용 좌표는 logger 설정과 무관하게 회송한다.
       const threadCoord = streamResult.runContext?.threadCoord;
       let runContext: QgridRunContext | undefined =
         threadCoord !== undefined ? { threadCoord } : undefined;
       if (runInfo) {
         try {
+          // close 후 도착한 결과도 step/usage는 남기되, 아래에서 최종 status를 aborted로 덮어쓴다.
           const lifecycle = await afterQuery(
             runInfo.requestLogId,
             runInfo.stepIndex,
             args,
             streamResult,
           );
-          runContext = { ...lifecycle.runContext, threadCoord };
+          runContext =
+            lifecycle.runContext || threadCoord
+              ? { ...lifecycle.runContext, ...(threadCoord ? { threadCoord } : {}) }
+              : undefined;
+
+          // afterQuery가 진행되는 사이 client가 닫힌 경우 완료 상태를 aborted로 되돌린다.
+          if (clientClosed) {
+            await finishRunAborted(runInfo.requestLogId, args);
+            await sse.end();
+            return;
+          }
         } catch (e) {
           logger.error(`stream afterQuery failed: ${(e as Error).message}`);
+          await finishRunWithError(runInfo.requestLogId, (e as Error).message, args);
+
+          if (clientClosed) {
+            await finishRunAborted(runInfo.requestLogId, args);
+            await sse.end();
+            return;
+          }
         }
-      } else if (effectiveLogMode === "auto") {
-        // run lifecycle을 안 타는 단일 stream 요청도 request_log 1건은 남긴다 (query와 대칭).
-        this.saveAutoRequestLog(args, streamResult);
       }
-      if (!sse.closed) sse.publish("done", { ...streamResult, runContext });
+      if (!clientClosed && !sse.closed) sse.publish("done", { ...streamResult, runContext });
     } else if (streamError) {
-      if (sse.closed && streamError.message === "aborted") {
-        if (runInfo) await finishRunAborted(runInfo.requestLogId, args);
-        await sse.end();
-        return;
-      }
       if (runInfo) await finishRunWithError(runInfo.requestLogId, streamError.message, args);
-      if (!sse.closed) sse.publish("error", { message: streamError.message });
-    } else if (sse.closed && runInfo) {
+      if (!clientClosed && !sse.closed) sse.publish("error", { message: streamError.message });
+    } else if ((clientClosed || sse.closed) && runInfo) {
       await finishRunAborted(runInfo.requestLogId, args);
     }
 
@@ -323,7 +285,7 @@ class QgridFrameClass extends BaseFrameClass {
   async createRun(input: CreateRunInput): Promise<{ requestLogId: number }> {
     const requestLogId = await RequestLogModel.createRun({
       user_prompt: input.userPrompt,
-      model_name: input.modelName,
+      requested_model_name: input.modelName,
       effort: input.effort,
       project_name: input.projectName,
       system_prompt: input.systemPrompt,
