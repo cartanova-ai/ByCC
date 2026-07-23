@@ -99,7 +99,7 @@ AI SDK structured output:
 - `scripts/qgrid-structured-ai-sdk-smoke.ts`
 - Uses local `packages/ai-sdk/src/index`.
 - Env: `QGRID_URL`, `SMOKE_MODEL`, `SMOKE_CASES`, `SMOKE_REPEAT`.
-- Useful for streamObject/structured-output regressions.
+- Uses AI SDK 6 `streamText` with `Output.object`; useful for structured-output regressions.
 
 Image generation:
 

@@ -1,0 +1,167 @@
+{
+  "canonicalSkill": "packages/cli/skills/qgrid",
+  "skillMirrors": [".agents/skills/qgrid"],
+  "notionHub": {
+    "title": "Qgrid",
+    "url": "https://app.notion.com/p/3a5f753e4fb98164a737d42d9e7c605b"
+  },
+  "topics": [
+    {
+      "id": "architecture",
+      "code": [
+        "packages/api/src/application/qgrid/qgrid.frame.ts",
+        "packages/api/src/application/qgrid/qgrid.dispatcher.ts"
+      ],
+      "skill": [
+        "packages/cli/skills/qgrid/references/repo-map.md",
+        "packages/cli/skills/qgrid/references/provider-runtime-differences.md"
+      ],
+      "notion": {
+        "title": "시스템 아키텍처",
+        "url": "https://app.notion.com/p/3a5f753e4fb981979136eeda4330fb45"
+      }
+    },
+    {
+      "id": "ai-sdk",
+      "code": ["packages/ai-sdk/src/index.ts", "packages/ai-sdk/src/index.types.ts"],
+      "skill": ["packages/cli/skills/qgrid/references/ai-sdk-provider-contract.md"],
+      "notion": {
+        "title": "AI SDK 연동 및 사용법",
+        "url": "https://app.notion.com/p/3a5f753e4fb981ca8d90cf6b70b59cdf"
+      }
+    },
+    {
+      "id": "provider-runtimes",
+      "code": [
+        "packages/api/src/utils/providers/openai/openai-dispatcher.ts",
+        "packages/api/src/utils/providers/anthropic/anthropic-dispatcher.ts"
+      ],
+      "skill": [
+        "packages/cli/skills/qgrid/references/openai-codex-runtime.md",
+        "packages/cli/skills/qgrid/references/anthropic-claude-code-runtime.md"
+      ],
+      "notion": {
+        "title": "Provider 런타임",
+        "url": "https://app.notion.com/p/3a5f753e4fb9819da53ff88879bfddaf"
+      }
+    },
+    {
+      "id": "token-routing",
+      "code": [
+        "packages/api/src/application/token/token.entity.json",
+        "packages/api/src/utils/providers/common/smooth-weighted-round-robin.ts"
+      ],
+      "skill": ["packages/cli/skills/qgrid/references/token-auth-quota-lifecycle.md"],
+      "notion": {
+        "title": "토큰 풀과 요청 라우팅",
+        "url": "https://app.notion.com/p/3a5f753e4fb981b9b86afa2239355ade"
+      }
+    },
+    {
+      "id": "tools-and-structured-output",
+      "code": [
+        "packages/api/src/application/qgrid/tool-emulation.ts",
+        "packages/ai-sdk/src/index.ts"
+      ],
+      "skill": ["packages/cli/skills/qgrid/references/tool-calling-and-multiturn.md"],
+      "notion": {
+        "title": "Tool Calling과 Structured Output",
+        "url": "https://app.notion.com/p/3a5f753e4fb981128ceadf8d0cf38ec7"
+      }
+    },
+    {
+      "id": "session-and-cache",
+      "code": [
+        "packages/api/src/application/qgrid/conv-routing.ts",
+        "packages/api/src/utils/providers/openai/openai-dispatcher.ts"
+      ],
+      "skill": ["packages/cli/skills/qgrid/references/prompt-cache-and-usage.md"],
+      "notion": {
+        "title": "세션 관리와 Prompt Cache",
+        "url": "https://app.notion.com/p/3a5f753e4fb981cc9e7ff7ad91f09916"
+      }
+    },
+    {
+      "id": "request-logs",
+      "code": [
+        "packages/api/src/application/qgrid/qgrid-run-lifecycle.ts",
+        "packages/api/src/application/request-log/request-log.model.ts"
+      ],
+      "skill": [
+        "packages/cli/skills/qgrid/references/request-log-run-lifecycle.md",
+        "packages/cli/skills/qgrid/references/sonamu-api-web-flow.md"
+      ],
+      "notion": {
+        "title": "Request Log와 모니터링",
+        "url": "https://app.notion.com/p/3a5f753e4fb98113a0ebd13df904c184"
+      }
+    },
+    {
+      "id": "request-lifecycle",
+      "code": [
+        "packages/api/src/application/qgrid/qgrid.frame.ts",
+        "packages/api/src/application/qgrid/qgrid-run-lifecycle.ts"
+      ],
+      "skill": [
+        "packages/cli/skills/qgrid/references/request-log-run-lifecycle.md",
+        "packages/cli/skills/qgrid/references/tool-calling-and-multiturn.md"
+      ],
+      "notion": {
+        "title": "요청 처리 과정",
+        "url": "https://app.notion.com/p/3a5f753e4fb981079a4dfdbb6ebf364d"
+      }
+    },
+    {
+      "id": "request-log-incident-response",
+      "code": [
+        "packages/api/src/application/qgrid/qgrid-run-lifecycle.ts",
+        "packages/api/src/application/request-log/request-log.model.ts"
+      ],
+      "skill": [
+        "packages/cli/skills/qgrid/references/request-log-run-lifecycle.md",
+        "packages/cli/skills/qgrid/references/verification-and-debugging.md"
+      ],
+      "notion": {
+        "title": "장애 대응",
+        "url": "https://app.notion.com/p/3a5f753e4fb981008df2ee69a8ca63f7"
+      }
+    },
+    {
+      "id": "request-log-design-rationale",
+      "code": [
+        "packages/api/src/application/qgrid/qgrid.frame.ts",
+        "packages/api/src/application/request-log/request-log.model.ts"
+      ],
+      "skill": ["packages/cli/skills/qgrid/references/decision-rationale.md"],
+      "notion": {
+        "title": "설계 결정 기록",
+        "url": "https://app.notion.com/p/3a5f753e4fb981828ccdde9cc97f47d2"
+      }
+    },
+    {
+      "id": "deployment",
+      "code": [
+        "packages/cli/src/cli.ts",
+        "packages/api/src/server-bootstrap.ts",
+        "packages/api/src/startup-migrations.ts"
+      ],
+      "skill": ["packages/cli/skills/qgrid/references/cli-env-and-server-boot.md"],
+      "notion": {
+        "title": "배포 및 운영",
+        "url": "https://app.notion.com/p/3a5f753e4fb98160a19ed135719644db"
+      }
+    },
+    {
+      "id": "development",
+      "code": ["package.json", "packages/cli/postinstall.mjs"],
+      "skill": [
+        "packages/cli/skills/qgrid/references/docs-workflow.md",
+        "packages/cli/skills/qgrid/references/verification-and-debugging.md"
+      ],
+      "notion": {
+        "title": "저장소 구조",
+        "url": "https://app.notion.com/p/3a5f753e4fb981e99bdbde27bcaa9e7c"
+      }
+    }
+  ]
+}

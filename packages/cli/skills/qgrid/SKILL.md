@@ -34,13 +34,17 @@ Prefer `QGRID_PROJECT_NAME` as the project-wide default. Use config `projectName
 
 When writing AI SDK examples or setup code, import the public `QgridProviderOptions` type and apply `satisfies QgridProviderOptions` to the value under `providerOptions.qgrid`. AI SDK types the outer `providerOptions` as a generic JSON record, so it cannot infer qgrid's option names and values by itself. `QgridProviderOptions` is the inner qgrid namespace type, not the outer record type.
 
+Request logging is enabled by default. Use `providerOptions.qgrid.logger: false` only for a call that must create zero qgrid request-log rows. The same option suppresses both qgrid's server-native logging and `createQgridLogger` telemetry logging for that generation; it does not disable generation, AI SDK tool execution, multi-step continuation, or provider thread coordination. The old `logMode` input has been removed and must not appear in setup code or raw qgrid payloads.
+
 ## Non-Negotiable Boundaries
 
 - Use `packages/ai-sdk` as the active public SDK surface.
 - Treat `packages/sdk` as deprecated. Read it only for legacy context or migration clues. Do not add new examples or features on top of it unless explicitly asked for legacy work.
+- Let the server infer single-turn versus tool-run request-log lifecycle. Do not recreate caller-selected logging modes in the SDK or API examples.
 - Route provider models by prefix: `openai/*` goes to the OpenAI Codex runtime, `anthropic/*` goes to the Anthropic Claude Code runtime. Prefix-less model fallback is not implemented.
 - Treat Fable 5 safety fallback as upstream Claude Code behavior, not qgrid routing: a classifier refusal can retry on Opus 4.8. Do not add a second qgrid retry. Preserve requested Fable versus actual serving Opus, fallback history, and provider-reported cost; a fresh Claude Code process means the fallback is not sticky across qgrid requests.
 - Treat dashboard work as Sonamu API/model/generated-client/web work, not isolated frontend work.
+- Prefer `getPuri()` for Sonamu model queries. Treat `getDB()` as a legacy escape hatch only when Puri cannot express the required query. Inside `@transactional` methods, all participating queries must use `getPuri()`; `getDB()` does not reuse Sonamu's ambient transaction connection.
 - Never hand-author migration files for Sonamu-managed schema. Change the entity definition, inspect `sonamu migrate status`, and create migration files with `pnpm --dir packages/api sonamu migrate generate`. Inspect the generated files before applying them. If Sonamu cannot express a required schema change, stop and ask rather than silently replacing its workflow with a custom migration.
 - Keep OpenAI Codex built-in tools, apps, plugins, skills, web search, shell, and environment instruction blocks disabled unless the user explicitly asks for agentic Codex behavior.
 - Treat OpenAI image generation as an opt-in Codex `image_generation` tool path. Inspect current code before modifying it; it is not a direct Images API call and its image cost is an estimate.

@@ -11,6 +11,7 @@ Do not copy these notes blindly into implementation. Use them to find the releva
 - OpenAI/Codex runtime
 - Anthropic/Claude Code runtime
 - Token sync and quota thresholds
+- Weighted token routing
 - Request logs, metrics, and dashboard
 - CLI packaging and server boot
 - Image generation
@@ -33,6 +34,7 @@ Key decisions:
 - `fallbackModels` may exist as a typed future option, but it is not a server wire contract until the server implements fallback routing. Do not forward it as behavior just because the type exists.
 - Fable 5 refusal fallback is an upstream Claude Code safety path to Opus 4.8, not qgrid's reserved `fallbackModels` feature or Claude Code's overload-only `--fallback-model` flag. qgrid observes and reports the actual route and provider cost; it must not retry again.
 - The SDK should stay a thin adapter. Server APIs own request-log lifecycle, provider dispatch, structured-output emulation, and provider runtime details.
+- Request logging defaults to enabled. `providerOptions.qgrid.logger: false` is the single per-generation opt-out for both native qgrid logs and `createQgridLogger` telemetry logs; it must not alter generation or tool behavior.
 
 ## Tool Calling And Request-Log Lifecycle
 
@@ -49,6 +51,7 @@ Key decisions:
 - Tools and `jsonSchema` are mutually exclusive at the qgrid dispatcher boundary because both need the provider structured-output slot.
 - Tool-call request logs are a multi-step run: create run, append generate/tool steps, then finish run. This makes AI SDK multi-step behavior visible in the dashboard instead of logging only one opaque completion.
 - Tool results update the existing `tool_call` step by `request_log_id + tool_call_id`. They are not logged as a second unrelated completion row.
+- The server infers single-turn completion versus an open tool run from context and finish reason. The removed caller-selected `logMode` contract must not be recreated.
 - `runContext.requestLogId` is intentionally direct. qgrid SDK and server are in the same product boundary, so an opaque indirection was not worth the complexity.
 - Lifecycle endpoints remain public because `createQgridLogger` records non-qgrid AI SDK calls into qgrid logs without forcing those calls through the qgrid provider.
 - Structured-output failures should fail honestly. Especially on Claude Code, partial or invalid structured output must not be rescued into a fake success.
@@ -121,6 +124,28 @@ Key decisions:
 - Lookup failure is fail-open with logs/metrics. Hard failure happens only when usage was read successfully and the token is over threshold.
 - OpenAI needs the gate in reuse, idle selection, and queue drain paths. A reusable but over-threshold worker must fall back cold to another eligible token when possible.
 
+## Weighted Token Routing
+
+Sources:
+
+- `docs/brainstorms/2026-07-10-weighted-token-routing-requirements.md`
+- `docs/plans/2026-07-10-weighted-token-routing-plan.md`
+
+Key decisions:
+
+- `tokens.weight` is a per-token integer from 1 to 100 defaulting to 1. It is a relative routing share for new requests, not an enable/disable switch. Weight 0 is invalid; disabling a token stays on `active`.
+- Both providers share one smooth weighted round-robin selector in the provider common layer. The selector knows only token ids, weights, and current scores. Dispatchers own quota, lifecycle, and worker availability, and pass in only the eligible token id set per selection. Do not teach the selector about credentials, workers, or queues.
+- The quota threshold gate runs before weighted selection. An over-threshold token receives no weighted assignment regardless of weight, and the schedule is computed from the remaining eligible tokens.
+- OpenAI thread reuse stays pinned to its original worker and neither reads nor mutates weighted-selector state. Cache affinity intentionally beats weight distribution; only cold requests are weighted.
+- OpenAI routing is work-conserving. A token whose workers are all busy is omitted from the current selection round instead of making requests wait for the heavy-weight token. Queue drain re-runs weighted selection for the head item; the previous released-worker shortcut was removed because it bypassed weighting.
+- Candidate collection, selector mutation, and worker acquisition must run without an intervening `await`. A weighted score is consumed only when the dispatcher can commit the assignment synchronously; this is what keeps concurrent Anthropic selections spread correctly.
+- Selector scores reset when token topology or configured weights change. Temporary ineligibility from quota or busy workers only excludes the token from that selection's candidate set and does not reset schedule state.
+- Weight-change notification is owned by the versioned migration trigger (`tokens_weight_changed_upd`); the boot-time trigger setup SQL intentionally excludes `weight` from its WHEN clause, and a test pins this so exactly one trigger fires per weight-only change.
+- The token subscriber serializes notification and reconcile handling through an operation chain because weight propagation made dispatcher updates awaited; out-of-order token events could otherwise apply stale weights.
+- Required migrations moved from a soft-fail `onStart` step to a hard-fail `bootstrapServer` order (init → migrate → listen). Dispatchers must never boot against a schema missing `tokens.weight`.
+- `updateToken` became a partial field update (`TokenModel.updateFields`) so the dashboard weight control cannot overwrite name or quota threshold edits happening elsewhere.
+- Explicit scope boundaries: no per-model, per-project, per-request, or time-varying weights, and no automatic weight adjustment from remaining quota, latency, cost, errors, or worker counts.
+
 ## Request Logs, Metrics, And Dashboard
 
 Sources:
@@ -135,6 +160,8 @@ Key decisions:
 
 - The dashboard/logging layer is a core qgrid value, not an incidental web UI. It lets operators see cost, cache, TTFT, token routing, tool steps, and project-level workloads.
 - `createQgridLogger` exists so teams can keep using native AI SDK providers while still recording those calls in qgrid request logs. It should not throw into user code.
+- New log model identities use the existing `requested_model_name` and `model_name` fields in `provider/model` form, including external-provider telemetry logs. There is no separate provider column and no backfill of legacy prefixless rows.
+- A running parent has no confirmed serving model. Store its requested route separately, leave `model_name` null, and make dashboard running-state rendering depend on `status` rather than placeholder model text.
 - Request-log TTFT is the first generate-step TTFT. It intentionally measures generation responsiveness, not queue time or full request latency.
 - Cache-hit metrics must be derived consistently from normalized provider accounting. Keep metric logic centralized when possible.
 - Request-log list queries should avoid large text/blob columns unless the UI needs them. The list view is for scanning, not payload archival.

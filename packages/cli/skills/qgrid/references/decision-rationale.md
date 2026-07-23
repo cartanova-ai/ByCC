@@ -34,6 +34,7 @@ Key decisions:
 - `fallbackModels` may exist as a typed future option, but it is not a server wire contract until the server implements fallback routing. Do not forward it as behavior just because the type exists.
 - Fable 5 refusal fallback is an upstream Claude Code safety path to Opus 4.8, not qgrid's reserved `fallbackModels` feature or Claude Code's overload-only `--fallback-model` flag. qgrid observes and reports the actual route and provider cost; it must not retry again.
 - The SDK should stay a thin adapter. Server APIs own request-log lifecycle, provider dispatch, structured-output emulation, and provider runtime details.
+- Request logging defaults to enabled. `providerOptions.qgrid.logger: false` is the single per-generation opt-out for both native qgrid logs and `createQgridLogger` telemetry logs; it must not alter generation or tool behavior.
 
 ## Tool Calling And Request-Log Lifecycle
 
@@ -50,6 +51,7 @@ Key decisions:
 - Tools and `jsonSchema` are mutually exclusive at the qgrid dispatcher boundary because both need the provider structured-output slot.
 - Tool-call request logs are a multi-step run: create run, append generate/tool steps, then finish run. This makes AI SDK multi-step behavior visible in the dashboard instead of logging only one opaque completion.
 - Tool results update the existing `tool_call` step by `request_log_id + tool_call_id`. They are not logged as a second unrelated completion row.
+- The server infers single-turn completion versus an open tool run from context and finish reason. The removed caller-selected `logMode` contract must not be recreated.
 - `runContext.requestLogId` is intentionally direct. qgrid SDK and server are in the same product boundary, so an opaque indirection was not worth the complexity.
 - Lifecycle endpoints remain public because `createQgridLogger` records non-qgrid AI SDK calls into qgrid logs without forcing those calls through the qgrid provider.
 - Structured-output failures should fail honestly. Especially on Claude Code, partial or invalid structured output must not be rescued into a fake success.
@@ -158,6 +160,8 @@ Key decisions:
 
 - The dashboard/logging layer is a core qgrid value, not an incidental web UI. It lets operators see cost, cache, TTFT, token routing, tool steps, and project-level workloads.
 - `createQgridLogger` exists so teams can keep using native AI SDK providers while still recording those calls in qgrid request logs. It should not throw into user code.
+- New log model identities use the existing `requested_model_name` and `model_name` fields in `provider/model` form, including external-provider telemetry logs. There is no separate provider column and no backfill of legacy prefixless rows.
+- A running parent has no confirmed serving model. Store its requested route separately, leave `model_name` null, and make dashboard running-state rendering depend on `status` rather than placeholder model text.
 - Request-log TTFT is the first generate-step TTFT. It intentionally measures generation responsiveness, not queue time or full request latency.
 - Cache-hit metrics must be derived consistently from normalized provider accounting. Keep metric logic centralized when possible.
 - Request-log list queries should avoid large text/blob columns unless the UI needs them. The list view is for scanning, not payload archival.

@@ -26,6 +26,8 @@ Use this map to orient qgrid work quickly.
 - OpenAI Codex runtime: `packages/api/src/utils/providers/openai/*`.
 - Anthropic Claude Code runtime: `packages/api/src/utils/providers/anthropic/*`.
 - Cost/usage accounting: `packages/api/src/utils/providers/common/model-cost.ts`.
+- Weighted token selection: `packages/api/src/utils/providers/common/smooth-weighted-round-robin.ts`.
+- Boot order and startup migrations: `packages/api/src/server-bootstrap.ts`, `packages/api/src/startup-migrations.ts`.
 - Tool-call emulation: `packages/api/src/application/qgrid/tool-emulation.ts`.
 
 ## Web/Sonamu hot spots

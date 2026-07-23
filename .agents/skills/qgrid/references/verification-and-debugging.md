@@ -59,6 +59,9 @@ Choose by affected area:
 | qgrid frame API behavior | `packages/api/src/application/qgrid/qgrid.frame.test.ts` |
 | token subscriber and LISTEN/NOTIFY handling | `packages/api/src/application/qgrid/token-subscriber.test.ts` |
 | token defaults/validation | `packages/api/src/application/token/token.model.test.ts`, `token.types.test.ts` |
+| weighted routing selector | `packages/api/src/utils/providers/common/smooth-weighted-round-robin.test.ts` |
+| token weight migration/trigger split | `packages/api/src/application/qgrid/token-weight-migration.test.ts`, `token-trigger-setup.test.ts` |
+| boot order and startup migrations | `packages/api/src/server-bootstrap.test.ts`, `startup-migrations.test.ts` |
 | request log queries/legacy normalization | `packages/api/src/application/request-log/request-log.model.test.ts` |
 | OpenAI dispatcher routing/queue/quota/reuse | `packages/api/src/utils/providers/openai/openai-dispatcher.test.ts` |
 | OpenAI Codex worker RPC/turn behavior | `packages/api/src/utils/providers/openai/codex-worker.test.ts` |
@@ -96,7 +99,7 @@ AI SDK structured output:
 - `scripts/qgrid-structured-ai-sdk-smoke.ts`
 - Uses local `packages/ai-sdk/src/index`.
 - Env: `QGRID_URL`, `SMOKE_MODEL`, `SMOKE_CASES`, `SMOKE_REPEAT`.
-- Useful for streamObject/structured-output regressions.
+- Uses AI SDK 6 `streamText` with `Output.object`; useful for structured-output regressions.
 
 Image generation:
 

@@ -12,7 +12,7 @@ Use this reference before changing OpenAI provider behavior, Codex worker lifecy
 - Queue and routing
 - Usage and notifications
 - Streaming
-- Image generation status
+- Image generation
 
 ## Process model
 
@@ -22,12 +22,20 @@ OpenAI tokens use persistent Codex app-server workers.
 - Worker: `packages/api/src/utils/providers/openai/codex-worker.ts`.
 - RPC client: `packages/api/src/utils/providers/openai/codex-rpc.ts`.
 - Process command: `codex app-server --listen stdio://`.
-- Workers per token: `QGRID_WORKERS_PER_TOKEN`, default 3, capped at 5.
-- Worker id: `tokenId * 10 + workerIndex`.
+- Workers per token: autoscaling defaults to 5–15 workers per active token, with a hard cap of 20.
+- `QGRID_WORKERS_PER_TOKEN` is the legacy baseline and now supplies the minimum when `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` is absent.
+- Worker id: `tokenId * 100 + workerIndex`.
 - Worker home: `/tmp/qgrid-codex/${tokenId}-${workerIndex}` when `workerIndex` exists.
 - Worker cwd: `${CODEX_HOME}/cwd`.
 
 Workers are persistent. Turns are single-flight per worker (`busy` flag). When all eligible workers are busy, requests enter an in-memory queue.
+
+Autoscaling is enabled unless `QGRID_OPENAI_AUTOSCALE` is `"false"` or `"0"`. It evaluates the pool every 5 seconds by default, starts scale-down after 10 idle minutes, and refuses scale-up when either memory guard would be crossed:
+
+- estimated qgrid worker RSS: `0.71 + 0.157 * totalWorkerCount` GiB, limited to 16 GiB by default;
+- current host available memory at scale-up evaluation time, required to be at least 20 GiB by default.
+
+All sizing and memory limits can be overridden with the environment variables listed in `cli-env-and-server-boot.md`.
 
 ## Codex configuration
 
@@ -100,9 +108,10 @@ There is no explicit close RPC for old ephemeral threads; qgrid removes them fro
 
 OpenAI worker selection:
 
-- Prefer reuse worker when a valid reuse coordinate exists.
-- Otherwise select an idle ready active worker round-robin across eligible workers.
-- If no worker is free, enqueue.
+- Prefer reuse worker when a valid reuse coordinate exists. Successful reuse bypasses weighted selection and does not read or mutate its state.
+- Otherwise cold selection is two-level: group quota-eligible ready active workers by token, keep only tokens with at least one idle worker, choose the token with the shared smooth weighted round-robin selector (`providers/common/smooth-weighted-round-robin.ts`, driven by `tokens.weight`), then rotate a per-token worker cursor inside the chosen token.
+- Selection is work-conserving: a token whose workers are all busy is omitted from that selection round, so an idle lower-weight token receives the request immediately instead of waiting for the heavy token.
+- If no eligible worker is idle, enqueue. Queue drain re-runs the same weighted cold selection; it must not hand the queue head to the worker that happened to finish first.
 - Queue timeout: 60 seconds.
 - Max queue size: 50.
 

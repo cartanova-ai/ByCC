@@ -44,21 +44,28 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 | Env | Default | Meaning |
 |---|---:|---|
-| `QGRID_WORKERS_PER_TOKEN` | `3` | OpenAI Codex workers per token. Capped at 5 in code. |
+| `QGRID_WORKERS_PER_TOKEN` | `5` | Legacy worker-count setting. It supplies the minimum worker count when `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` is absent. Clamped to 1..20. |
+| `QGRID_OPENAI_AUTOSCALE` | enabled | Set to `"false"` or `"0"` to keep the pool fixed at the minimum worker count. |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | `QGRID_WORKERS_PER_TOKEN`, otherwise `5` | Minimum ready workers maintained for each active OpenAI token. Clamped to 1..20. |
+| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `15` when autoscaling | Maximum workers per active OpenAI token. It cannot be lower than the resolved minimum and is hard-capped at 20. When autoscaling is disabled, the maximum equals the minimum. |
+| `QGRID_OPENAI_SCALE_INTERVAL_MS` | `5000` | Autoscaling evaluation interval. Clamped to 250..300000 ms. |
+| `QGRID_OPENAI_SCALE_DOWN_IDLE_MS` | `600000` | Idle time before an excess worker becomes eligible for scale-down. Clamped to 1000 ms..24 hours. |
+| `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Refuse scale-up when estimated qgrid worker RSS would exceed this value. Estimate: `0.71 + 0.157 * totalWorkerCount` GiB. |
+| `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Refuse scale-up when current host available memory is below this value. |
 | `QGRID_OPENAI_THREAD_REUSE` | enabled | Set to `"false"` to disable OpenAI thread reuse and force cold thread behavior. |
 | `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic calls | Claude Code structured-output retry count, clamped to at least 1 by qgrid. |
 
 ## Server boot lifecycle
 
-On server start, `packages/api/src/sonamu.config.ts`:
+`packages/api/src/index.ts` runs `bootstrapServer` (`server-bootstrap.ts`) with a strict init → migrate → listen order:
 
-1. Loads `.env` from `packages/api/.env` when running API directly.
-2. Configures Sonamu database connection from `QGRID_DB_*`.
-3. Runs latest migrations from `packages/api/src/migrations`.
-4. Ensures PostgreSQL `tokens_changed` triggers.
-5. Starts `TokenSubscriber` for LISTEN/NOTIFY plus periodic reconcile.
-6. Starts `OpenAIDispatcher` and `AnthropicDispatcher`.
-7. Logs server URL and provider readiness counts.
+1. `Sonamu.init()` loads `.env` from `packages/api/.env` when running API directly and configures the Sonamu database connection from `QGRID_DB_*`.
+2. `runRequiredMigrations` (`startup-migrations.ts`) applies latest migrations from `packages/api/src/migrations` before the server listens. Migration failure exits the process — qgrid must not boot against a schema missing required columns such as `tokens.weight`. This is a hard-fail; it used to be a soft-fail warn inside `onStart`.
+3. `Sonamu.createServer()` starts the server. Its `onStart` in `packages/api/src/sonamu.config.ts`:
+   1. Ensures PostgreSQL `tokens_changed` triggers.
+   2. Starts `TokenSubscriber` for LISTEN/NOTIFY plus periodic reconcile.
+   3. Starts `OpenAIDispatcher` and `AnthropicDispatcher`.
+   4. Logs server URL and provider readiness counts.
 
 On shutdown, it stops provider dispatchers and the token subscriber.
 

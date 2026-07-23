@@ -5,7 +5,9 @@
     "build": "pnpm -r build",
     "dev": "pnpm --parallel dev",
     "format": "oxlint --type-aware . --fix && oxfmt .",
-    "check": "oxlint && oxfmt --check .",
+    "check": "pnpm qgrid-docs:check && oxlint && oxfmt --check .",
+    "qgrid-docs:sync": "node scripts/qgrid-doc-consistency.mjs --sync",
+    "qgrid-docs:check": "node scripts/qgrid-doc-consistency.mjs",
     "publish:packages": "tsx scripts/publish.ts"
   },
   "devDependencies": {

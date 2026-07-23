@@ -34,8 +34,9 @@ Use this reference before changing token storage, OAuth flows, token activation,
 - `active`: whether provider dispatchers may use it.
 - `ord`: dashboard ordering.
 - `quota_threshold`: nullable integer percentage, validated as 1..100 when present.
+- `weight`: non-null integer 1..100, database default 1. Relative share for weighted round-robin routing of new requests. Weight does not enable or disable a token; that stays on `active`.
 
-On creation, `TokenModel.save` applies default `quota_threshold = 80` unless `id` or `quota_threshold` is already provided.
+On creation, `TokenModel.save` applies defaults `quota_threshold = 80` and `weight = 1` independently for any field not provided (skipped entirely when `id` is present).
 
 OpenAI credentials:
 
@@ -72,7 +73,7 @@ Duplicate account replacement is account-identifier based:
 `QgridFrame` exposes token APIs:
 
 - `addToken(provider, credentials, name)`: saves a token directly.
-- `updateToken(id, name?, quotaThreshold?)`: updates name and/or quota threshold, preserving provider/credentials.
+- `updateToken(id, name?, quotaThreshold?, weight?)`: partial field update through `TokenModel.updateFields`; omitted fields preserve stored values, so one control cannot overwrite another control's setting. `weight` is validated as an integer 1..100. The web client uses a hand-written `useUpdateTokenMutation` hook instead of the generated tanstack-mutation client for this endpoint.
 - `removeToken(id)`: deletes token row.
 - `toggleToken(id)`: flips `active`.
 - `stats()`: reports dispatcher cache stats.
@@ -154,13 +155,16 @@ Triggers notify on:
 - INSERT
 - DELETE
 - UPDATE when `active`, `credentials`, `provider`, `name`, or `quota_threshold` changes.
+- UPDATE when `weight` changes, through a separate `tokens_weight_changed_upd` trigger owned by the versioned migration `20260710090000_alter_tokens_add_weight.ts`. The boot-time setup SQL intentionally leaves `weight` out of its WHEN clause (test-enforced in `token-trigger-setup.test.ts`) so exactly one trigger fires per weight-only change.
 
 `TokenSubscriber`:
 
 - connects to PostgreSQL and `LISTEN`s on `tokens_changed`;
 - reconnects with jittered exponential backoff up to 30 seconds;
 - runs periodic reconcile every 10 minutes because LISTEN/NOTIFY can miss changes while disconnected;
-- replaces dispatcher cache from `TokenModel.findActive("A")`.
+- replaces dispatcher cache from `TokenModel.findActive("A")`;
+- serializes notification handling and reconcile through an internal operation chain, so dispatcher updates (now awaited, including weight propagation) apply in arrival order;
+- passes `weight` through add, update, and reconcile calls for both provider dispatchers.
 
 On DELETE or missing row:
 
@@ -188,6 +192,7 @@ OpenAI token changes can create, update, deactivate, or kill persistent Codex wo
 
 - In-place OpenAI worker update is allowed only when account id and plan type match.
 - Otherwise workers are killed and respawned.
+- Weight-only changes never respawn workers; they update token metadata and reset the weighted selector's scores.
 - If no ready active OpenAI workers remain, queued OpenAI requests are rejected.
 
 Anthropic token changes only affect the in-memory token pool because every request fresh-spawns Claude Code.
