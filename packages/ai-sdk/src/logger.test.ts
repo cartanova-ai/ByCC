@@ -40,6 +40,16 @@ function mockFetch() {
   return calls;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -58,6 +68,8 @@ describe("createQgridLogger", () => {
 
     await logger.onStepFinish!({
       stepNumber: 0,
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash-001" },
       finishReason: "stop",
       usage: { inputTokens: 100, outputTokens: 50, inputTokenDetails: {} },
       content: [],
@@ -65,6 +77,8 @@ describe("createQgridLogger", () => {
     } as never);
 
     await logger.onFinish!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash-001" },
       finishReason: "stop",
       text: "Hi there",
       totalUsage: { inputTokens: 100, outputTokens: 50, inputTokenDetails: {} },
@@ -74,7 +88,7 @@ describe("createQgridLogger", () => {
     expect(createRunCall?.body.input).toMatchObject({
       userPrompt: "Hello",
       systemPrompt: "You are helpful",
-      modelName: "gemini-3-flash",
+      modelName: "google/gemini-3-flash",
       projectName: "test",
     });
 
@@ -84,6 +98,8 @@ describe("createQgridLogger", () => {
       stepIndex: 0,
       type: "generate",
       finishReason: "stop",
+      modelName: "google/gemini-3-flash-001",
+      requestedModelName: "google/gemini-3-flash",
     });
 
     const finishCall = calls.find((c) => c.url.includes("/finishRun"));
@@ -92,6 +108,8 @@ describe("createQgridLogger", () => {
       status: "succeeded",
       response: "Hi there",
       tokenName: "external",
+      modelName: "google/gemini-3-flash-001",
+      requestedModelName: "google/gemini-3-flash",
     });
   });
 
@@ -113,6 +131,8 @@ describe("createQgridLogger", () => {
     // step 0: tool-calls (tool-call만 있고 tool-result는 다음 step에)
     await logger.onStepFinish!({
       stepNumber: 0,
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash-001" },
       finishReason: "tool-calls",
       usage: { inputTokens: 200, outputTokens: 30, inputTokenDetails: {} },
       content: [
@@ -128,12 +148,16 @@ describe("createQgridLogger", () => {
     // step 1: stop (이전 step의 tool-result가 여기 content에)
     await logger.onStepFinish!({
       stepNumber: 1,
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash-001" },
       finishReason: "stop",
       usage: { inputTokens: 400, outputTokens: 80, inputTokenDetails: {} },
       content: [{ type: "tool-result", toolCallId: "call_1", output: { temperature: 22 } }],
     } as never);
 
     await logger.onFinish!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash-001" },
       finishReason: "stop",
       text: "Seoul is 22°C",
       totalUsage: { inputTokens: 600, outputTokens: 110, inputTokenDetails: {} },
@@ -148,6 +172,8 @@ describe("createQgridLogger", () => {
       toolArgs: '{"city":"Seoul"}',
       toolResult: '{"temperature":22}',
       toolDurationMs: 150,
+      modelName: "google/gemini-3-flash-001",
+      requestedModelName: "google/gemini-3-flash",
     });
 
     const finishCall = calls.find((c) => c.url.includes("/finishRun"));
@@ -241,6 +267,77 @@ describe("createQgridLogger", () => {
     } as never);
 
     expect(calls).toHaveLength(0);
+  });
+
+  it("skips external providers when providerOptions.qgrid.logger is false", async () => {
+    const calls = mockFetch();
+    const logger = getIntegration({ serverUrl: SERVER });
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "private request",
+      providerOptions: { qgrid: { logger: false } },
+    } as never);
+
+    await logger.onStepFinish!({
+      stepNumber: 0,
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash" },
+      finishReason: "stop",
+      usage: { inputTokens: 10, outputTokens: 5, inputTokenDetails: {} },
+      content: [],
+    } as never);
+
+    await logger.onFinish!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash" },
+      finishReason: "stop",
+      text: "not logged",
+      totalUsage: { inputTokens: 10, outputTokens: 5, inputTokenDetails: {} },
+    } as never);
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      provider: "openai.responses",
+      requestedModelId: "gpt-5.4",
+      servedModelId: "openai/gpt-5.4-2026-06-01",
+      requestedModelName: "openai/gpt-5.4",
+      modelName: "openai/gpt-5.4-2026-06-01",
+    },
+    {
+      provider: "anthropic.messages",
+      requestedModelId: "anthropic/claude-sonnet-4-7",
+      servedModelId: "claude-sonnet-4-7-20260715",
+      requestedModelName: "anthropic/claude-sonnet-4-7",
+      modelName: "anthropic/claude-sonnet-4-7-20260715",
+    },
+  ])("canonicalizes the $provider telemetry provider prefix", async (model) => {
+    const calls = mockFetch();
+    const logger = getIntegration({ serverUrl: SERVER });
+
+    await logger.onStart!({
+      model: { provider: model.provider, modelId: model.requestedModelId },
+      prompt: "test",
+    } as never);
+
+    await logger.onFinish!({
+      model: { provider: model.provider, modelId: model.requestedModelId },
+      response: { modelId: model.servedModelId },
+      finishReason: "stop",
+      text: "ok",
+      totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+    } as never);
+
+    const createRunCall = calls.find((call) => call.url.includes("/createRun"));
+    const finishCall = calls.find((call) => call.url.includes("/finishRun"));
+    expect(createRunCall?.body.input.modelName).toBe(model.requestedModelName);
+    expect(finishCall?.body.input).toMatchObject({
+      modelName: model.modelName,
+      requestedModelName: model.requestedModelName,
+    });
   });
 
   it("skips all hooks when createRun fails", async () => {
@@ -464,6 +561,214 @@ describe("createQgridLogger", () => {
       errorMessage: expect.stringContaining("overlapping runs"),
     });
     expect(errors[0].message).toContain("overlapping runs");
+  });
+
+  it.each([
+    { second: "enabled", providerOptions: undefined },
+    { second: "logger-disabled", providerOptions: { qgrid: { logger: false } } },
+  ])("reserves a default key across a pending createRun ($second second)", async (second) => {
+    const calls: FetchCall[] = [];
+    const pendingCreateRun = deferred<Response>();
+    const errors: Error[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as FetchCall["body"];
+        calls.push({ url, body });
+        if (url.includes("/createRun")) return pendingCreateRun.promise;
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    const logger = getIntegration({
+      serverUrl: SERVER,
+      staleRunTimeoutMs: 0,
+      onLogError: (error) => errors.push(error),
+    });
+
+    const firstStart = logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "first",
+    } as never);
+    const secondStart = logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "second",
+      providerOptions: second.providerOptions,
+    } as never);
+
+    expect(calls.filter((call) => call.url.includes("/createRun"))).toHaveLength(1);
+    expect(errors[0]?.message).toContain("overlapping runs");
+
+    pendingCreateRun.resolve(
+      new Response(JSON.stringify({ requestLogId: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await Promise.all([firstStart, secondStart]);
+
+    for (const text of ["first response", "second response"]) {
+      await logger.onFinish!({
+        model: { provider: "google", modelId: "gemini-3-flash" },
+        response: { modelId: "gemini-3-flash" },
+        finishReason: "stop",
+        text,
+        totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+      } as never);
+    }
+
+    const finishCalls = calls.filter((call) => call.url.includes("/finishRun"));
+    expect(finishCalls).toHaveLength(1);
+    expect(finishCalls[0]?.body.input).toMatchObject({
+      requestLogId: 1,
+      status: "error",
+      errorMessage: expect.stringContaining("overlapping runs"),
+    });
+  });
+
+  it("releases the start reservation when createRun fails", async () => {
+    const calls: FetchCall[] = [];
+    const errors: Error[] = [];
+    let createAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as FetchCall["body"];
+        calls.push({ url, body });
+        if (url.includes("/createRun")) {
+          createAttempts++;
+          if (createAttempts === 1) throw new Error("server down");
+          return new Response(JSON.stringify({ requestLogId: 2 }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    const logger = getIntegration({
+      serverUrl: SERVER,
+      staleRunTimeoutMs: 0,
+      onLogError: (error) => errors.push(error),
+    });
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "first fails",
+    } as never);
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "retry",
+    } as never);
+    await logger.onFinish!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash" },
+      finishReason: "stop",
+      text: "ok",
+      totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+    } as never);
+
+    expect(createAttempts).toBe(2);
+    expect(errors.map((error) => error.message)).toEqual(["server down"]);
+    const finishCall = calls.find((call) => call.url.includes("/finishRun"));
+    expect(finishCall?.body.input).toMatchObject({
+      requestLogId: 2,
+      status: "succeeded",
+      response: "ok",
+    });
+  });
+
+  it.each(["enabled-first", "disabled-first"] as const)(
+    "quarantines ambiguous logger-disabled overlap ($case)",
+    async (order) => {
+      const calls = mockFetch();
+      const errors: Error[] = [];
+      const logger = getIntegration({
+        serverUrl: SERVER,
+        staleRunTimeoutMs: 0,
+        onLogError: (error) => errors.push(error),
+      });
+      const enabledStart = {
+        model: { provider: "google", modelId: "gemini-3-flash" },
+        prompt: "logged",
+      };
+      const disabledStart = {
+        model: { provider: "google", modelId: "gemini-3-flash" },
+        prompt: "not logged",
+        providerOptions: { qgrid: { logger: false } },
+      };
+
+      if (order === "enabled-first") {
+        await logger.onStart!(enabledStart as never);
+        await logger.onStart!(disabledStart as never);
+      } else {
+        await logger.onStart!(disabledStart as never);
+        await logger.onStart!(enabledStart as never);
+      }
+
+      for (const text of ["logged response", "suppressed response"]) {
+        await logger.onFinish!({
+          model: { provider: "google", modelId: "gemini-3-flash" },
+          response: { modelId: "gemini-3-flash" },
+          finishReason: "stop",
+          text,
+          totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+        } as never);
+      }
+
+      expect(errors[0]?.message).toContain("overlapping runs");
+      const finishCalls = calls.filter((call) => call.url.includes("/finishRun"));
+      if (order === "enabled-first") {
+        expect(finishCalls).toHaveLength(1);
+        expect(finishCalls[0]?.body.input).toMatchObject({
+          status: "error",
+          errorMessage: expect.stringContaining("overlapping runs"),
+        });
+      } else {
+        expect(calls).toHaveLength(0);
+      }
+    },
+  );
+
+  it("keeps qgrid double-log suppression isolated from an external default-key run", async () => {
+    const calls = mockFetch();
+    const logger = getIntegration({ serverUrl: SERVER, staleRunTimeoutMs: 0 });
+
+    await logger.onStart!({
+      model: { provider: "qgrid", modelId: "openai/gpt-5.4" },
+      prompt: "qgrid-owned",
+    } as never);
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      prompt: "external",
+    } as never);
+
+    await logger.onFinish!({
+      model: { provider: "qgrid", modelId: "openai/gpt-5.4" },
+      response: { modelId: "gpt-5.4" },
+      finishReason: "stop",
+      text: "qgrid response",
+      totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+    } as never);
+    await logger.onFinish!({
+      model: { provider: "google", modelId: "gemini-3-flash" },
+      response: { modelId: "gemini-3-flash" },
+      finishReason: "stop",
+      text: "external response",
+      totalUsage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+    } as never);
+
+    expect(calls.filter((call) => call.url.includes("/createRun"))).toHaveLength(1);
+    const finishCall = calls.find((call) => call.url.includes("/finishRun"));
+    expect(finishCall?.body.input).toMatchObject({
+      status: "succeeded",
+      response: "external response",
+    });
   });
 
   it("marks runs as error when onFinish is never emitted", async () => {

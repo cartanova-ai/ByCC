@@ -20,10 +20,13 @@ type PendingToolCall = {
   toolCallId: string;
   toolName: string;
   toolArgs: string;
+  modelName?: string;
+  requestedModelName: string;
 };
 
 type RunState = {
   requestLogId: number;
+  requestedModelName: string;
   pendingSteps: Promise<unknown>[];
   pendingToolCalls: PendingToolCall[];
   startTime: number;
@@ -33,9 +36,24 @@ type RunState = {
   finishing: boolean;
 };
 
+type StartReservation = {
+  requestedModelName: string;
+  startTime: number;
+  errorMessage?: string;
+};
+
 const DEFAULT_RUN_KEY = "__qgrid_default_run__";
 const DEFAULT_STALE_RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const STALE_RUN_GRACE_MS = 5000;
+const OVERLAPPING_RUN_ERROR =
+  "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
+
+function fullModelName(provider: string | undefined, modelId: string | undefined) {
+  if (!provider || !modelId) return undefined;
+  const baseProvider = provider.split(".", 1)[0] ?? provider;
+  const prefix = `${baseProvider}/`;
+  return modelId.startsWith(prefix) ? modelId : `${prefix}${modelId}`;
+}
 
 function timedKeySet() {
   const keys = new Set<string>();
@@ -68,12 +86,13 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
   const onLogError =
     config.onLogError ?? ((e: Error) => console.warn(`[qgrid-logger] ${e.message}`));
   const runs = new Map<string, RunState>();
+  const starting = new Map<string, StartReservation>();
   const keyTtl =
     typeof config.staleRunTimeoutMs === "number" && config.staleRunTimeoutMs > 0
       ? config.staleRunTimeoutMs
       : DEFAULT_STALE_RUN_TIMEOUT_MS;
 
-  const suppressedQgrid = timedKeySet();
+  const suppressedRuns = timedKeySet();
   const quarantined = timedKeySet();
 
   const finalizeRun = async (
@@ -87,6 +106,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
         outputTokens?: number;
         inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
       };
+      modelName?: string;
+      requestedModelName?: string;
     },
   ) => {
     const run = runs.get(runKey);
@@ -106,6 +127,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
           toolCallId: pending.toolCallId,
           toolName: pending.toolName,
           toolArgs: pending.toolArgs,
+          modelName: pending.modelName,
+          requestedModelName: pending.requestedModelName,
           toolDurationMs: run.toolDurations.get(pending.toolCallId),
         }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e)))),
       );
@@ -118,6 +141,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
       status: result.status,
       response: result.response,
       tokenName: config.tokenName ?? "external",
+      modelName: result.modelName,
+      requestedModelName: result.requestedModelName ?? run.requestedModelName,
       totalInputTokens: result.totalUsage?.inputTokens ?? 0,
       totalOutputTokens: result.totalUsage?.outputTokens ?? 0,
       totalCacheReadTokens: result.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
@@ -148,24 +173,45 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
         event.metadata.qgridRunId = `auto-${++autoRunIdCounter}`;
       }
       const runKey = resolveRunKey(event);
+
+      // qgrid provider requests own their server-side logging lifecycle. Later
+      // hooks also expose model.provider, so they do not need shared key state.
+      if (event.model.provider === "qgrid") return;
+
       if (quarantined.has(runKey)) {
         onLogError(new Error("createQgridLogger: telemetry key is quarantined after overlap"));
         return;
       }
 
-      if (event.model.provider === "qgrid") {
-        suppressedQgrid.add(runKey, keyTtl);
+      if (runs.has(runKey) || starting.has(runKey) || suppressedRuns.has(runKey)) {
+        const reservation = starting.get(runKey);
+        if (reservation) {
+          reservation.errorMessage = OVERLAPPING_RUN_ERROR;
+          starting.delete(runKey);
+        }
+        suppressedRuns.remove(runKey);
+        quarantined.add(runKey, keyTtl);
+        const finalizing = finalizeRun(runKey, {
+          status: "error",
+          errorMessage: OVERLAPPING_RUN_ERROR,
+        });
+        onLogError(new Error(OVERLAPPING_RUN_ERROR));
+        await finalizing;
         return;
       }
 
-      if (runs.has(runKey)) {
-        const msg =
-          "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
-        await finalizeRun(runKey, { status: "error", errorMessage: msg });
-        quarantined.add(runKey, keyTtl);
-        onLogError(new Error(msg));
+      if (event.providerOptions?.qgrid?.logger === false) {
+        suppressedRuns.add(runKey, keyTtl);
         return;
       }
+
+      const requestedModelName =
+        fullModelName(event.model.provider, event.model.modelId) ?? event.model.modelId;
+      const reservation: StartReservation = {
+        requestedModelName,
+        startTime: Date.now(),
+      };
+      starting.set(runKey, reservation);
 
       try {
         const messages = event.messages ?? (Array.isArray(event.prompt) ? event.prompt : undefined);
@@ -173,10 +219,31 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
         const result = await createRun(serverUrl, {
           userPrompt: extractUserPrompt(event.prompt, messages),
           systemPrompt: extractSystemPrompt(event.system),
-          modelName: event.model.modelId,
+          modelName: requestedModelName,
           projectName,
           history,
         });
+
+        if (
+          reservation.errorMessage ||
+          quarantined.has(runKey) ||
+          starting.get(runKey) !== reservation
+        ) {
+          if (starting.get(runKey) === reservation) starting.delete(runKey);
+          await finishRun(serverUrl, {
+            requestLogId: result.requestLogId,
+            status: "error",
+            tokenName: config.tokenName ?? "external",
+            requestedModelName: reservation.requestedModelName,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalCacheReadTokens: 0,
+            totalCacheCreationTokens: 0,
+            totalDurationMs: Date.now() - reservation.startTime,
+            errorMessage: reservation.errorMessage ?? OVERLAPPING_RUN_ERROR,
+          }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e))));
+          return;
+        }
 
         // watchdog timeout
         let watchdogTimeout = DEFAULT_STALE_RUN_TIMEOUT_MS;
@@ -219,8 +286,10 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
           }
         }
 
+        starting.delete(runKey);
         runs.set(runKey, {
           requestLogId: result.requestLogId,
+          requestedModelName,
           pendingSteps: [],
           pendingToolCalls: [],
           startTime: Date.now(),
@@ -230,25 +299,31 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
           finishing: false,
         });
       } catch (e) {
+        if (starting.get(runKey) === reservation) starting.delete(runKey);
         onLogError(e instanceof Error ? e : new Error(String(e)));
       }
     },
 
     onToolCallFinish(event) {
+      if (event.model?.provider === "qgrid") return;
       const runKey = resolveRunKey(event);
-      if (suppressedQgrid.has(runKey) || quarantined.has(runKey)) return;
+      if (suppressedRuns.has(runKey) || quarantined.has(runKey)) return;
       const run = runs.get(runKey);
       if (!run) return;
       run.toolDurations.set(event.toolCall.toolCallId, Math.round(event.durationMs));
     },
 
     onStepFinish(event) {
+      if (event.model?.provider === "qgrid") return;
       const runKey = resolveRunKey(event);
-      if (suppressedQgrid.has(runKey) || quarantined.has(runKey)) return;
+      if (suppressedRuns.has(runKey) || quarantined.has(runKey)) return;
       const run = runs.get(runKey);
       if (!run) return;
 
       const { content, usage, reasoningText, finishReason, stepNumber } = event;
+      const requestedModelName =
+        fullModelName(event.model?.provider, event.model?.modelId) ?? run.requestedModelName;
+      const modelName = fullModelName(event.model?.provider, event.response?.modelId);
 
       // 이전 step의 pending tool-call 매칭
       const remainingPending: PendingToolCall[] = [];
@@ -270,6 +345,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
               toolCallId: pending.toolCallId,
               toolName: pending.toolName,
               toolArgs: pending.toolArgs,
+              modelName: pending.modelName,
+              requestedModelName: pending.requestedModelName,
               toolResult: tr && "output" in tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(pending.toolCallId),
               error: te && "error" in te ? safeStringify(te.error) : undefined,
@@ -288,6 +365,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
           requestLogId: run.requestLogId,
           stepIndex: stepNumber,
           type: "generate",
+          modelName,
+          requestedModelName,
           inputTokens: usage.inputTokens ?? 0,
           outputTokens: usage.outputTokens ?? 0,
           cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
@@ -319,6 +398,8 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
               toolCallId: tc.toolCallId,
               toolName: tc.toolName,
               toolArgs: safeStringify(tc.input),
+              modelName,
+              requestedModelName,
               toolResult: tr && "output" in tr ? safeStringify(tr.output) : undefined,
               toolDurationMs: run.toolDurations.get(tc.toolCallId),
               error: te && "error" in te ? safeStringify(te.error) : undefined,
@@ -332,16 +413,19 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
             toolArgs: safeStringify(tc.input),
+            modelName,
+            requestedModelName,
           });
         }
       }
     },
 
     async onFinish(event) {
+      if (event.model?.provider === "qgrid") return;
       const runKey = resolveRunKey(event);
 
-      if (suppressedQgrid.has(runKey)) {
-        suppressedQgrid.remove(runKey);
+      if (suppressedRuns.has(runKey)) {
+        suppressedRuns.remove(runKey);
         return;
       }
       if (quarantined.has(runKey)) return;
@@ -350,11 +434,16 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
       if (!run) return;
 
       const status = event.finishReason === "error" ? "error" : "succeeded";
+      const requestedModelName =
+        fullModelName(event.model?.provider, event.model?.modelId) ?? run.requestedModelName;
+      const modelName = fullModelName(event.model?.provider, event.response?.modelId);
 
       await finalizeRun(runKey, {
         status,
         response: event.text,
         totalUsage: event.totalUsage,
+        modelName,
+        requestedModelName,
         ...(status === "error" && "error" in event
           ? { errorMessage: getErrorMessage(event.error) }
           : {}),
