@@ -162,6 +162,7 @@ const { text } = await generateText({
 
 | 옵션 | 값 | 적용 범위 | 설명 |
 |---|---|---|---|
+| `logger` | `boolean` | 공통 | qgrid request log 저장 여부. 기본값은 `true`. `false`로 설정해도 client tool 실행과 multi-step 연결은 계속 동작 |
 | `sessionKey` | `string` | OpenAI 전용 | 멀티턴 대화 식별자. 같은 key는 같은 codex thread로 라우팅되어 prompt cache 적중 ([아래](#멀티턴-prompt-cache-sessionkey) 참조) |
 | `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | 공통 (지원 값은 모델별 상이, 예: `"max"`는 GPT-5.6+) | reasoning 모델의 추론 깊이. 기본값은 config의 `defaultEffort` (`"low"`) |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI 전용 | 응답 텍스트의 상세도 |
@@ -262,6 +263,29 @@ createQgridLogger({
 ```
 
 모든 설정은 optional (serverUrl 제외). 기본값이 있으므로 `serverUrl`만 넣으면 동작합니다.
+
+특정 generation을 request log 저장에서 제외하려면 `providerOptions.qgrid.logger`를
+`false`로 설정하세요. qgrid provider 호출과 `createQgridLogger`가 관찰하는 외부 provider
+호출에 모두 적용되며, tool 실행과 multi-step 연결은 계속 정상 동작합니다.
+
+```typescript
+import { type QgridProviderOptions } from "@cartanova/qgrid-ai-sdk";
+
+const { text } = await generateText({
+  model: google("gemini-3-flash"),
+  prompt: "이 요청은 저장하지 마",
+  providerOptions: {
+    qgrid: { logger: false } satisfies QgridProviderOptions,
+  },
+  experimental_telemetry: createQgridLogger({ serverUrl: "http://localhost:44900" }),
+});
+```
+
+외부 provider request log의 모델 이름은 `provider/modelId` 형식으로 저장됩니다. provider가
+AI SDK response metadata로 실제 serving 모델을 다르게 보고하면 step과 final log에는
+관찰된 serving 모델을 저장하고 requested model은 별도로 유지합니다. AI SDK runtime의
+`response.modelId`는 변경하지 않습니다. `openai.responses`는 `openai`로,
+`anthropic.messages`는 `anthropic`으로 적재하는 등 AI SDK adapter suffix는 base provider로 정규화합니다.
 
 ### qgrid provider와 함께 사용
 

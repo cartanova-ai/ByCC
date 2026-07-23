@@ -48,6 +48,10 @@ Request log changes usually touch:
 
 Check list and detail views. Avoid loading large text columns in list views unless intentionally needed.
 
+For new request logs, the existing `requested_model_name` and `model_name` fields store full `provider/model` values; there is no separate request-log provider column. A running parent stores the requested id and keeps `model_name = NULL`, but the dashboard must treat `status` as authoritative and render only an explicit running state until the request finishes. Completed rows keep the existing requested-to-serving fallback display. If an error/aborted row has only a requested model, show that value explicitly as requested rather than as a serving model or an unknown placeholder. Legacy prefixless rows remain valid and are not backfilled.
+
+Provider-qualified ids widen `model_name` and `requested_model_name` from 50 to 255 characters on both the parent and step entities. Generate and inspect the Sonamu migration, and apply it before starting the new server. The width migration must not rewrite legacy model values or add a provider column. Keep generated API/web types synchronized through Sonamu rather than editing them by hand.
+
 Image-generation request logs add `is_image_generation`, `image_cost_usd`, and `image_cost_method`. The list view displays driver plus image cost as the total cost cell; the detail view shows driver cost and image cost separately and renders generated image data URLs from response/tool-step content.
 
 Reference input images for image generation render in the detail view under the user prompt from the first synthetic `image_generation` step's `tool_args.inputImages`. Keep the prompt itself text-only, redact large base64 in request JSON views, and avoid rendering duplicate input previews for multi-output image turns.

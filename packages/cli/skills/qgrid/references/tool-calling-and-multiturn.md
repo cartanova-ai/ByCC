@@ -35,22 +35,22 @@ When `options.tools` contains function tools:
 1. Filter function tools.
 2. Convert them with `toQgridTool`.
 3. Send `tools` in `/api/qgrid/query` or `/api/qgrid/prepareStream`.
-4. Set `logMode: "run"`.
-5. Do not send `jsonSchema` response format at the same time.
+4. Forward the per-call `logger` switch when request logging is disabled.
+5. Do not send `jsonSchema` response format at the same time. The server infers whether the logged request becomes a multi-step run.
 
 When qgrid responds with `finishReason: "tool-calls"`:
 
 1. Map qgrid `content: [{ type: "tool-call" }]` to AI SDK tool-call content.
-2. Store the pending run's `runContext` and tool-call IDs in the provider instance registry.
+2. Store the pending tool-call IDs, local correlation state, and any returned `runContext` in the provider instance registry. Logging-enabled calls receive a request-log id; logging-disabled calls do not need one.
 3. Return finish reason `{ unified: "tool-calls", raw: "tool_call" }`.
 
 On the next AI SDK call, if prompt history contains tool results for all pending IDs:
 
 1. Extract tool results from AI SDK history.
 2. Match result IDs against the pending run registry.
-3. Send the matched run's previous `runContext`.
+3. Send the matched run's previous `runContext` when the server returned one.
 4. Send `toolResults`.
-5. Keep `logMode: "run"`.
+5. Keep the call's `logger` setting. The server decides from the context and finish reason whether the request-log parent remains open.
 
 If tool results do not match any pending run, qgrid warns and sends the request without stale `runContext`.
 The registry is keyed per pending run so concurrent `generateText(...tools...)` calls on the same qgrid model instance can finish in any order.
@@ -134,13 +134,14 @@ Anthropic follow-ups do not reuse Claude sessions. qgrid starts a fresh Claude p
 
 ## Request Logs
 
-Tool runs use `logMode: "run"`.
+Request logging defaults to enabled, and the server infers the tool-run lifecycle rather than accepting a caller-selected mode.
 
 - `beforeQuery` creates or continues a request log run.
 - A generate step is recorded after every LLM turn.
 - When `finishReason` is `tool-calls`, qgrid appends pending tool-call step rows.
 - The follow-up request fills tool-call results or errors.
 - The final `stop` response aggregates step usage and finishes the run.
-- Stale runs with no follow-up are marked error after 30 minutes.
+- Stale runs with unresolved tool-call steps are marked error after 30 minutes; long provider calls without pending tools are not swept solely for being `running`.
+- `providerOptions.qgrid.logger: false` creates no parent or step rows, while the SDK still executes tools and correlates follow-ups locally.
 
 Use `projectName` for tool-heavy workloads so request logs can be filtered by task/workflow and metrics remain interpretable.

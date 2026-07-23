@@ -162,6 +162,7 @@ const { text } = await generateText({
 
 | Option | Values | Applies to | Description |
 |---|---|---|---|
+| `logger` | `boolean` | both providers | qgrid request logging. Defaults to `true`; `false` disables request-log persistence for this generation without disabling client tools or multi-step continuation |
 | `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier. The same key routes to the same codex thread for prompt-cache hits (see [below](#multi-turn-prompt-cache-sessionkey)) |
 | `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | both providers (supported values are model-dependent, e.g. `"max"` is GPT-5.6+) | Reasoning depth. Defaults to the config's `defaultEffort` (`"low"`) |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI only | Response text verbosity |
@@ -262,6 +263,29 @@ createQgridLogger({
 ```
 
 Everything except `serverUrl` is optional. With defaults in place, passing only `serverUrl` works.
+
+To opt one generation out of request logging, set `providerOptions.qgrid.logger` to `false`.
+The same option works for qgrid-provider calls and for external-provider calls observed by
+`createQgridLogger`; tool execution and multi-step continuation still work normally.
+
+```typescript
+import { type QgridProviderOptions } from "@cartanova/qgrid-ai-sdk";
+
+const { text } = await generateText({
+  model: google("gemini-3-flash"),
+  prompt: "Do not persist this request",
+  providerOptions: {
+    qgrid: { logger: false } satisfies QgridProviderOptions,
+  },
+  experimental_telemetry: createQgridLogger({ serverUrl: "http://localhost:44900" }),
+});
+```
+
+External-provider request logs store model names as `provider/modelId`. If the provider reports
+a different served model in the AI SDK response metadata, step and final log rows record that
+observed model while retaining the requested model separately. This does not alter the AI SDK
+runtime `response.modelId`. AI SDK adapter suffixes are normalized to the base provider, for
+example `openai.responses` to `openai` and `anthropic.messages` to `anthropic`.
 
 ### Using alongside the qgrid provider
 

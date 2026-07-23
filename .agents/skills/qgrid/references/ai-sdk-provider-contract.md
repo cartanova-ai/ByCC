@@ -57,6 +57,7 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 
 `providerOptions.qgrid` supports:
 
+- `logger`: request-log switch. Omitted or `true` is the default and enables qgrid logging; `false` guarantees that generation creates zero qgrid request-log rows.
 - `sessionKey`: OpenAI thread reuse key. Disabled for Anthropic models.
 - `effort`
 - `verbosity`: OpenAI/Codex route only.
@@ -67,6 +68,30 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 - `imageGenerationOptions`: optional image quality/size hints and cost-estimation basis. Current supported values are `quality: "low" | "medium" | "high"` and `size: "1024x1024" | "1024x1536" | "1536x1024"`.
 
 `providerOptions.qgrid` does not currently support `projectName` or `project_name`. Prefer `QGRID_PROJECT_NAME` for the default project label; use config `projectName` only when a caller needs to override that default.
+
+## Request logging
+
+Request logging is enabled by default. Opt out per generation with the typed qgrid option:
+
+```ts
+const result = await generateText({
+  model: qgrid("openai/gpt-5.6-terra"),
+  prompt,
+  providerOptions: {
+    qgrid: {
+      logger: false,
+    } satisfies QgridProviderOptions,
+  },
+});
+```
+
+`logger: false` affects observability only. Generation, streaming, AI SDK client tool execution, multi-step continuation, and OpenAI thread coordination continue normally. When `createQgridLogger` is also installed, it reads the same option and suppresses its external-provider telemetry lifecycle for that generation; qgrid provider calls are always skipped by the telemetry integration to prevent double logging.
+
+For raw qgrid query/stream payloads, the corresponding input is top-level `logger?: boolean`, also defaulting to `true`. The old `logMode` input has been removed and legacy payloads containing it are rejected. Migrate callers as follows:
+
+- Omitted logging mode or `"auto"`: remove it; omit `logger` or send `logger: true`.
+- `"run"`: remove it; the server now infers a continued tool run from `runContext`, tool results, and the provider finish reason.
+- `"none"`: replace it with `logger: false`.
 
 ## OpenAI/Codex Fast mode
 
@@ -104,8 +129,9 @@ Payload responsibilities:
 - Send `jsonSchema` only when no tools are present and response format top-level schema is `object`.
 - Send `history` as JSON string when prior messages exist.
 - Send `projectName` when configured.
-- Use `logMode: "run"` for tool-call loops.
+- Send `logger: false` when the per-call option disables request logging; otherwise rely on the server default.
 - Preserve and resend `runContext` for tool-call follow-ups.
+- Let the server infer single-turn completion versus an open tool-call run. Logging-disabled tool calls still use the SDK's local pending-call correlation and continue without a request-log id.
 - Store/resend OpenAI `threadCoord` by `sessionKey`.
 - Send `imageGeneration` and `imageGenerationOptions` when configured.
 - Send AI SDK multimodal image/file message parts as qgrid `input` only when `imageGeneration` is enabled. Normal non-image-generation calls keep `user_prompt` text-only and do not forward image input.
@@ -154,4 +180,4 @@ Do not store or replay `sessionKey` thread coordinates for `anthropic/*` models.
 
 ## Logger integration
 
-`createQgridLogger` records external provider calls into qgrid request logs. It skips qgrid provider calls to avoid double-logging. When changing logger behavior, preserve stale-run fallback because AI SDK telemetry lacks a reliable error hook for all failure modes.
+`createQgridLogger` records external provider calls into qgrid request logs. It skips qgrid provider calls to avoid double-logging, and it skips any external-provider generation whose `providerOptions.qgrid.logger` is `false`. This makes `logger: false` a single opt-out that produces zero native or telemetry request logs without changing the model call itself. When changing logger behavior, preserve stale-run fallback because AI SDK telemetry lacks a reliable error hook for all failure modes.

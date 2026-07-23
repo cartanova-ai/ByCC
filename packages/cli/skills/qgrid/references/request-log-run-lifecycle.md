@@ -2,43 +2,62 @@
 
 Use this reference when changing request logging, tool-call loop logging, telemetry logger integration, request log steps, or dashboard metrics.
 
-## Modes
+## Logging switch
 
-qgrid query supports `logMode`:
+qgrid query and stream inputs support `logger?: boolean`:
 
-- `auto`: save one request_log after a simple request succeeds.
-- `run`: create/update a run and append steps for multi-step/tool-call flows.
-- `none`: no automatic logging.
+- Omitted or `true`: request logging is enabled. This is the default.
+- `false`: the generation creates zero qgrid request-log parent or step rows.
 
-If `logMode` is omitted, `qgrid.frame.ts` uses `run` when `isStep` is true and `auto` otherwise.
+The AI SDK exposes the switch as `providerOptions.qgrid.logger`. `logger: false` changes observability only: generation, streaming, AI SDK tool execution, tool-result continuation, and provider thread coordination remain active. The SDK keeps pending tool-call correlation locally when no request-log id exists.
 
-## Query flow
+`logMode` has been removed and payloads that still contain it are rejected. Migrate old callers as follows:
 
-For `logMode: "run"`:
+- Omitted mode or `"auto"`: remove it; omit `logger` or use `logger: true`.
+- `"run"`: remove it; the server infers tool-run lifecycle.
+- `"none"`: replace it with `logger: false`.
 
-1. `beforeQuery(args)` creates or extends a run.
-2. `QgridDispatcher.query` or `queryStream` executes the provider call.
-3. `afterQuery(...)` records result/step data and returns `runContext`.
-4. qgrid merges lifecycle `requestLogId` with provider `threadCoord`.
-5. Errors call `finishRunWithError`; stream close can call abort handling.
+## Server-inferred lifecycle
 
-For `auto`:
+For every logger-enabled initial qgrid query or stream, the server owns the lifecycle:
 
-- qgrid saves a single request log row after the provider returns.
-- It records token name, project name, model, prompts, response, usage, duration, TTFT, driver cost, image cost estimate, effort, history, status, tool-call count, and image-generation flag.
-- Image results are also appended as synthetic `image_generation` tool-call steps so the detail page can inspect the generated image and pricing assumption.
+1. Create one parent request log with `status = running` before provider execution.
+2. Execute the provider call.
+3. Append the generate step and any pending tool-call steps.
+4. If the provider finishes with tool calls, keep the parent running and return its request-log id in `runContext`.
+5. If the provider finishes normally, aggregate the steps and finish the same parent row.
+
+A tool-result follow-up carries the returned `runContext` and tool results. The server completes the pending tool steps, appends the next generate step, and again decides from the provider finish reason whether to keep the run open or finish it. Callers do not select a single-request or run mode.
+
+Errors and client aborts finish the same parent as `error` or `aborted` and roll up usage, cost, fallback count, and cost provenance from every generate step that completed before termination. SSE client closure is authoritative regardless of the provider's abort error text; if a provider result arrives after closure, record its step usage and then leave the parent `aborted` without publishing `done`.
+
+Creating the initial `running` row is a precondition for a logger-enabled provider call. Once the provider has succeeded, however, a failure while appending or finalizing logs is best-effort: report the logging error and preserve the generated text/stream result instead of making logging failure replace a successful model result.
+
+Stale cleanup must target old runs that still have unresolved tool-call steps; a long provider request with no pending tool call is not stale merely because its parent row is still running. Cleanup and arriving tool follow-ups share a PostgreSQL transaction advisory lock per request-log id and recheck the unresolved step after acquiring it, so cleanup cannot overwrite an in-flight follow-up across server processes.
+Candidate discovery is only a hint; each candidate is rechecked and finalized in its own short Sonamu `@transactional` write operation. Use `getPuri("w")` throughout that operation so the advisory lock, aggregate reads, and terminal update stay on the same transaction connection.
 
 ## Tool-call loop
 
-The AI SDK provider tracks pending tool-call IDs. When the next AI SDK call contains all required tool results, it sends:
-
-- existing `runContext`
-- `toolResults`
-- `logMode: "run"`
+The AI SDK provider tracks pending tool-call IDs. When the next AI SDK call contains all required tool results, it sends the existing logging `runContext` when one was returned and sends the tool results. With `logger: false`, it still correlates the pending calls locally and continues the generation without a request-log id.
 
 qgrid converts tool results into continuation input for providers. Cold fallback still includes a "continue using these results" text input.
 
-Tool calls are produced through qgrid structured-output emulation, not native provider tool calling. The request log lifecycle records the emulated generate step, pending tool-call step rows, tool results on follow-up, and the final generate step. For full semantics, read `tool-calling-and-multiturn.md`.
+Tool calls are produced through qgrid structured-output emulation, not native provider tool calling. The lifecycle records the emulated generate step, pending tool-call step rows, tool results on follow-up, and the final generate step. For full semantics, read `tool-calling-and-multiturn.md`.
+
+## Provider and model storage
+
+New request logs store routed model identity in the existing model fields; they do not add a separate provider column:
+
+- While the parent is running, `requested_model_name` is the full requested id such as `openai/gpt-5.4` and `model_name` is `NULL`.
+- Completed parent and generate-step model values use full `provider/model` ids.
+- `requested_model_name` preserves the exact requested route, including modifiers such as Anthropic `[1m]`; `model_name` is the actual canonical serving route. They differ after a Fable refusal fallback, for example requested Fable versus serving Opus.
+- A completed multi-step parent uses the final turn's requested and serving models. It never stores the literal model value `mixed`; usage and cost still aggregate across steps, and `cost_source` may be `mixed`.
+- Public qgrid `QueryOutput.model` and AI SDK response model metadata continue to report the provider runtime model without changing their response contract. Do not copy that prefixless response value directly into server-native storage.
+- `createQgridLogger` combines the telemetry model provider and model id for the requested value, and qualifies the observed step/final response model with that provider. AI SDK adapter ids such as `openai.responses` and `anthropic.messages` are normalized to their base provider before storage. Avoid duplicating a prefix when the model id already starts with the same provider.
+
+This is a forward-only storage normalization. Do not backfill legacy prefixless rows, and do not invent a new `provider` column. Dashboard and query consumers must tolerate both legacy prefixless values and new prefixed values. Treat `status` as authoritative: a running row has no confirmed serving model, so the dashboard should render an explicit running state rather than a model placeholder or fallback display.
+
+Provider-qualified ids widen `model_name` and `requested_model_name` from 50 to 255 characters on both request-log entities. Generate and apply the normal Sonamu schema migration before running the new server. Do not hand-edit generated types, hand-author a derivable migration, or rewrite existing model values as part of that width migration.
 
 ## Usage fields
 
@@ -51,14 +70,13 @@ Stored request log usage uses qgrid-standard semantics:
 - `output_tokens`: output tokens.
 - `cost_usd`: integer micro-USD in DB; displayed USD is `cost_usd / 1_000_000`.
 - `cost_source`: `provider`, `pricing_table`, or `mixed`. New rows keep the cost calculated at request time.
-- `requested_model_name` / `model_name`: requested and actual serving models; they differ on Fable refusal fallback.
 - `fallback_count`: number of observed model fallbacks in the run/step.
 - `image_cost_usd`: integer micro-USD estimate for Codex image generation output.
 - `image_cost_method`: string such as `assumed:gpt-image-2:medium:1536x1024:png`.
 
-OpenAI/Codex: use per-turn `.last` usage from `thread/tokenUsage/updated`.
+OpenAI/Codex uses per-turn `.last` usage from `thread/tokenUsage/updated`.
 
-Anthropic: normalize native mutually exclusive categories by summing input + cache creation + cache read into total input. Prefer positive Claude Code `total_cost_usd`; otherwise calculate from the actual serving model and TTL split.
+Anthropic normalizes native mutually exclusive categories by summing input + cache creation + cache read into total input. Prefer positive Claude Code `total_cost_usd`; otherwise calculate from the actual serving model and TTL split.
 
 For image requests, keep `cost_usd` as the Codex driver model token cost. Image output cost is separate because qgrid observes Codex's `image_generation` result, not the OpenAI Images API usage object. Treat `image_cost_usd` as a price-table estimate that may be inaccurate if Codex changes its underlying image accounting.
 
@@ -70,7 +88,7 @@ Reference images for image generation are not stored in `request_logs.user_promp
 
 ## TTFT
 
-TTFT is tracked by wrapping first provider delta:
+TTFT is tracked by wrapping the first provider delta:
 
 - OpenAI: first `item/agentMessage/delta`.
 - Anthropic: first text or structured partial JSON delta.
@@ -79,4 +97,4 @@ If missing, qgrid maps TTFT to `0` in `QueryOutput` and nullable/optional places
 
 ## Logger integration
 
-`packages/ai-sdk/src/logger.ts` lets non-qgrid providers write logs into qgrid. It skips model provider `qgrid` to avoid double logging. Preserve stale-run cleanup because AI SDK telemetry may emit start without a final event on provider failures.
+`packages/ai-sdk/src/logger.ts` lets non-qgrid providers write logs into qgrid through the public lifecycle endpoints. It skips model provider `qgrid` to avoid double logging and skips any generation with `providerOptions.qgrid.logger: false`. Therefore one disabled generation produces neither native qgrid logs nor `createQgridLogger` telemetry logs. Preserve its stale-run fallback because AI SDK telemetry may emit start without a final event on provider failures.
