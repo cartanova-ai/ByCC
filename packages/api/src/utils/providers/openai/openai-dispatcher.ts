@@ -190,11 +190,17 @@ type TokenEligibility = {
   thresholdedTokenCount: number;
 };
 
+type RateLimitsCacheEntry = OpenAIRateLimitsWithMeta & {
+  generation: number;
+};
+
 export class OpenAIDispatcher implements ProviderDispatcher {
   workerPool = new Map<number, CodexAppServerWorker[]>();
   tokenMetadata = new Map<number, TokenMetadata>();
   queue: QueueItem[] = [];
   readonly poolConfig: OpenAIWorkerPoolConfig;
+  private readonly quotaBlockedTokenIds = new Set<number>();
+  private readonly rateLimitsGenerationByToken = new Map<number, number>();
   private readonly weightedSelector = new SmoothWeightedRoundRobin();
   private readonly workerCursorByToken = new Map<number, number>();
   private readonly getHostAvailableGiB: () => number;
@@ -261,6 +267,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.workerCursorByToken.clear();
     this.weightedSelector.resetScores();
     this.rateLimitsCache.clear();
+    this.rateLimitsGenerationByToken.clear();
+    this.quotaBlockedTokenIds.clear();
   }
 
   // ── Token events (from TokenSubscriber) ─────────────────────────
@@ -272,6 +280,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     quotaThreshold?: number | null,
     weight = 1,
   ): Promise<void> {
+    this.quotaBlockedTokenIds.delete(id);
+    this.invalidateRateLimitsCache(id);
     this.setTokenMetadata(id, name, credentials, quotaThreshold, weight);
     if (this.workerPool.has(id)) return;
     await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
@@ -284,7 +294,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.tokenMetadata.delete(id);
     this.weightedSelector.removeToken(id);
     this.workerCursorByToken.delete(id);
-    this.rateLimitsCache.delete(id);
+    this.invalidateRateLimitsCache(id);
+    this.quotaBlockedTokenIds.delete(id);
     await Promise.allSettled(workers.map((w) => w.kill()));
     if (this.getAllReadyActiveWorkers().length === 0) {
       this.rejectAllQueued("NO_OPENAI_WORKERS");
@@ -303,11 +314,12 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     weight = 1,
   ): Promise<void> {
     const existing = this.workerPool.get(id) ?? [];
-    const renamed = existing.some((w) => w.tokenName !== name);
+    const thresholdChanged = this.getQuotaThreshold(id) !== quotaThreshold;
+    if (thresholdChanged) this.quotaBlockedTokenIds.delete(id);
     this.setTokenMetadata(id, name, credentials, quotaThreshold, weight);
-    if (renamed) this.rateLimitsCache.delete(id);
 
     if (existing.length === 0) {
+      this.invalidateRateLimitsCache(id);
       await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
       return;
     }
@@ -320,7 +332,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
 
     this.workerPool.delete(id);
-    this.rateLimitsCache.delete(id);
+    this.invalidateRateLimitsCache(id);
+    this.quotaBlockedTokenIds.delete(id);
     await Promise.allSettled(existing.map((w) => w.kill()));
     await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
   }
@@ -329,7 +342,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     const workers = this.workerPool.get(id) ?? [];
     const tokenName = workers[0]?.tokenName;
     const metadata = this.tokenMetadata.get(id);
-    if (metadata) metadata.active = false;
+    if (metadata?.active) this.tokenMetadata.set(id, { ...metadata, active: false });
+    this.quotaBlockedTokenIds.delete(id);
     const changed = workers.some((worker) => worker.active);
     workers.forEach((w) => {
       w.active = false;
@@ -346,7 +360,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     const workers = this.workerPool.get(id) ?? [];
     const tokenName = workers[0]?.tokenName;
     const metadata = this.tokenMetadata.get(id);
-    if (metadata) metadata.active = true;
+    if (metadata && !metadata.active) this.tokenMetadata.set(id, { ...metadata, active: true });
     const changed = workers.some((worker) => !worker.active);
     workers.forEach((w) => {
       w.active = true;
@@ -461,14 +475,38 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     if (!worker || !worker.isReady || !worker.active) return null;
     if (worker.epoch !== epoch) return null;
     if (!worker.hasThread(threadId)) return null;
+    const quotaMetadata = this.tokenMetadata.get(worker.tokenId);
     if (!(await this.isTokenQuotaEligible(worker.tokenId, worker.tokenName, excludedTokenIds))) {
+      return null;
+    }
+    if (
+      !worker.isReady ||
+      !worker.active ||
+      this.tokenMetadata.get(worker.tokenId) !== quotaMetadata ||
+      this.quotaBlockedTokenIds.has(worker.tokenId)
+    ) {
+      if (this.quotaBlockedTokenIds.has(worker.tokenId)) {
+        excludedTokenIds.add(worker.tokenId);
+      }
       return null;
     }
 
     const deadline = Date.now() + REUSE_WORKER_WAIT_MS;
     for (;;) {
       // restart(epoch 변경) / thread 소멸이 대기 중에 발생하면 폴백.
-      if (worker.epoch !== epoch || !worker.hasThread(threadId)) return null;
+      if (
+        !worker.isReady ||
+        !worker.active ||
+        worker.epoch !== epoch ||
+        !worker.hasThread(threadId) ||
+        this.tokenMetadata.get(worker.tokenId) !== quotaMetadata ||
+        this.quotaBlockedTokenIds.has(worker.tokenId)
+      ) {
+        if (this.quotaBlockedTokenIds.has(worker.tokenId)) {
+          excludedTokenIds.add(worker.tokenId);
+        }
+        return null;
+      }
       if (worker.tryAcquireTurn()) return worker;
       if (Date.now() >= deadline) return null;
       await sleep(REUSE_WORKER_POLL_MS);
@@ -793,7 +831,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     if (!this.poolConfig.autoscale || this.stopped) return;
     await this.runScaling(async () => {
       const candidates = [...this.tokenMetadata.entries()].filter(([tokenId, metadata]) => {
-        if (!metadata.active) return false;
+        if (!metadata.active || this.quotaBlockedTokenIds.has(tokenId)) return false;
         return (this.workerPool.get(tokenId)?.length ?? 0) < this.poolConfig.maxWorkersPerToken;
       });
       if (candidates.length === 0) return;
@@ -832,6 +870,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
           const currentWorkers = this.workerPool.get(tokenId);
           if (
             !currentMetadata?.active ||
+            this.quotaBlockedTokenIds.has(tokenId) ||
             currentMetadata !== metadata ||
             !currentWorkers ||
             currentWorkers.some((entry) => entry.workerIndex === workerIndex)
@@ -917,25 +956,40 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   // ── Rate limits ─────────────────────────────────────────────────
 
-  rateLimitsCache = new Map<number, { data: GetAccountRateLimitsResponse; cachedAt: number }>();
+  rateLimitsCache = new Map<number, RateLimitsCacheEntry>();
   static readonly RATE_LIMITS_CACHE_TTL = 60_000;
 
   async getRateLimitsByTokenId(tokenId: number): Promise<OpenAIRateLimitsWithMeta> {
+    const generation = this.rateLimitsGenerationByToken.get(tokenId) ?? 0;
     const cached = this.rateLimitsCache.get(tokenId);
-    if (cached && Date.now() - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL) {
-      return cached;
+    if (
+      cached &&
+      cached.generation === generation &&
+      Date.now() - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL
+    ) {
+      return { data: cached.data, cachedAt: cached.cachedAt };
     }
 
     const worker = (this.workerPool.get(tokenId) ?? []).find((w) => w.isReady);
     if (!worker) throw new Error("no ready openai workers");
     const data = (await worker.getRateLimits()) as GetAccountRateLimitsResponse;
-    const entry = { data, cachedAt: Date.now() };
-    this.rateLimitsCache.set(tokenId, entry);
-    return entry;
+    const entry: RateLimitsCacheEntry = { data, cachedAt: Date.now(), generation };
+    if ((this.rateLimitsGenerationByToken.get(tokenId) ?? 0) === generation) {
+      this.rateLimitsCache.set(tokenId, entry);
+    }
+    return { data: entry.data, cachedAt: entry.cachedAt };
   }
 
   private requestDrainQueue(): void {
     void this.drainQueue().catch((e) => logger.warn(`drainQueue failed: ${(e as Error).message}`));
+  }
+
+  private invalidateRateLimitsCache(tokenId: number): void {
+    this.rateLimitsCache.delete(tokenId);
+    this.rateLimitsGenerationByToken.set(
+      tokenId,
+      (this.rateLimitsGenerationByToken.get(tokenId) ?? 0) + 1,
+    );
   }
 
   private setTokenMetadata(
@@ -1024,29 +1078,47 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     tokenName: string,
     excludedTokenIds?: Set<number>,
   ): Promise<boolean> {
-    const threshold = this.getQuotaThreshold(tokenId);
-    if (threshold === undefined || threshold === null) return true;
+    for (;;) {
+      const tokenMetadata = this.tokenMetadata.get(tokenId);
+      const threshold = tokenMetadata?.quotaThreshold;
+      if (!tokenMetadata?.active || threshold === undefined || threshold === null) {
+        this.quotaBlockedTokenIds.delete(tokenId);
+        return true;
+      }
 
-    let result: OpenAIQuotaUsageResult;
-    try {
-      result = await readOpenAIQuotaUsage(() => this.getRateLimitsByTokenId(tokenId));
-    } catch (e) {
-      this.logQuotaLookupFailOpen(tokenId, tokenName, (e as Error).message);
+      let result: OpenAIQuotaUsageResult;
+      try {
+        result = await readOpenAIQuotaUsage(() => this.getRateLimitsByTokenId(tokenId));
+      } catch (e) {
+        if (this.tokenMetadata.get(tokenId) !== tokenMetadata) continue;
+        this.quotaBlockedTokenIds.delete(tokenId);
+        this.logQuotaLookupFailOpen(tokenId, tokenMetadata.name ?? tokenName, (e as Error).message);
+        return true;
+      }
+
+      if (this.tokenMetadata.get(tokenId) !== tokenMetadata) continue;
+
+      if (result.kind === "lookup_failed") {
+        this.quotaBlockedTokenIds.delete(tokenId);
+        this.logQuotaLookupFailOpen(tokenId, tokenMetadata.name ?? tokenName, result.reason);
+        return true;
+      }
+
+      if (result.utilizationPct >= threshold) {
+        const transitioned = !this.quotaBlockedTokenIds.has(tokenId);
+        this.quotaBlockedTokenIds.add(tokenId);
+        if (transitioned) {
+          this.logQuotaOverThreshold(tokenId, tokenMetadata.name ?? tokenName, threshold, result);
+        }
+        excludedTokenIds?.add(tokenId);
+        return false;
+      }
+
+      if (this.quotaBlockedTokenIds.delete(tokenId)) {
+        this.logQuotaRecovered(tokenId, tokenMetadata.name ?? tokenName, threshold, result);
+      }
       return true;
     }
-
-    if (result.kind === "lookup_failed") {
-      this.logQuotaLookupFailOpen(tokenId, tokenName, result.reason);
-      return true;
-    }
-
-    if (result.utilizationPct >= threshold) {
-      this.logQuotaOverThreshold(tokenId, tokenName, threshold, result);
-      excludedTokenIds?.add(tokenId);
-      return false;
-    }
-
-    return true;
   }
 
   private logQuotaOverThreshold(
@@ -1055,18 +1127,44 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     threshold: number,
     result: Extract<OpenAIQuotaUsageResult, { kind: "ok" }>,
   ): void {
-    logger.info("quota_threshold gate: over_threshold", {
-      tokenId,
-      tokenName,
-      provider: "openai",
-      threshold,
-      cachedUtilization: result.utilizationPct,
-      cacheAge: result.cacheAgeMs,
-      windowDurationMins: result.windowDurationMins,
-      resetsAt: result.resetsAt,
-      limitId: result.limitId,
-      reason: "over_threshold",
-    });
+    logger.info(
+      `quota_threshold gate: over_threshold ${tokenName}[${tokenId}] (${result.utilizationPct}% >= ${threshold}%)`,
+      {
+        tokenId,
+        tokenName,
+        provider: "openai",
+        threshold,
+        cachedUtilization: result.utilizationPct,
+        cacheAge: result.cacheAgeMs,
+        windowDurationMins: result.windowDurationMins,
+        resetsAt: result.resetsAt,
+        limitId: result.limitId,
+        reason: "over_threshold",
+      },
+    );
+  }
+
+  private logQuotaRecovered(
+    tokenId: number,
+    tokenName: string,
+    threshold: number,
+    result: Extract<OpenAIQuotaUsageResult, { kind: "ok" }>,
+  ): void {
+    logger.info(
+      `quota_threshold gate: recovered ${tokenName}[${tokenId}] (${result.utilizationPct}% < ${threshold}%)`,
+      {
+        tokenId,
+        tokenName,
+        provider: "openai",
+        threshold,
+        cachedUtilization: result.utilizationPct,
+        cacheAge: result.cacheAgeMs,
+        windowDurationMins: result.windowDurationMins,
+        resetsAt: result.resetsAt,
+        limitId: result.limitId,
+        reason: "recovered",
+      },
+    );
   }
 
   private logQuotaLookupFailOpen(tokenId: number, tokenName: string, reason: string): void {

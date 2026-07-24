@@ -204,6 +204,12 @@ Anthropic token changes only affect the in-memory token pool because every reque
 - Null means no threshold gate.
 - Lookup failure is fail-open.
 - Individual over-threshold tokens are excluded from selection.
+- OpenAI keeps this exclusion as an in-memory `quota-blocked` runtime state without changing the
+  token's persisted `active` value or stopping its workers. It logs `over_threshold` only when a
+  token enters the blocked state, skips that token during normal burst scale-up, and logs
+  `recovered` once a later quota check falls below the threshold. Metadata generations prevent an
+  in-flight lookup from restoring a block after a threshold or lifecycle change. The state is not
+  persisted across server restarts.
 - If all ready/eligible tokens are over threshold, qgrid throws `QuotaThresholdExceededError`.
 - Log messages use `quota_threshold gate` with reasons such as `over_threshold`, `lookup_fail_open`, and `all_exceeded`.
 

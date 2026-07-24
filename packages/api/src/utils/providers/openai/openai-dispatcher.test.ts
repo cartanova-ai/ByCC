@@ -55,6 +55,14 @@ function quotaFail(reason = "rate limit lookup failed"): OpenAIQuotaUsageResult 
   return { kind: "lookup_failed", reason };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function baseReq(overrides: Partial<GenerateRequest> = {}): GenerateRequest {
   return {
     model: "gpt-5-codex",
@@ -312,6 +320,73 @@ describe("OpenAIDispatcher autoscaling", () => {
     expect(dispatcher.workerCount).toBe(2);
   });
 
+  it("does not add workers to a quota-blocked token", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const hazeCredentials = credentials({ accountId: "haze" });
+    const nkCredentials = credentials({ accountId: "nk" });
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "openai/haze", hazeCredentials, 80, 1);
+    await dispatcher.onTokenAdded(2, "openai/nk", nkCredentials, null, 1);
+    dispatcher.workerPool.set(1, [
+      fakeWorker({ tokenId: 1, tokenName: "openai/haze", workerIndex: 0 }),
+    ]);
+    dispatcher.workerPool.set(2, [
+      fakeWorker({ tokenId: 2, tokenName: "openai/nk", workerIndex: 0 }),
+    ]);
+    readOpenAIQuotaUsageMock.mockResolvedValue(quotaOk(85));
+
+    const selected = await dispatcher.acquireIdleWorker();
+    expect(selected?.tokenName).toBe("openai/nk");
+    selected?.releaseTurn();
+
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockImplementation(async (tokenId, tokenName, _credentials, workerIndex) =>
+        fakeWorker({ tokenId, tokenName, workerIndex }),
+      );
+    await dispatcher.scaleUpOneStep();
+
+    expect(spawnSingleWorker).toHaveBeenCalledTimes(1);
+    expect(spawnSingleWorker).toHaveBeenCalledWith(2, "openai/nk", nkCredentials, 1);
+    expect(dispatcher.workerPool.get(1)).toHaveLength(1);
+    expect(dispatcher.workerPool.get(2)).toHaveLength(2);
+  });
+
+  it("discards a worker spawned while its token becomes quota-blocked", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const tokenCredentials = credentials();
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "openai/haze", tokenCredentials, 80, 1);
+    dispatcher.workerPool.set(1, [
+      fakeWorker({ tokenId: 1, tokenName: "openai/haze", workerIndex: 0 }),
+    ]);
+    readOpenAIQuotaUsageMock.mockResolvedValue(quotaOk(85));
+
+    let resolveSpawn!: (worker: CodexAppServerWorker) => void;
+    const spawnedWorker = fakeWorker({
+      tokenId: 1,
+      tokenName: "openai/haze",
+      workerIndex: 1,
+    });
+    const spawnSingleWorker = vi.spyOn(dispatcher, "spawnSingleWorker").mockImplementation(
+      () =>
+        new Promise<CodexAppServerWorker>((resolve) => {
+          resolveSpawn = resolve;
+        }),
+    );
+
+    const scaling = dispatcher.scaleUpOneStep();
+    await vi.waitFor(() => expect(spawnSingleWorker).toHaveBeenCalledTimes(1));
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    resolveSpawn(spawnedWorker);
+    await scaling;
+
+    expect(spawnedWorker.kill).toHaveBeenCalledTimes(1);
+    expect(dispatcher.workerPool.get(1)).toHaveLength(1);
+  });
+
   it("does not scale past the estimated RSS guard", async () => {
     const dispatcher = new OpenAIDispatcher(
       autoscaleConfig({ maxEstimatedRssGiB: 0.9 }),
@@ -413,6 +488,71 @@ describe("OpenAIDispatcher token updates", () => {
 
     expect(workerA.getRateLimits).toHaveBeenCalledTimes(1);
     expect(workerB.getRateLimits).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps fresh rate-limit cache across routing-only token updates", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const rateLimits = {
+      rateLimits: { primary: { usedPercent: 85 } },
+      rateLimitsByLimitId: null,
+    };
+    const worker = fakeWorker({
+      tokenId: 1,
+      tokenName: "openai/haze",
+      rateLimits,
+    });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80, 1);
+
+    await dispatcher.getRateLimitsByTokenId(1);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80, 2);
+    await expect(dispatcher.getRateLimitsByTokenId(1)).resolves.toMatchObject({
+      data: rateLimits,
+    });
+
+    expect(worker.getRateLimits).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cache a response from an outdated provider identity", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const oldRateLimits = {
+      rateLimits: { primary: { usedPercent: 85 } },
+      rateLimitsByLimitId: null,
+    };
+    const currentRateLimits = {
+      rateLimits: { primary: { usedPercent: 10 } },
+      rateLimitsByLimitId: null,
+    };
+    const oldWorker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    const currentWorker = fakeWorker({
+      tokenId: 1,
+      tokenName: "openai/haze",
+      rateLimits: currentRateLimits,
+    });
+    addWorkers(dispatcher, [oldWorker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    const pendingRateLimits = deferred<unknown>();
+    vi.mocked(oldWorker.getRateLimits).mockImplementationOnce(() => pendingRateLimits.promise);
+    vi.mocked(oldWorker.canReuseForToken).mockReturnValue(false);
+    vi.spyOn(dispatcher, "spawnWorkers").mockImplementation(async () => {
+      dispatcher.workerPool.set(1, [currentWorker]);
+    });
+
+    const outdatedRead = dispatcher.getRateLimitsByTokenId(1);
+    await vi.waitFor(() => expect(oldWorker.getRateLimits).toHaveBeenCalledTimes(1));
+    await dispatcher.onTokenUpdated(
+      1,
+      "openai/haze",
+      credentials({ accountId: "new-account" }),
+      80,
+    );
+    pendingRateLimits.resolve(oldRateLimits);
+
+    await expect(outdatedRead).resolves.toMatchObject({ data: oldRateLimits });
+    await expect(dispatcher.getRateLimitsByTokenId(1)).resolves.toMatchObject({
+      data: currentRateLimits,
+    });
+    expect(currentWorker.getRateLimits).toHaveBeenCalledTimes(1);
   });
 
   it("replaceTokens removes absent OpenAI workers and updates threshold metadata", async () => {
@@ -565,6 +705,244 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     );
   });
 
+  it("logs over-threshold and recovery only when the token gate state changes", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    readOpenAIQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(85))
+      .mockResolvedValueOnce(quotaOk(85))
+      .mockResolvedValueOnce(quotaOk(10))
+      .mockResolvedValueOnce(quotaOk(10));
+
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    const recoveredWorker = await dispatcher.acquireIdleWorker();
+    recoveredWorker?.releaseTurn();
+    const stillEligibleWorker = await dispatcher.acquireIdleWorker();
+    stillEligibleWorker?.releaseTurn();
+
+    const overThresholdLogs = loggerInfoMock.mock.calls.filter(([message]) =>
+      String(message).includes("quota_threshold gate: over_threshold"),
+    );
+    const recoveredLogs = loggerInfoMock.mock.calls.filter(([message]) =>
+      String(message).includes("quota_threshold gate: recovered"),
+    );
+    expect(overThresholdLogs).toHaveLength(1);
+    expect(overThresholdLogs[0]).toEqual([
+      "quota_threshold gate: over_threshold openai/haze[1] (85% >= 80%)",
+      expect.objectContaining({
+        tokenId: 1,
+        tokenName: "openai/haze",
+        threshold: 80,
+        cachedUtilization: 85,
+        reason: "over_threshold",
+      }),
+    ]);
+    expect(recoveredLogs).toHaveLength(1);
+    expect(recoveredLogs[0]).toEqual([
+      "quota_threshold gate: recovered openai/haze[1] (10% < 80%)",
+      expect.objectContaining({
+        tokenId: 1,
+        tokenName: "openai/haze",
+        threshold: 80,
+        cachedUtilization: 10,
+        reason: "recovered",
+      }),
+    ]);
+  });
+
+  it("clears the runtime quota block when a lookup fails open", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    readOpenAIQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(85))
+      .mockResolvedValueOnce(quotaFail("rpc timeout"))
+      .mockResolvedValueOnce(quotaOk(85));
+
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    const failOpenWorker = await dispatcher.acquireIdleWorker();
+    failOpenWorker?.releaseTurn();
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+
+    const overThresholdLogs = loggerInfoMock.mock.calls.filter(([message]) =>
+      String(message).includes("quota_threshold gate: over_threshold"),
+    );
+    expect(overThresholdLogs).toHaveLength(2);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("lookup_fail_open"),
+      expect.objectContaining({ tokenId: 1, reason: "lookup_fail_open" }),
+    );
+  });
+
+  it("starts a new quota-block transition after the threshold changes", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    readOpenAIQuotaUsageMock.mockResolvedValue(quotaOk(85));
+
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 70);
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+
+    const overThresholdLogs = loggerInfoMock.mock.calls.filter(([message]) =>
+      String(message).includes("quota_threshold gate: over_threshold"),
+    );
+    expect(overThresholdLogs).toHaveLength(2);
+    expect(overThresholdLogs[1]?.[0]).toBe(
+      "quota_threshold gate: over_threshold openai/haze[1] (85% >= 70%)",
+    );
+  });
+
+  it("starts a new quota-block transition after deactivation and reactivation", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    readOpenAIQuotaUsageMock.mockResolvedValue(quotaOk(85));
+
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    dispatcher.onTokenDeactivated(1);
+    dispatcher.onTokenActivated(1);
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+
+    const overThresholdLogs = loggerInfoMock.mock.calls.filter(([message]) =>
+      String(message).includes("quota_threshold gate: over_threshold"),
+    );
+    expect(overThresholdLogs).toHaveLength(2);
+  });
+
+  it("discards an over-threshold result when the threshold changes during lookup", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    const pendingQuota = deferred<OpenAIQuotaUsageResult>();
+    readOpenAIQuotaUsageMock
+      .mockImplementationOnce(() => pendingQuota.promise)
+      .mockResolvedValueOnce(quotaOk(85))
+      .mockResolvedValueOnce(quotaOk(95));
+
+    const pendingAcquire = dispatcher.acquireIdleWorker();
+    await vi.waitFor(() => expect(readOpenAIQuotaUsageMock).toHaveBeenCalledTimes(1));
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 90);
+    pendingQuota.resolve(quotaOk(85));
+
+    const eligibleWorker = await pendingAcquire;
+    expect(eligibleWorker).toBe(worker);
+    eligibleWorker?.releaseTurn();
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+
+    const overThresholdLogs = loggerInfoMock.mock.calls.filter(([message]) =>
+      String(message).includes("quota_threshold gate: over_threshold"),
+    );
+    expect(overThresholdLogs).toEqual([
+      [
+        "quota_threshold gate: over_threshold openai/haze[1] (95% >= 90%)",
+        expect.objectContaining({
+          tokenId: 1,
+          threshold: 90,
+          cachedUtilization: 95,
+        }),
+      ],
+    ]);
+  });
+
+  it("does not re-block autoscaling when the threshold is removed during lookup", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const worker = fakeWorker({
+      tokenId: 1,
+      tokenName: "openai/haze",
+      workerIndex: 0,
+    });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    const pendingQuota = deferred<OpenAIQuotaUsageResult>();
+    readOpenAIQuotaUsageMock.mockImplementationOnce(() => pendingQuota.promise);
+
+    const pendingAcquire = dispatcher.acquireIdleWorker();
+    await vi.waitFor(() => expect(readOpenAIQuotaUsageMock).toHaveBeenCalledTimes(1));
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), null);
+    pendingQuota.resolve(quotaOk(85));
+
+    const eligibleWorker = await pendingAcquire;
+    expect(eligibleWorker).toBe(worker);
+    eligibleWorker?.releaseTurn();
+    expect(
+      loggerInfoMock.mock.calls.filter(([message]) =>
+        String(message).includes("quota_threshold gate:"),
+      ),
+    ).toHaveLength(0);
+
+    const spawnedWorker = fakeWorker({
+      tokenId: 1,
+      tokenName: "openai/haze",
+      workerIndex: 1,
+    });
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockResolvedValue(spawnedWorker);
+    await dispatcher.scaleUpOneStep();
+
+    expect(spawnSingleWorker).toHaveBeenCalledTimes(1);
+    expect(dispatcher.workerPool.get(1)).toEqual([worker, spawnedWorker]);
+  });
+
+  it("does not restore a quota block when the token is deactivated during lookup", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const worker = fakeWorker({ tokenId: 1, tokenName: "openai/haze" });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "openai/haze", credentials(), 80);
+    const pendingQuota = deferred<OpenAIQuotaUsageResult>();
+    readOpenAIQuotaUsageMock
+      .mockImplementationOnce(() => pendingQuota.promise)
+      .mockResolvedValueOnce(quotaOk(85));
+
+    const pendingAcquire = dispatcher.acquireIdleWorker();
+    await vi.waitFor(() => expect(readOpenAIQuotaUsageMock).toHaveBeenCalledTimes(1));
+    dispatcher.onTokenDeactivated(1);
+    pendingQuota.resolve(quotaOk(85));
+
+    await expect(pendingAcquire).resolves.toBeNull();
+    expect(
+      loggerInfoMock.mock.calls.filter(([message]) =>
+        String(message).includes("quota_threshold gate:"),
+      ),
+    ).toHaveLength(0);
+
+    dispatcher.onTokenActivated(1);
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    expect(
+      loggerInfoMock.mock.calls.filter(([message]) =>
+        String(message).includes("quota_threshold gate: over_threshold"),
+      ),
+    ).toHaveLength(1);
+  });
+
   it("keeps eligible busy workers queued instead of throwing quota errors", async () => {
     const dispatcher = new OpenAIDispatcher();
     const worker = fakeWorker({ tokenId: 1, tokenName: "tok-A", busy: true });
@@ -695,6 +1073,68 @@ describe("OpenAIDispatcher quota threshold gate", () => {
 
     expect(result.tokenName).toBe("tok-A");
     expect(executeTurn).toHaveBeenCalledWith(worker, expect.anything(), "thread-1");
+  });
+
+  it("falls back from reuse when the token is deactivated during quota lookup", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const workerA = fakeWorker({ tokenId: 1, tokenName: "tok-A", threads: ["thread-1"] });
+    const workerB = fakeWorker({ tokenId: 2, tokenName: "tok-B" });
+    addWorkers(dispatcher, [workerA, workerB]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), 80);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null);
+    const pendingQuota = deferred<OpenAIQuotaUsageResult>();
+    readOpenAIQuotaUsageMock.mockImplementationOnce(() => pendingQuota.promise);
+    const executeTurn = vi
+      .spyOn(dispatcher, "executeTurn")
+      .mockImplementation(async (worker, _req, reuseThreadId) =>
+        resultFor(worker, reuseThreadId ?? "thread-new"),
+      );
+
+    const pendingGenerate = dispatcher.generate(
+      baseReq({
+        reuse: { workerId: makeOpenAIWorkerId(1, 0), threadId: "thread-1", epoch: 1 },
+      }),
+    );
+    await vi.waitFor(() => expect(readOpenAIQuotaUsageMock).toHaveBeenCalledTimes(1));
+    dispatcher.onTokenDeactivated(1);
+    pendingQuota.resolve(quotaOk(10));
+
+    await expect(pendingGenerate).resolves.toMatchObject({ tokenName: "tok-B" });
+    expect(workerA.tryAcquireTurn).not.toHaveBeenCalled();
+    expect(executeTurn).toHaveBeenCalledWith(workerB, expect.anything());
+  });
+
+  it("falls back from busy reuse when its quota metadata changes", async () => {
+    const dispatcher = new OpenAIDispatcher();
+    const workerA = fakeWorker({
+      tokenId: 1,
+      tokenName: "tok-A",
+      threads: ["thread-1"],
+      busy: true,
+    });
+    const workerB = fakeWorker({ tokenId: 2, tokenName: "tok-B" });
+    addWorkers(dispatcher, [workerA, workerB]);
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), 80);
+    await dispatcher.onTokenUpdated(2, "tok-B", credentials(), null);
+    readOpenAIQuotaUsageMock
+      .mockResolvedValueOnce(quotaOk(10))
+      .mockResolvedValueOnce(quotaOk(10));
+    const executeTurn = vi
+      .spyOn(dispatcher, "executeTurn")
+      .mockImplementation(async (worker, _req, reuseThreadId) =>
+        resultFor(worker, reuseThreadId ?? "thread-new"),
+      );
+
+    const pendingGenerate = dispatcher.generate(
+      baseReq({
+        reuse: { workerId: makeOpenAIWorkerId(1, 0), threadId: "thread-1", epoch: 1 },
+      }),
+    );
+    await vi.waitFor(() => expect(workerA.tryAcquireTurn).toHaveBeenCalledTimes(1));
+    await dispatcher.onTokenUpdated(1, "tok-A", credentials(), 5);
+
+    await expect(pendingGenerate).resolves.toMatchObject({ tokenName: "tok-B" });
+    expect(executeTurn).toHaveBeenCalledWith(workerB, expect.anything());
   });
 
   it("passes worker ttftMs into GenerateResult", async () => {
