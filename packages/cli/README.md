@@ -20,7 +20,7 @@ Project installs create symlinks, falling back to copies when symlinking fails.
 ## Preparing PostgreSQL
 
 Qgrid needs PostgreSQL to store OAuth tokens and request logs.
-If you already have a reachable PostgreSQL, connect with `--db` or the `QGRID_DB_*` environment variables.
+If you already have a reachable PostgreSQL, connect with `--db` or the `SONAMU_DB_*` environment variables.
 If you don't have one locally, you can spin one up with Docker:
 
 ```bash
@@ -42,13 +42,19 @@ qgrid --db postgres://user:password@host:port/dbname
 qgrid --db postgres://... -p 3000
 
 # Configure the DB with environment variables (flags can be omitted)
-export QGRID_DB_HOST=dev.example.com
-export QGRID_DB_PORT=5432
-export QGRID_DB_USER=postgres
-export QGRID_DB_PASSWORD=postgres
-export QGRID_DB_NAME=qgrid
+export SONAMU_DB_HOST=dev.example.com
+export SONAMU_DB_PORT=5432
+export SONAMU_DB_USER=postgres
+export SONAMU_DB_PASSWORD=postgres
+export SONAMU_DB_NAME=qgrid
 qgrid
 ```
+
+The CLI uses Sonamu's native `SONAMU_DB_*` variables. The packaged CLI defaults
+to `NODE_ENV=production`; set `NODE_ENV=staging` only when intentionally running
+it as a remote non-production service. This profile selection never creates or
+renames the database selected by `SONAMU_DB_NAME`. The packaged CLI rejects
+`development` and `test`, which require the source development layout.
 
 Once the server is up, open the dashboard at `http://localhost:44900` → register tokens through OAuth login.
 With `-p, --port` set, connect on that port instead.
@@ -79,16 +85,17 @@ Without the `--db` flag, DB connection info is read from:
 
 | Variable | Default |
 |------|--------|
-| `QGRID_DB_HOST` | `localhost` |
-| `QGRID_DB_PORT` | `5432` |
-| `QGRID_DB_USER` | `postgres` |
-| `QGRID_DB_PASSWORD` | `postgres` |
-| `QGRID_DB_NAME` | `qgrid` |
+| `SONAMU_DB_HOST` | `localhost` |
+| `SONAMU_DB_PORT` | `5432` |
+| `SONAMU_DB_USER` | `postgres` |
+| `SONAMU_DB_PASSWORD` | `postgres` |
+| `SONAMU_DB_NAME` | `qgrid` |
 
 Server behavior variables:
 
 | Variable | Description | Default |
 |------|------|--------|
+| `NODE_ENV` | Sonamu runtime profile. Set `staging` for a remote non-production deployment | `production` |
 | `QGRID_WORKERS_PER_TOKEN` | codex workers per OpenAI token | `3` (max 5) |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback. Set it when the server is accessed remotely | `http://localhost:<port>/callback` when unset |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |

@@ -20,7 +20,7 @@ project install에서는 symlink를 만들고, symlink가 실패하면 copy로 f
 ## PostgreSQL 준비
 
 Qgrid는 OAuth 토큰과 request log를 저장하기 위해 PostgreSQL이 필요함.
-이미 접근 가능한 PostgreSQL이 있으면 `--db` 또는 `QGRID_DB_*` 환경변수로 연결하면 됨.
+이미 접근 가능한 PostgreSQL이 있으면 `--db` 또는 `SONAMU_DB_*` 환경변수로 연결하면 됨.
 로컬에 PostgreSQL이 없으면 Docker로 띄울 수 있음:
 
 ```bash
@@ -42,13 +42,19 @@ qgrid --db postgres://user:password@host:port/dbname
 qgrid --db postgres://... -p 3000
 
 # 환경변수로 DB 설정 (플래그 생략 가능)
-export QGRID_DB_HOST=dev.example.com
-export QGRID_DB_PORT=5432
-export QGRID_DB_USER=postgres
-export QGRID_DB_PASSWORD=postgres
-export QGRID_DB_NAME=qgrid
+export SONAMU_DB_HOST=dev.example.com
+export SONAMU_DB_PORT=5432
+export SONAMU_DB_USER=postgres
+export SONAMU_DB_PASSWORD=postgres
+export SONAMU_DB_NAME=qgrid
 qgrid
 ```
+
+CLI는 Sonamu의 네이티브 `SONAMU_DB_*` 설정을 사용함. 패키징된 CLI의 기본값은
+`NODE_ENV=production`이고, 원격 비프로덕션 서비스로 운영할 때만
+`NODE_ENV=staging`을 지정하면 됨. 이 프로필 선택은 `SONAMU_DB_NAME`으로
+지정한 DB를 새로 만들거나 이름을 바꾸지 않음. 소스 개발 레이아웃이 필요한
+`development`와 `test`는 패키징된 CLI에서 거부함.
 
 서버가 뜨면 `http://localhost:44900`에서 대시보드 접속 → OAuth 로그인으로 토큰 등록.
 `-p, --port`를 지정하면 해당 포트로 접속.
@@ -79,16 +85,17 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 
 | 변수 | 기본값 |
 |------|--------|
-| `QGRID_DB_HOST` | `localhost` |
-| `QGRID_DB_PORT` | `5432` |
-| `QGRID_DB_USER` | `postgres` |
-| `QGRID_DB_PASSWORD` | `postgres` |
-| `QGRID_DB_NAME` | `qgrid` |
+| `SONAMU_DB_HOST` | `localhost` |
+| `SONAMU_DB_PORT` | `5432` |
+| `SONAMU_DB_USER` | `postgres` |
+| `SONAMU_DB_PASSWORD` | `postgres` |
+| `SONAMU_DB_NAME` | `qgrid` |
 
 서버 동작 관련 환경변수:
 
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
+| `NODE_ENV` | Sonamu 실행 프로필. 원격 비프로덕션 배포에는 `staging` 사용 | `production` |
 | `QGRID_WORKERS_PER_TOKEN` | OpenAI 토큰당 codex worker 수 | `3` (최대 5) |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL. 원격 접속 환경에서 설정 | 미설정 시 `http://localhost:<port>/callback` |
 | `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |

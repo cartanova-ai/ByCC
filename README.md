@@ -238,13 +238,18 @@ Installing the CLI also syncs the qgrid agent skill for coding agents — into `
 You can configure the DB with environment variables:
 
 ```bash
-export QGRID_DB_HOST=dev.example.com
-export QGRID_DB_PORT=5432
-export QGRID_DB_USER=postgres
-export QGRID_DB_PASSWORD=postgres
-export QGRID_DB_NAME=qgrid
+export SONAMU_DB_HOST=dev.example.com
+export SONAMU_DB_PORT=5432
+export SONAMU_DB_USER=postgres
+export SONAMU_DB_PASSWORD=postgres
+export SONAMU_DB_NAME=qgrid
 qgrid
 ```
+
+Qgrid uses Sonamu's native `SONAMU_DB_*` database variables. For a directly
+deployed API server, use `NODE_ENV=staging` for a remote non-production
+environment such as dev0 and `NODE_ENV=production` for production. The profile
+does not create a database; `SONAMU_DB_NAME` selects the database explicitly.
 
 ---
 
@@ -293,11 +298,12 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_URL` | Qgrid server address (SDK) | `http://localhost:44900` |
 | `QGRID_PROJECT_NAME` | Request log project name (SDK/logger). Enables per-project filtering in the dashboard | (empty) |
 | `HOST` | Server listen host. A non-loopback value exposes the dashboard and admin APIs | `localhost` |
-| `QGRID_DB_HOST` | PostgreSQL host | `localhost` |
-| `QGRID_DB_PORT` | PostgreSQL port | `5432` |
-| `QGRID_DB_USER` | PostgreSQL user | `postgres` |
-| `QGRID_DB_PASSWORD` | PostgreSQL password | `postgres` |
-| `QGRID_DB_NAME` | Database name | `qgrid` |
+| `NODE_ENV` | Sonamu runtime profile: `development`, `test`, `staging`, or `production`. Use `staging` for remote non-production API deployments | `development` for direct API; `production` for CLI |
+| `SONAMU_DB_HOST` | PostgreSQL host | `localhost` |
+| `SONAMU_DB_PORT` | PostgreSQL port | `5432` |
+| `SONAMU_DB_USER` | PostgreSQL user | `postgres` |
+| `SONAMU_DB_PASSWORD` | PostgreSQL password | `postgres` |
+| `SONAMU_DB_NAME` | Database name | `qgrid` |
 | `QGRID_WORKERS_PER_TOKEN` | Workers per OpenAI token | `3` (max 5) |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
