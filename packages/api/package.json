@@ -39,10 +39,10 @@
     "chalk": "^4.1.2",
     "date-fns": "^4.1.0",
     "dotenv": "^16",
-    "knex": "^3.1.0",
+    "knex": "^3.2.9",
     "pg": "^8.16.3",
     "radashi": "^12.2.0",
-    "sonamu": "^0.9.9",
+    "sonamu": "^0.10.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -51,11 +51,11 @@
     "@types/bcrypt": "^6",
     "@types/node": "25.0.7",
     "@types/pg": "catalog:",
-    "@vitest/coverage-v8": "^4.0.12",
+    "@vitest/coverage-v8": "^4.1.10",
     "fastify": "^4",
     "ioredis": "^5.8.2",
-    "typescript": "^6.0.0",
+    "typescript": "^6.0.3",
     "vite": "^8.0.3",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.10"
   }
 }

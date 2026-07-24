@@ -77,10 +77,10 @@ export async function dropWorkerDatabases(
 
 function createAdminClient(): Client {
   return new Client({
-    host: process.env.QGRID_DB_HOST ?? "localhost",
-    port: Number(process.env.QGRID_DB_PORT ?? 5432),
-    user: process.env.QGRID_DB_USER ?? "postgres",
-    password: process.env.QGRID_DB_PASSWORD ?? "postgres",
+    host: process.env.SONAMU_DB_HOST ?? "localhost",
+    port: Number(process.env.SONAMU_DB_PORT ?? 5432),
+    user: process.env.SONAMU_DB_USER ?? "postgres",
+    password: process.env.SONAMU_DB_PASSWORD ?? "postgres",
     database: "postgres",
     application_name: "qgrid-vitest-global-setup",
   });
@@ -132,7 +132,7 @@ export async function provisionWorkerDatabases(
 
 export async function setup(project?: VitestProject): Promise<() => Promise<void>> {
   const runDatabase = process.env.QGRID_TEST_RUN_DB;
-  if (!runDatabase || process.env.QGRID_DB_NAME !== runDatabase) {
+  if (!runDatabase || process.env.SONAMU_DB_NAME !== runDatabase) {
     throw new Error("Vitest test database name was not configured consistently");
   }
   const maxWorkers = resolveMaxWorkers(project);

@@ -20,7 +20,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown && mv dist/index-*.d.ts dist/index.d.ts",
+    "build": "tsdown",
     "test": "vitest run",
     "e2e": "tsx e2e/e2e.ts",
     "e2e:logger": "tsx e2e/e2e-logger.ts"

@@ -1,7 +1,7 @@
 [
   {
     "path": "api/src/application/monit/monit.frame.ts",
-    "checksum": "9055623fdf58fd54fffcc5ddb5585187ad049939"
+    "checksum": "0352900f57f3aeb8f2f545f5f49be6d87fc32851"
   },
   {
     "path": "api/src/application/monit/monit.types.ts",
@@ -37,7 +37,7 @@
   },
   {
     "path": "api/src/application/request-log/request-log.model.ts",
-    "checksum": "2cc60385288853e3f46ee4252ce0408ab978654e"
+    "checksum": "7b6fea1acda8e866adadd70bd0afaf0f78426a6c"
   },
   {
     "path": "api/src/application/request-log/request-log.types.ts",
@@ -77,11 +77,11 @@
   },
   {
     "path": "api/src/i18n/sd.generated.ts",
-    "checksum": "f0246796a68ad54f54b2b7cba579e666f0accbd3"
+    "checksum": "bf71f7ff4245569c0f964bd2d07d53d81aab3764"
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "dd27fd56dc7fa5f2084e598cc426d30da32b2d69"
+    "checksum": "4de43bc722df1fd1e441528375ddbecf228e6b48"
   },
   {
     "path": "web/src/i18n/en.ts",
@@ -93,7 +93,7 @@
   },
   {
     "path": "web/src/i18n/sd.generated.ts",
-    "checksum": "6e343ed22c524e25ce09d7df9f8172b031666bc9"
+    "checksum": "7e295c314883157e755340fe1ed40d781165f9b5"
   },
   {
     "path": "web/src/services/monit/monit.types.ts",

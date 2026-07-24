@@ -17,7 +17,7 @@
   ],
   "type": "module",
   "scripts": {
-    "bundle": "cd ../api && pnpm build && cd ../cli && rm -rf bundle && mkdir -p bundle/public && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
+    "bundle": "cd ../api && pnpm build && cd ../cli && rm -rf bundle && mkdir -p bundle/public && touch bundle/.env && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
     "build": "tsdown",
     "postinstall": "node postinstall.mjs",
     "prepublishOnly": "pnpm run bundle"
@@ -43,11 +43,11 @@
     "dotenv": "^16",
     "fastify": "^4",
     "ioredis": "^5.8.2",
-    "knex": "^3.1.0",
+    "knex": "^3.2.9",
     "pg": "^8.16.3",
     "radashi": "^12.2.0",
-    "sonamu": "0.9.9",
-    "typescript": "5.9.3",
+    "sonamu": "0.10.3",
+    "typescript": "6.0.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {

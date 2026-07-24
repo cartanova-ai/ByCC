@@ -3,7 +3,6 @@ import path from "path";
 import { getConsoleSink } from "@logtape/logtape";
 import { getLogger } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
-import dotenv from "dotenv";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
 
@@ -15,42 +14,25 @@ import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
-dotenv.config({ path: path.join(import.meta.dirname, "../.env") });
-
 const host = process.env.HOST ?? "localhost";
 const port = Number(process.env.PORT ?? 44900);
 
 const connConfig = {
-  host: process.env.QGRID_DB_HOST ?? "localhost",
-  port: Number(process.env.QGRID_DB_PORT ?? 5432),
-  user: process.env.QGRID_DB_USER ?? "postgres",
-  password: process.env.QGRID_DB_PASSWORD ?? "postgres",
-  database: process.env.QGRID_DB_NAME ?? "qgrid",
+  host: process.env.SONAMU_DB_HOST ?? "localhost",
+  port: Number(process.env.SONAMU_DB_PORT ?? 5432),
+  user: process.env.SONAMU_DB_USER ?? "postgres",
+  password: process.env.SONAMU_DB_PASSWORD ?? "postgres",
+  database: process.env.SONAMU_DB_NAME ?? "qgrid",
 };
 
 export default defineConfig({
   projectName: process.env.PROJECT_NAME ?? "Qgrid",
   database: {
-    name: "qgrid",
     defaultOptions: {
       connection: {
         ...connConfig,
         keepAlive: true,
         keepAliveInitialDelayMillis: 10000,
-      },
-    },
-    environments: {
-      fixture: {
-        connection: {
-          ...connConfig,
-          database: process.env.QGRID_DB_NAME,
-        },
-      },
-      test: {
-        connection: {
-          ...connConfig,
-          database: process.env.QGRID_DB_NAME,
-        },
       },
     },
   },

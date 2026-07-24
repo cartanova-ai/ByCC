@@ -5,5 +5,6 @@ export default defineConfig({
   format: ["esm"],
   dts: { entry: "src/index.ts" },
   clean: true,
+  fixedExtension: false,
   target: "node20",
 });

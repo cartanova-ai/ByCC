@@ -10,12 +10,13 @@ export function createTestRunDatabaseName(prefix: string, entropy: string): stri
 }
 
 export function configureTestRunDatabaseName(): string {
-  if (configuredRunDatabase) return configuredRunDatabase;
-  const prefix = process.env.QGRID_TEST_RUN_DB ?? "qgrid_test";
-  const entropy = `${process.pid}_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
-  const runDatabase = createTestRunDatabaseName(prefix, entropy);
-  configuredRunDatabase = runDatabase;
-  process.env.QGRID_TEST_RUN_DB = runDatabase;
-  process.env.QGRID_DB_NAME = runDatabase;
-  return runDatabase;
+  if (!configuredRunDatabase) {
+    const prefix = process.env.QGRID_TEST_RUN_DB ?? "qgrid_test";
+    const entropy = `${process.pid}_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+    configuredRunDatabase = createTestRunDatabaseName(prefix, entropy);
+  }
+
+  process.env.QGRID_TEST_RUN_DB = configuredRunDatabase;
+  process.env.SONAMU_DB_NAME = configuredRunDatabase;
+  return configuredRunDatabase;
 }

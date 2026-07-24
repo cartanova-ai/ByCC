@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown && mv dist/index-*.d.ts dist/index.d.ts 2>/dev/null || true",
+    "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest run"
   },

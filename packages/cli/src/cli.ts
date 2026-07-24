@@ -179,15 +179,22 @@ program
         process.exit(1);
       }
       const [, user, password, host, port, dbName] = m;
-      process.env.QGRID_DB_HOST = host;
-      process.env.QGRID_DB_PORT = normalizePort(port);
-      process.env.QGRID_DB_USER = user;
-      process.env.QGRID_DB_PASSWORD = password;
-      process.env.QGRID_DB_NAME = dbName;
+      process.env.SONAMU_DB_HOST = host;
+      process.env.SONAMU_DB_PORT = normalizePort(port);
+      process.env.SONAMU_DB_USER = user;
+      process.env.SONAMU_DB_PASSWORD = password;
+      process.env.SONAMU_DB_NAME = dbName;
     }
     process.env.PORT = serverPort;
 
-    process.env.LR = "remote";
+    process.env.NODE_ENV ||= "production";
+    if (process.env.NODE_ENV !== "staging" && process.env.NODE_ENV !== "production") {
+      console.error(
+        `Error: Packaged qgrid supports NODE_ENV=staging or production, received "${process.env.NODE_ENV}"`,
+      );
+      process.exit(1);
+    }
+
     const bundlePath = join(__dirname, "..", "bundle");
     const serverEntry = join(bundlePath, "dist", "index.js");
     if (!existsSync(serverEntry)) {
@@ -199,16 +206,18 @@ program
     process.env.INIT_CWD = bundlePath;
 
     // DB connection pre-check
-    const dbHost = process.env.QGRID_DB_HOST ?? "localhost";
-    const dbPort = process.env.QGRID_DB_PORT ?? "5432";
-    const dbName = process.env.QGRID_DB_NAME ?? "qgrid";
+    const dbHost = process.env.SONAMU_DB_HOST ?? "localhost";
+    const dbPort = process.env.SONAMU_DB_PORT ?? "5432";
+    const dbUser = process.env.SONAMU_DB_USER ?? "postgres";
+    const dbPassword = process.env.SONAMU_DB_PASSWORD ?? "postgres";
+    const dbName = process.env.SONAMU_DB_NAME ?? "qgrid";
     try {
       const pg = await import("pg");
       const client = new pg.default.Client({
         host: dbHost,
         port: Number(dbPort),
-        user: process.env.QGRID_DB_USER ?? "postgres",
-        password: process.env.QGRID_DB_PASSWORD ?? "postgres",
+        user: dbUser,
+        password: dbPassword,
         database: dbName,
         connectionTimeoutMillis: 5000,
       });
@@ -224,7 +233,7 @@ program
         );
       }
 
-      console.error(`\nProvide DB connection via --db flag or QGRID_DB_* env vars:`);
+      console.error(`\nProvide DB connection via --db flag or SONAMU_DB_* env vars:`);
       console.error(`  qgrid --db postgres://user:password@host:port/dbname`);
       process.exit(1);
     }

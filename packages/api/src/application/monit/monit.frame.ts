@@ -60,7 +60,7 @@ function currentVitals(): MonitVitals {
   };
 }
 
-// 실제 활성 knex 연결에서 읽는다 — dev 서버의 통합 테스트 러너가 process.env.QGRID_DB_NAME 을
+// 실제 활성 knex 연결에서 읽는다 — dev 서버의 통합 테스트 러너가 process.env.SONAMU_DB_NAME 을
 // 테스트 DB 이름으로 덮어쓰므로 env 는 신뢰할 수 없다. DB 미초기화(부팅 전) 시에만 env 폴백.
 function activeDbConnection(): { host?: string; database?: string } {
   try {
@@ -71,7 +71,7 @@ function activeDbConnection(): { host?: string; database?: string } {
   } catch {
     // DB config 미초기화 — env 폴백으로 진행
   }
-  return { host: process.env.QGRID_DB_HOST, database: process.env.QGRID_DB_NAME };
+  return { host: process.env.SONAMU_DB_HOST, database: process.env.SONAMU_DB_NAME };
 }
 
 export const MonitFrame = new MonitFrameClass();
