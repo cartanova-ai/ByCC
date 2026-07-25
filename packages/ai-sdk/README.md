@@ -319,6 +319,7 @@ type QgridSupportedModel =
   | "anthropic/claude-opus-4-6"
   | "anthropic/claude-opus-4-7"
   | "anthropic/claude-opus-4-8"
+  | "anthropic/claude-opus-5"
 ```
 
 ### GPT-5.6 specifications
@@ -331,7 +332,9 @@ type QgridSupportedModel =
 
 All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec is a 1.05M context window with 128K max output, but qgrid runs on the codex app-server subscription path, where all three models report a 372K context window (95% effective — about 353K of usable input) that cannot be raised by configuration. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
 
-`anthropic/claude-fable-5` has a 1M context window and 128K max output. Its standard prices per 1M tokens are $10 input, $1 cache read, $12.50 five-minute cache write, $20 one-hour cache write, and $50 output. qgrid preserves Claude's 5m/1h cache-creation breakdown and prices each TTL separately; only legacy responses without that breakdown fall back to the one-hour TTL automatically selected by Claude Code on subscription OAuth. Fable requires always-on adaptive thinking, so qgrid preserves adaptive thinking for this model while continuing to disable thinking for existing Anthropic models.
+`anthropic/claude-fable-5` has a 1M context window and 128K max output. Its standard prices per 1M tokens are $10 input, $1 cache read, $12.50 five-minute cache write, $20 one-hour cache write, and $50 output. qgrid preserves Claude's 5m/1h cache-creation breakdown and prices each TTL separately; only legacy responses without that breakdown fall back to the one-hour TTL automatically selected by Claude Code on subscription OAuth. Fable requires always-on adaptive thinking, so qgrid preserves adaptive thinking for this model.
+
+`anthropic/claude-opus-5` has a default 1M context window and 128K max output. Its prices per 1M tokens are $5 input, $0.50 cache read, $6.25 five-minute cache write, $10 one-hour cache write, and $25 output. qgrid keeps Opus 5's default adaptive thinking behavior and uses `effort` to control reasoning depth. This also avoids the invalid `thinking: disabled` combination at `xhigh` or `max` effort.
 
 Claude Code may automatically retry a Fable safety refusal on Opus 4.8. In that case, the AI SDK response's `response.modelId` and `providerMetadata.qgrid.model` identify Opus as the actual serving model. `providerMetadata.qgrid.requestedModel` remains Fable, and `providerMetadata.qgrid.modelFallbacks` contains the refusal fallback history. The metadata also exposes `costSource` and the 5m/1h cache-write token split.
 

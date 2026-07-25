@@ -42,6 +42,7 @@ describe("calculateCostUsd", () => {
     ["claude-opus-4-6", 5, 25, 0.5, 10],
     ["claude-opus-4-7", 5, 25, 0.5, 10],
     ["claude-opus-4-8", 5, 25, 0.5, 10],
+    ["claude-opus-5", 5, 25, 0.5, 10],
   ])(
     "%s official Anthropic rates for 5m/1h cache writes",
     (model, inputTokens, outputTokens, cachedInputTokens, cacheCreationInputTokens) => {

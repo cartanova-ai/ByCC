@@ -275,9 +275,9 @@ In the dashboard you can filter the whole team's request logs by project — set
 | Provider | Models |
 |---|---|
 | OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
-| Anthropic | `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
+| Anthropic | `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
 
-> `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-8` automatically run with a 1M-token context window.
+> `claude-opus-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-8` automatically run with a 1M-token context window. Opus 5 keeps its default adaptive thinking behavior; qgrid's `effort` option controls its reasoning depth.
 
 ### GPT-5.6 specifications
 

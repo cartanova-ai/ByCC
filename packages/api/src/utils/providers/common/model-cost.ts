@@ -130,6 +130,7 @@ const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
   "claude-opus-4-6": anthropicCosts(5, 25),
   "claude-opus-4-7": anthropicCosts(5, 25),
   "claude-opus-4-8": anthropicCosts(5, 25),
+  "claude-opus-5": anthropicCosts(5, 25),
 };
 
 // Anthropic 공식 introductory pricing: 2026-08-31까지 $2/$10, 이후 $3/$15.

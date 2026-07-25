@@ -30,8 +30,8 @@ import {
   assertSupportedOneMillionSuffix,
   canonicalAnthropicModel,
   needsCli1mSuffix,
-  requiresAdaptiveThinking,
   supports1MContext,
+  usesAdaptiveThinking,
 } from "./anthropic-constants";
 import {
   buildStreamJsonInput,
@@ -150,7 +150,7 @@ export function thinkingEnv(model: string): {
   CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING?: "1";
   MAX_THINKING_TOKENS?: "0";
 } {
-  return requiresAdaptiveThinking(model)
+  return usesAdaptiveThinking(model)
     ? {}
     : {
         CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
@@ -224,8 +224,8 @@ export function buildClaudeArgs(opts: {
     // inline [System] 금지 — 정식 채널만(R7). 생략 시 CC default(23k) 주입되므로 반드시 명시.
     // 크기에 따라 --system-prompt(작음) / --system-prompt-file(큼)로 분기(systemArgs).
     ...systemArgs,
-    // Fable 5 는 adaptive thinking 이 항상 켜져 있어 disabled 를 거부한다.
-    ...(requiresAdaptiveThinking(opts.model) ? [] : ["--thinking", "disabled"]),
+    // Fable 5 는 adaptive thinking 이 필수이고, Opus 5 는 공식 기본 adaptive 동작을 보존한다.
+    ...(usesAdaptiveThinking(opts.model) ? [] : ["--thinking", "disabled"]),
     "--effort",
     opts.effort ?? ANTHROPIC_DEFAULT_EFFORT,
     "--disable-slash-commands",

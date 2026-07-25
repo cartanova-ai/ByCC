@@ -275,9 +275,9 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 | Provider | 모델 |
 |---|---|
 | OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
-| Anthropic | `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
+| Anthropic | `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
 
-> `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8`은 자동으로 1M 토큰 컨텍스트로 실행됩니다.
+> `claude-opus-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8`은 자동으로 1M 토큰 컨텍스트로 실행됩니다. Opus 5는 기본 adaptive thinking 동작을 유지하며, qgrid의 `effort` 옵션으로 추론 깊이를 조절합니다.
 
 ---
 

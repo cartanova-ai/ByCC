@@ -6,8 +6,8 @@ import {
   canonicalAnthropicModel,
   hasOneMillionSuffix,
   needsCli1mSuffix,
-  requiresAdaptiveThinking,
   supports1MContext,
+  usesAdaptiveThinking,
 } from "./anthropic-constants";
 
 describe("canonicalAnthropicModel", () => {
@@ -29,6 +29,7 @@ describe("canonicalAnthropicModel", () => {
 describe("Anthropic 1M context policy", () => {
   it("지원 모델은 실측 확인된 exact set 만 true", () => {
     expect(supports1MContext("claude-fable-5")).toBe(true);
+    expect(supports1MContext("claude-opus-5")).toBe(true);
     expect(supports1MContext("claude-sonnet-5")).toBe(true);
     expect(supports1MContext("claude-sonnet-4-6")).toBe(true);
     expect(supports1MContext("claude-opus-4-6")).toBe(true);
@@ -42,6 +43,7 @@ describe("Anthropic 1M context policy", () => {
 
   it("CLI suffix 필요 모델과 기본 1M 모델을 분리한다", () => {
     expect(needsCli1mSuffix("claude-fable-5")).toBe(false);
+    expect(needsCli1mSuffix("claude-opus-5")).toBe(false);
     expect(needsCli1mSuffix("claude-sonnet-5")).toBe(false);
     expect(needsCli1mSuffix("claude-sonnet-4-6")).toBe(true);
     expect(needsCli1mSuffix("claude-opus-4-6")).toBe(true);
@@ -66,10 +68,12 @@ describe("Anthropic 1M context policy", () => {
 });
 
 describe("Anthropic thinking policy", () => {
-  it("Fable 5 만 always-on adaptive thinking 으로 실행한다", () => {
-    expect(requiresAdaptiveThinking("claude-fable-5")).toBe(true);
-    expect(requiresAdaptiveThinking("anthropic/claude-fable-5")).toBe(true);
-    expect(requiresAdaptiveThinking("claude-sonnet-5")).toBe(false);
-    expect(requiresAdaptiveThinking("claude-opus-4-8")).toBe(false);
+  it("Fable 5 와 Opus 5 는 adaptive thinking 을 보존한다", () => {
+    expect(usesAdaptiveThinking("claude-fable-5")).toBe(true);
+    expect(usesAdaptiveThinking("anthropic/claude-fable-5")).toBe(true);
+    expect(usesAdaptiveThinking("claude-opus-5")).toBe(true);
+    expect(usesAdaptiveThinking("anthropic/claude-opus-5")).toBe(true);
+    expect(usesAdaptiveThinking("claude-sonnet-5")).toBe(false);
+    expect(usesAdaptiveThinking("claude-opus-4-8")).toBe(false);
   });
 });

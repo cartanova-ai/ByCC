@@ -46,6 +46,7 @@ export function hasOneMillionSuffix(model?: string): boolean {
 // 고정한다. opus-4-7 은 실측 전까지 미포함. 새 모델 추가 시 공식 사양과 실제 CLI 동작을 확인한다.
 const ONE_MILLION_CONTEXT_MODELS = new Set([
   "claude-fable-5",
+  "claude-opus-5",
   "claude-sonnet-5",
   "claude-sonnet-4-6",
   "claude-opus-4-6",
@@ -53,7 +54,10 @@ const ONE_MILLION_CONTEXT_MODELS = new Set([
 ]);
 
 const CLI_ONE_MILLION_SUFFIX_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-6"]);
-const ALWAYS_ADAPTIVE_THINKING_MODELS = new Set(["claude-fable-5"]);
+// Fable 5 는 adaptive thinking 이 유일한 모드다. Opus 5 는 disabled 를 high 이하에서 지원하지만,
+// 공식 기본값·권장 동작인 adaptive thinking 을 유지한다. qgrid 기본 effort=low 가 비용/지연 제어를
+// 맡으며, 이 정책은 disabled+xhigh/max 400 오류와 disabled 시 tool/XML 출력 오염도 피한다.
+const ADAPTIVE_THINKING_MODELS = new Set(["claude-fable-5", "claude-opus-5"]);
 
 // 불변 계약: suffix 가 필요한 모델은 반드시 1M 지원 모델의 부분집합이어야 한다. 역방향 불일치(suffix
 // 대상인데 지원 집합엔 없음)면 needsCli1mSuffix=true·supports1MContext=false 가 동시에 나서
@@ -73,10 +77,10 @@ export function needsCli1mSuffix(model?: string): boolean {
   return CLI_ONE_MILLION_SUFFIX_MODELS.has(canonicalAnthropicModel(model));
 }
 
-// Fable 5 는 adaptive thinking 이 유일한 thinking mode 이므로 disabled 로 실행할 수 없다.
-// 나머지 모델은 qgrid 의 기존 저비용/비추론 경로를 그대로 유지한다.
-export function requiresAdaptiveThinking(model?: string): boolean {
-  return ALWAYS_ADAPTIVE_THINKING_MODELS.has(canonicalAnthropicModel(model));
+// qgrid 가 adaptive thinking 을 보존하는 모델인지 판별한다. 나머지 모델은 기존
+// 저비용/비추론 경로를 유지한다.
+export function usesAdaptiveThinking(model?: string): boolean {
+  return ADAPTIVE_THINKING_MODELS.has(canonicalAnthropicModel(model));
 }
 
 export function assertSupportedOneMillionSuffix(model?: string): void {

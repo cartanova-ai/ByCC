@@ -319,6 +319,7 @@ type QgridSupportedModel =
   | "anthropic/claude-opus-4-6"
   | "anthropic/claude-opus-4-7"
   | "anthropic/claude-opus-4-8"
+  | "anthropic/claude-opus-5"
 ```
 
 ### GPT-5.6 사양
@@ -331,7 +332,9 @@ type QgridSupportedModel =
 
 세 모델 모두 `max` reasoning effort를 지원합니다. OpenAI native API 사양은 1.05M context / 128K 최대 출력이지만, qgrid는 codex app-server 구독 경로로 실행되어 세 모델 모두 context window가 372K(95% effective, 실사용 입력 약 353K)로 보고되며 설정으로 올릴 수 없습니다. 입력이 272K tokens를 넘으면 요청 전체에 input 2x, output 1.5x 장문 컨텍스트 할증이 적용되며, cache write는 uncached input 단가의 1.25x입니다.
 
-`anthropic/claude-fable-5`는 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 표준 단가는 input $10, cache read $1, 5분 cache write $12.50, 1시간 cache write $20, output $50입니다. qgrid는 Claude 응답의 5분/1시간 cache creation breakdown을 보존해 TTL별 단가를 각각 적용하며, breakdown이 없는 구버전 응답에서만 Claude Code가 subscription OAuth 경로에 자동 적용하는 1시간 TTL 단가로 fallback합니다. Fable은 adaptive thinking이 항상 켜져 있어야 하므로 qgrid는 이 모델에서만 adaptive thinking을 보존하고, 기존 Anthropic 모델은 계속 thinking을 비활성화합니다.
+`anthropic/claude-fable-5`는 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 표준 단가는 input $10, cache read $1, 5분 cache write $12.50, 1시간 cache write $20, output $50입니다. qgrid는 Claude 응답의 5분/1시간 cache creation breakdown을 보존해 TTL별 단가를 각각 적용하며, breakdown이 없는 구버전 응답에서만 Claude Code가 subscription OAuth 경로에 자동 적용하는 1시간 TTL 단가로 fallback합니다. Fable은 adaptive thinking이 항상 켜져 있어야 하므로 qgrid는 이 모델의 adaptive thinking을 보존합니다.
+
+`anthropic/claude-opus-5`는 기본 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 단가는 input $5, cache read $0.50, 5분 cache write $6.25, 1시간 cache write $10, output $25입니다. qgrid는 Opus 5의 기본 adaptive thinking 동작을 유지하고 `effort`로 추론 깊이를 조절합니다. 따라서 `xhigh` 또는 `max` effort에서 허용되지 않는 `thinking: disabled` 조합도 만들지 않습니다.
 
 Claude Code는 Fable의 safety refusal을 Opus 4.8로 자동 재시도할 수 있습니다. 이 경우 AI SDK 응답의 `response.modelId`와 `providerMetadata.qgrid.model`은 실제 serving 모델인 Opus를 가리킵니다. `providerMetadata.qgrid.requestedModel`은 Fable로 유지되고, `providerMetadata.qgrid.modelFallbacks`에 refusal fallback 이력이 담깁니다. 같은 metadata에서 `costSource`와 5분/1시간 cache-write 토큰 분해도 확인할 수 있습니다.
 

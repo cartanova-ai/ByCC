@@ -71,7 +71,7 @@ claude -p
   --model <canonical-model-or-1m-suffix>
   --system-prompt <text>                  # small system prompt
   --system-prompt-file <path>             # large system prompt
-  --thinking disabled                       # omitted for Fable 5
+  --thinking disabled                       # omitted for Fable 5 and Opus 5
   --effort <effort-or-low>
   --disable-slash-commands
   --session-id <uuid>
@@ -84,7 +84,7 @@ Important details:
 - `--setting-sources project` plus seeded settings isolates user configuration.
 - `--system-prompt` or `--system-prompt-file` is always supplied. Omitting it would allow Claude Code default system prompt injection.
 - Large system prompts over 64 KiB are written to a temporary file to avoid argv `E2BIG`.
-- `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 requires always-on adaptive thinking, so qgrid omits all three suppressors for it.
+- `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 requires always-on adaptive thinking. Opus 5 defaults to adaptive thinking and rejects disabled thinking at `xhigh`/`max` effort. qgrid omits all three suppressors for both models and uses `effort` to control depth.
 
 ## Spawn env
 
@@ -97,13 +97,13 @@ Included env:
 - `CLAUDE_CODE_OAUTH_TOKEN`
 - `CLAUDE_CONFIG_DIR`
 - `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
-- `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` except for Fable 5
+- `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` except for Fable 5 and Opus 5
 - `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`
 - `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`
 - `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
 - `CLAUDE_CODE_DISABLE_WORKFLOWS=1`
 - `CLAUDE_CODE_ATTRIBUTION_HEADER=0`
-- `MAX_THINKING_TOKENS=0` except for Fable 5
+- `MAX_THINKING_TOKENS=0` except for Fable 5 and Opus 5
 - `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` when model does not support qgrid's 1M path
 - `MAX_STRUCTURED_OUTPUT_RETRIES` for structured output only
 
@@ -195,6 +195,7 @@ Model normalization strips provider prefix and `[1m]` for canonical model/cost k
 qgrid's exact 1M support set currently includes:
 
 - `claude-fable-5`
+- `claude-opus-5`
 - `claude-sonnet-5`
 - `claude-sonnet-4-6`
 - `claude-opus-4-6`
