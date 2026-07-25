@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { Command } from "commander";
 
+import { applyQgridDatabaseEnv } from "./database-env";
 import {
   detectSelfUpdatePackageManager,
   pnpmGlobalBinDir,
@@ -171,7 +172,7 @@ program
 
     ensureLatestRuntimeCliDependencies();
 
-    //  parse --db postgres://user:password@host:port/dbname & set env vars
+    // --db가 최우선이며, Qgrid의 공개 DB 환경변수로 정규화한 뒤 Sonamu 내부 env로 복사한다.
     if (opts.db) {
       const m = opts.db.match(/^postgres(?:ql)?:\/\/([^:]+):(.+)@([^:]+):(\d+)\/(.+)$/);
       if (!m) {
@@ -179,12 +180,13 @@ program
         process.exit(1);
       }
       const [, user, password, host, port, dbName] = m;
-      process.env.SONAMU_DB_HOST = host;
-      process.env.SONAMU_DB_PORT = normalizePort(port);
-      process.env.SONAMU_DB_USER = user;
-      process.env.SONAMU_DB_PASSWORD = password;
-      process.env.SONAMU_DB_NAME = dbName;
+      process.env.QGRID_DB_HOST = host;
+      process.env.QGRID_DB_PORT = normalizePort(port);
+      process.env.QGRID_DB_USER = user;
+      process.env.QGRID_DB_PASSWORD = password;
+      process.env.QGRID_DB_NAME = dbName;
     }
+    applyQgridDatabaseEnv(process.env);
     process.env.PORT = serverPort;
 
     process.env.NODE_ENV ||= "production";
@@ -233,7 +235,7 @@ program
         );
       }
 
-      console.error(`\nProvide DB connection via --db flag or SONAMU_DB_* env vars:`);
+      console.error(`\nProvide DB connection via --db flag or QGRID_DB_* env vars:`);
       console.error(`  qgrid --db postgres://user:password@host:port/dbname`);
       process.exit(1);
     }

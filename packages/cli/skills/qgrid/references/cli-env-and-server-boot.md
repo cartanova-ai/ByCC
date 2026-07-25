@@ -4,7 +4,7 @@ Use this reference for qgrid startup, configuration, and runtime-facing environm
 
 ## CLI options
 
-- `--db <url>`: PostgreSQL URL in `postgres://user:password@host:port/dbname` or `postgresql://...` form. Parsed by `packages/cli/src/cli.ts` and copied into `SONAMU_DB_*` env vars before server boot.
+- `--db <url>`: PostgreSQL URL in `postgres://user:password@host:port/dbname` or `postgresql://...` form. Parsed by `packages/cli/src/cli.ts` as the highest-priority database input.
 - `-p, --port <port>`: server port. Default `44900`. The CLI validates the port and refuses to start if it is already in use.
 - `--skip-update`: skip qgrid CLI self-update check.
 
@@ -15,15 +15,31 @@ The CLI also ensures runtime CLIs are installed/current enough:
 - `codex` from `@openai/codex`, required for OpenAI tokens.
 - `claude` from `@anthropic-ai/claude-code`, required for Anthropic tokens.
 
+## CLI database env vars
+
+`QGRID_DB_*` is the public database configuration for the packaged qgrid CLI.
+Immediately before server boot, the CLI copies the resolved values into
+Sonamu's internal `SONAMU_DB_*` variables. `--db` overrides `QGRID_DB_*`;
+`QGRID_DB_*` overrides an existing `SONAMU_DB_*` value. The latter remains a
+compatibility fallback and should not be the environment contract shown to CLI
+users.
+
+| Env | Default | Meaning |
+|---|---:|---|
+| `QGRID_DB_HOST` | `localhost` | PostgreSQL host. |
+| `QGRID_DB_PORT` | `5432` | PostgreSQL port. |
+| `QGRID_DB_USER` | `postgres` | PostgreSQL user. |
+| `QGRID_DB_PASSWORD` | `postgres` | PostgreSQL password. |
+| `QGRID_DB_NAME` | `qgrid` | PostgreSQL database. |
+
+Source deployments that run `packages/api` without the packaged CLI must use
+Sonamu's native `SONAMU_DB_HOST`, `SONAMU_DB_PORT`, `SONAMU_DB_USER`,
+`SONAMU_DB_PASSWORD`, and `SONAMU_DB_NAME` variables directly.
+
 ## Server env vars agents should know
 
 | Env | Default | Meaning |
 |---|---:|---|
-| `SONAMU_DB_HOST` | `localhost` | PostgreSQL host. |
-| `SONAMU_DB_PORT` | `5432` | PostgreSQL port. |
-| `SONAMU_DB_USER` | `postgres` | PostgreSQL user. |
-| `SONAMU_DB_PASSWORD` | `postgres` | PostgreSQL password. |
-| `SONAMU_DB_NAME` | `qgrid` | PostgreSQL database. |
 | `NODE_ENV` | direct API: `development`; packaged CLI: `production` | Sonamu runtime profile. Use `staging` for remote non-production API deployments such as dev0. The profile does not create or rename the explicitly configured DB. |
 | `HOST` | `localhost` | Sonamu server listen host when running API directly. |
 | `PORT` | `44900` | Sonamu server listen port. In CLI mode this is derived from `--port`, not read as user input. |
@@ -64,7 +80,7 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 `packages/api/src/index.ts` runs `bootstrapServer` (`server-bootstrap.ts`) with a strict init → migrate → listen order:
 
-1. `Sonamu.init()` loads Sonamu's native dotenv snapshot for the active `NODE_ENV` and reads the database connection from `SONAMU_DB_*`. Selecting `staging` alone does not create a staging DB; `SONAMU_DB_NAME` remains the explicit database name.
+1. The packaged CLI maps public `QGRID_DB_*` inputs to internal `SONAMU_DB_*`, then `Sonamu.init()` loads Sonamu's native dotenv snapshot for the active `NODE_ENV` and reads that internal database connection. Direct source API deployments set `SONAMU_DB_*` themselves. Selecting `staging` alone does not create a staging DB; the explicit database name remains authoritative.
 2. `runRequiredMigrations` (`startup-migrations.ts`) applies latest migrations from `packages/api/src/migrations` before the server listens. Migration failure exits the process — qgrid must not boot against a schema missing required columns such as `tokens.weight`. This is a hard-fail; it used to be a soft-fail warn inside `onStart`.
 3. `Sonamu.createServer()` starts the server. Its `onStart` in `packages/api/src/sonamu.config.ts`:
    1. Ensures PostgreSQL `tokens_changed` triggers.

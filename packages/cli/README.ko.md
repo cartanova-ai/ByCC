@@ -42,19 +42,19 @@ qgrid --db postgres://user:password@host:port/dbname
 qgrid --db postgres://... -p 3000
 
 # 환경변수로 DB 설정 (플래그 생략 가능)
-export SONAMU_DB_HOST=dev.example.com
-export SONAMU_DB_PORT=5432
-export SONAMU_DB_USER=postgres
-export SONAMU_DB_PASSWORD=postgres
-export SONAMU_DB_NAME=qgrid
+export QGRID_DB_HOST=dev.example.com
+export QGRID_DB_PORT=5432
+export QGRID_DB_USER=postgres
+export QGRID_DB_PASSWORD=postgres
+export QGRID_DB_NAME=qgrid
 qgrid
 ```
 
-CLI는 Sonamu의 네이티브 `SONAMU_DB_*` 설정을 사용함. 패키징된 CLI의 기본값은
-`NODE_ENV=production`이고, 원격 비프로덕션 서비스로 운영할 때만
-`NODE_ENV=staging`을 지정하면 됨. 이 프로필 선택은 `SONAMU_DB_NAME`으로
-지정한 DB를 새로 만들거나 이름을 바꾸지 않음. 소스 개발 레이아웃이 필요한
-`development`와 `test`는 패키징된 CLI에서 거부함.
+CLI는 공개 설정인 `QGRID_DB_*`를 Sonamu 내부의 `SONAMU_DB_*`로 변환함.
+패키징된 CLI의 기본값은 `NODE_ENV=production`이고, 원격 비프로덕션 서비스로
+운영할 때만 `NODE_ENV=staging`을 지정하면 됨. 이 프로필 선택은
+`QGRID_DB_NAME`으로 지정한 DB를 새로 만들거나 이름을 바꾸지 않음. 소스 개발
+레이아웃이 필요한 `development`와 `test`는 패키징된 CLI에서 거부함.
 
 서버가 뜨면 `http://localhost:44900`에서 대시보드 접속 → OAuth 로그인으로 토큰 등록.
 `-p, --port`를 지정하면 해당 포트로 접속.
@@ -85,11 +85,11 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 
 | 변수 | 기본값 |
 |------|--------|
-| `SONAMU_DB_HOST` | `localhost` |
-| `SONAMU_DB_PORT` | `5432` |
-| `SONAMU_DB_USER` | `postgres` |
-| `SONAMU_DB_PASSWORD` | `postgres` |
-| `SONAMU_DB_NAME` | `qgrid` |
+| `QGRID_DB_HOST` | `localhost` |
+| `QGRID_DB_PORT` | `5432` |
+| `QGRID_DB_USER` | `postgres` |
+| `QGRID_DB_PASSWORD` | `postgres` |
+| `QGRID_DB_NAME` | `qgrid` |
 
 서버 동작 관련 환경변수:
 

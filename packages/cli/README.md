@@ -42,19 +42,20 @@ qgrid --db postgres://user:password@host:port/dbname
 qgrid --db postgres://... -p 3000
 
 # Configure the DB with environment variables (flags can be omitted)
-export SONAMU_DB_HOST=dev.example.com
-export SONAMU_DB_PORT=5432
-export SONAMU_DB_USER=postgres
-export SONAMU_DB_PASSWORD=postgres
-export SONAMU_DB_NAME=qgrid
+export QGRID_DB_HOST=dev.example.com
+export QGRID_DB_PORT=5432
+export QGRID_DB_USER=postgres
+export QGRID_DB_PASSWORD=postgres
+export QGRID_DB_NAME=qgrid
 qgrid
 ```
 
-The CLI uses Sonamu's native `SONAMU_DB_*` variables. The packaged CLI defaults
-to `NODE_ENV=production`; set `NODE_ENV=staging` only when intentionally running
-it as a remote non-production service. This profile selection never creates or
-renames the database selected by `SONAMU_DB_NAME`. The packaged CLI rejects
-`development` and `test`, which require the source development layout.
+The CLI translates the public `QGRID_DB_*` settings into Sonamu's internal
+`SONAMU_DB_*` variables. The packaged CLI defaults to `NODE_ENV=production`;
+set `NODE_ENV=staging` only when intentionally running it as a remote
+non-production service. This profile selection never creates or renames the
+database selected by `QGRID_DB_NAME`. The packaged CLI rejects `development`
+and `test`, which require the source development layout.
 
 Once the server is up, open the dashboard at `http://localhost:44900` → register tokens through OAuth login.
 With `-p, --port` set, connect on that port instead.
@@ -85,11 +86,11 @@ Without the `--db` flag, DB connection info is read from:
 
 | Variable | Default |
 |------|--------|
-| `SONAMU_DB_HOST` | `localhost` |
-| `SONAMU_DB_PORT` | `5432` |
-| `SONAMU_DB_USER` | `postgres` |
-| `SONAMU_DB_PASSWORD` | `postgres` |
-| `SONAMU_DB_NAME` | `qgrid` |
+| `QGRID_DB_HOST` | `localhost` |
+| `QGRID_DB_PORT` | `5432` |
+| `QGRID_DB_USER` | `postgres` |
+| `QGRID_DB_PASSWORD` | `postgres` |
+| `QGRID_DB_NAME` | `qgrid` |
 
 Server behavior variables:
 

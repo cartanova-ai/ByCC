@@ -238,18 +238,20 @@ Installing the CLI also syncs the qgrid agent skill for coding agents — into `
 You can configure the DB with environment variables:
 
 ```bash
-export SONAMU_DB_HOST=dev.example.com
-export SONAMU_DB_PORT=5432
-export SONAMU_DB_USER=postgres
-export SONAMU_DB_PASSWORD=postgres
-export SONAMU_DB_NAME=qgrid
+export QGRID_DB_HOST=dev.example.com
+export QGRID_DB_PORT=5432
+export QGRID_DB_USER=postgres
+export QGRID_DB_PASSWORD=postgres
+export QGRID_DB_NAME=qgrid
 qgrid
 ```
 
-Qgrid uses Sonamu's native `SONAMU_DB_*` database variables. For a directly
-deployed API server, use `NODE_ENV=staging` for a remote non-production
-environment such as dev0 and `NODE_ENV=production` for production. The profile
-does not create a database; `SONAMU_DB_NAME` selects the database explicitly.
+The CLI translates the public `QGRID_DB_*` settings into Sonamu's internal
+`SONAMU_DB_*` variables. Only source deployments that run `packages/api`
+without the CLI use `SONAMU_DB_*` directly. Use `NODE_ENV=staging` for a remote
+non-production environment such as dev0 and `NODE_ENV=production` for
+production. The profile does not create a database; `QGRID_DB_NAME` selects the
+database explicitly.
 
 ---
 
@@ -299,16 +301,18 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_PROJECT_NAME` | Request log project name (SDK/logger). Enables per-project filtering in the dashboard | (empty) |
 | `HOST` | Server listen host. A non-loopback value exposes the dashboard and admin APIs | `localhost` |
 | `NODE_ENV` | Sonamu runtime profile: `development`, `test`, `staging`, or `production`. Use `staging` for remote non-production API deployments | `development` for direct API; `production` for CLI |
-| `SONAMU_DB_HOST` | PostgreSQL host | `localhost` |
-| `SONAMU_DB_PORT` | PostgreSQL port | `5432` |
-| `SONAMU_DB_USER` | PostgreSQL user | `postgres` |
-| `SONAMU_DB_PASSWORD` | PostgreSQL password | `postgres` |
-| `SONAMU_DB_NAME` | Database name | `qgrid` |
+| `QGRID_DB_HOST` | PostgreSQL host (CLI) | `localhost` |
+| `QGRID_DB_PORT` | PostgreSQL port (CLI) | `5432` |
+| `QGRID_DB_USER` | PostgreSQL user (CLI) | `postgres` |
+| `QGRID_DB_PASSWORD` | PostgreSQL password (CLI) | `postgres` |
+| `QGRID_DB_NAME` | Database name (CLI) | `qgrid` |
 | `QGRID_WORKERS_PER_TOKEN` | Workers per OpenAI token | `3` (max 5) |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
 
 > Qgrid does not add a separate authentication guard to dashboard APIs. Keep `HOST` on loopback unless access is protected by a trusted network or reverse proxy. A public bind exposes every admin endpoint, including the Monit tab's server log feed.
+>
+> When running `packages/api` directly, set the same values with Sonamu's native `SONAMU_DB_*` variables.
 
 ---
 

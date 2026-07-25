@@ -238,18 +238,19 @@ CLI 설치 시 코딩 에이전트용 qgrid skill이 자동 동기화됩니다 �
 환경변수로 DB 설정 가능:
 
 ```bash
-export SONAMU_DB_HOST=dev.example.com
-export SONAMU_DB_PORT=5432
-export SONAMU_DB_USER=postgres
-export SONAMU_DB_PASSWORD=postgres
-export SONAMU_DB_NAME=qgrid
+export QGRID_DB_HOST=dev.example.com
+export QGRID_DB_PORT=5432
+export QGRID_DB_USER=postgres
+export QGRID_DB_PASSWORD=postgres
+export QGRID_DB_NAME=qgrid
 qgrid
 ```
 
-qgrid는 Sonamu의 네이티브 DB 설정인 `SONAMU_DB_*`를 사용합니다. API 서버를
-직접 배포할 때 dev0 같은 원격 비프로덕션 환경은 `NODE_ENV=staging`,
-프로덕션은 `NODE_ENV=production`을 사용합니다. 이 프로필은 DB를 새로 만들지
-않으며, 접속할 DB는 `SONAMU_DB_NAME`이 명시적으로 결정합니다.
+CLI는 공개 설정인 `QGRID_DB_*`를 Sonamu 내부의 `SONAMU_DB_*`로 변환합니다.
+`packages/api`를 CLI 없이 직접 실행하는 소스 배포만 `SONAMU_DB_*`를 사용합니다.
+dev0 같은 원격 비프로덕션 환경은 `NODE_ENV=staging`, 프로덕션은
+`NODE_ENV=production`을 사용합니다. 이 프로필은 DB를 새로 만들지 않으며,
+접속할 DB는 `QGRID_DB_NAME`이 명시적으로 결정합니다.
 
 ---
 
@@ -289,16 +290,18 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 | `QGRID_PROJECT_NAME` | request log 프로젝트 이름 (SDK/logger). 대시보드 프로젝트별 필터링에 사용 | (없음) |
 | `HOST` | 서버 listen 호스트. loopback이 아닌 값은 대시보드와 관리 API를 외부에 노출 | `localhost` |
 | `NODE_ENV` | Sonamu 실행 프로필: `development`, `test`, `staging`, `production`. 원격 비프로덕션 API 배포에는 `staging` 사용 | API 직접 실행 시 `development`, CLI는 `production` |
-| `SONAMU_DB_HOST` | PostgreSQL 호스트 | `localhost` |
-| `SONAMU_DB_PORT` | PostgreSQL 포트 | `5432` |
-| `SONAMU_DB_USER` | PostgreSQL 사용자 | `postgres` |
-| `SONAMU_DB_PASSWORD` | PostgreSQL 비밀번호 | `postgres` |
-| `SONAMU_DB_NAME` | 데이터베이스 이름 | `qgrid` |
+| `QGRID_DB_HOST` | PostgreSQL 호스트 (CLI) | `localhost` |
+| `QGRID_DB_PORT` | PostgreSQL 포트 (CLI) | `5432` |
+| `QGRID_DB_USER` | PostgreSQL 사용자 (CLI) | `postgres` |
+| `QGRID_DB_PASSWORD` | PostgreSQL 비밀번호 (CLI) | `postgres` |
+| `QGRID_DB_NAME` | 데이터베이스 이름 (CLI) | `qgrid` |
 | `QGRID_WORKERS_PER_TOKEN` | OpenAI 토큰당 worker 수 | `3` (최대 5) |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
 
 > qgrid는 대시보드 API에 별도 인증을 두지 않습니다. 신뢰할 수 있는 네트워크나 reverse proxy 뒤가 아니라면 `HOST`를 loopback으로 유지하세요. 공개 바인드는 Monit 탭의 서버 로그 피드를 포함한 모든 관리 엔드포인트를 노출합니다.
+>
+> `packages/api`를 직접 실행할 때는 같은 값을 Sonamu 네이티브 환경변수인 `SONAMU_DB_*`로 설정합니다.
 
 ---
 
