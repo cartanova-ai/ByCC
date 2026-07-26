@@ -11,6 +11,7 @@ import {
   makeAnthropicWorkerId,
   oneMillionEnv,
   runClaudeSession,
+  shouldPinStructuredRetries,
   structuredOutputRetriesEnv,
   thinkingEnv,
   SYSTEM_PROMPT_ARGV_MAX_BYTES,
@@ -159,6 +160,24 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
   it("structuredOutputRetriesEnv: 1 이상 값은 그대로 유지", () => {
     expect(structuredOutputRetriesEnv("1")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "1" });
     expect(structuredOutputRetriesEnv("5")).toEqual({ MAX_STRUCTURED_OUTPUT_RETRIES: "5" });
+  });
+
+  // SON-495 의 retry 고정 사유(스트림 retry = wall-clock 2배)는 스트리밍에만 성립한다.
+  // 논스트림 generate 까지 묶으면 1회 reject 가 곧 실패라 Claude 계열 structured 실패율이 치솟는다.
+  it("shouldPinStructuredRetries: structured + 스트리밍일 때만 retry 를 고정한다", () => {
+    expect(shouldPinStructuredRetries({ useStructured: true, includePartialMessages: true })).toBe(
+      true,
+    );
+    // 논스트림 structured: CC 기본 retry 허용
+    expect(shouldPinStructuredRetries({ useStructured: true, includePartialMessages: false })).toBe(
+      false,
+    );
+    expect(shouldPinStructuredRetries({ useStructured: true })).toBe(false);
+    // text 모드는 스트리밍 여부와 무관하게 영향 없음
+    expect(shouldPinStructuredRetries({ useStructured: false, includePartialMessages: true })).toBe(
+      false,
+    );
+    expect(shouldPinStructuredRetries({ useStructured: false })).toBe(false);
   });
 
   it("cold-only: 항상 --session-id 를 사용하고 continuation flag 는 쓰지 않는다", () => {

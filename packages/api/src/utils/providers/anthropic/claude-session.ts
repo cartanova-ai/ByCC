@@ -171,6 +171,22 @@ export function structuredOutputRetriesEnv(raw = process.env.MAX_STRUCTURED_OUTP
   return { MAX_STRUCTURED_OUTPUT_RETRIES: String(Math.max(parsed, 1)) };
 }
 
+// SON-495 의 retry 고정은 "스트리밍 + structured" 조합 한정 정책이다. 스트림에서 retry 가 돌면
+// wall-clock 이 2배가 되어 실용성이 없기 때문이다(원 결정 사유). 논스트림 generate 는 애초에 완료를
+// 기다리므로 그 사유가 성립하지 않는다. 반면 Claude 계열은 OpenAI 대비 structured output 준수율이
+// 낮아, 논스트림까지 retry=1 로 묶으면 1회 reject 가 곧바로
+// `error_max_structured_output_retries` 로 직결된다(실측: deti_production opus-4-8 실패율 39.6%).
+// 스트리밍 여부는 `--include-partial-messages` 를 붙이는 generateStream 경로에서만 true 가 되므로
+// (anthropic-dispatcher 의 generate/generateStream 분기) 이를 실질 구분자로 쓴다.
+// 비성공 subtype 을 항상 isError 로 올리는 SON-495 의 나머지 절반은 그대로 유지된다 — retry 후에도
+// degenerate 출력이면 조용히 통과시키지 않고 정직하게 실패한다.
+export function shouldPinStructuredRetries(opts: {
+  useStructured: boolean;
+  includePartialMessages?: boolean;
+}): boolean {
+  return opts.useStructured && opts.includePartialMessages === true;
+}
+
 // Linux 단일 argv 인자 한계(MAX_ARG_STRLEN = PAGE_SIZE×32 = 128KB, 커널 하드코딩 상수)
 // 시스템 프롬프트가 이를 넘으면 execve 가 E2BIG 로 거부된다. deti 등 대형 프롬프트는 실측
 // 평균 343KB·최대 485KB(opus-4-8)라 일상적으로 초과한다. 한계의 절반(64KB)을 임계값으로 잡아
@@ -311,8 +327,14 @@ export function runClaudeSession(
           CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1",
           CLAUDE_CODE_DISABLE_WORKFLOWS: "1",
           CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
-          // structured output 일 때만 retry 를 고정한다(SON-495). text 모드는 영향 없음.
-          ...(useStructured ? structuredOutputRetriesEnv() : {}),
+          // structured + 스트리밍일 때만 retry 를 고정한다(SON-495). text 모드와 논스트림
+          // generate 는 CC 기본 retry 를 그대로 쓴다.
+          ...(shouldPinStructuredRetries({
+            useStructured,
+            includePartialMessages: req.includePartialMessages,
+          })
+            ? structuredOutputRetriesEnv()
+            : {}),
         },
       });
 

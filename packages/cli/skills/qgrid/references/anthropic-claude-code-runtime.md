@@ -105,7 +105,7 @@ Included env:
 - `CLAUDE_CODE_ATTRIBUTION_HEADER=0`
 - `MAX_THINKING_TOKENS=0` except for Fable 5 and Opus 5
 - `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` when model does not support qgrid's 1M path
-- `MAX_STRUCTURED_OUTPUT_RETRIES` for structured output only
+- `MAX_STRUCTURED_OUTPUT_RETRIES` for streaming structured output only (not non-streaming `generate`)
 
 Never pass `ANTHROPIC_API_KEY` or inherited auth env vars to child processes. OAuth must flow through `CLAUDE_CODE_OAUTH_TOKEN`.
 
@@ -186,7 +186,13 @@ Upstream references:
 
 qgrid strictifies schemas before provider dispatch. Claude Code `--json-schema` is not grammar-constrained decoding; it is a `StructuredOutput` tool plus post-validation behavior. Keep schemas strict and preserve error signaling for failed structured-output attempts.
 
-`MAX_STRUCTURED_OUTPUT_RETRIES` defaults to `1` for structured Anthropic calls and is clamped to at least 1. Avoid setting it to 0; Claude Code can fail before emitting a useful attempt.
+`MAX_STRUCTURED_OUTPUT_RETRIES` defaults to `1` and is clamped to at least 1. Avoid setting it to 0; Claude Code can fail before emitting a useful attempt.
+
+qgrid pins this env var only when the call is **structured and streaming**. The pin exists because a retry inside a stream doubles wall-clock time (SON-495); that reasoning does not apply to non-streaming `generate`, which already waits for completion. Streaming is detected via `includePartialMessages`, which only `generateStream` sets.
+
+Non-streaming structured calls therefore keep Claude Code's default retry budget. This matters because Claude models comply with structured output less reliably than OpenAI models: pinning retries to 1 turns a single rejected attempt into an immediate `error_max_structured_output_retries`. Measured on dev0 before the fix, `deti_production` on Opus 4.8 failed 39.6% of non-streaming structured calls for this reason.
+
+The other half of SON-495 is unchanged: any non-success subtype still sets `isError`, so a degenerate output after retries fails honestly instead of leaking partial data.
 
 ## 1M context
 
