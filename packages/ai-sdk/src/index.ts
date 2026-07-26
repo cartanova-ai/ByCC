@@ -201,6 +201,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
+      const timeoutMs = qgridOptions.timeoutMs;
       const logger = qgridOptions.logger;
       const imageGenerationOptions = qgridOptions.imageGenerationOptions;
       if (imageGeneration) {
@@ -256,6 +257,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(verbosity ? { verbosity } : {}),
             ...(reasoningSummary ? { reasoningSummary } : {}),
             ...(serviceTier ? { serviceTier } : {}),
+            ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
@@ -353,6 +355,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const verbosity = qgridOptions.verbosity;
       const reasoningSummary = qgridOptions.reasoningSummary;
       const serviceTier = qgridOptions.serviceTier;
+      const timeoutMs = qgridOptions.timeoutMs;
       const logger = qgridOptions.logger;
       // 이미지 생성은 non-stream 전용(R2). 서버 왕복 전에 클라이언트에서 명시적으로 거부한다.
       if (qgridOptions.imageGeneration) {
@@ -406,6 +409,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(verbosity ? { verbosity } : {}),
             ...(reasoningSummary ? { reasoningSummary } : {}),
             ...(serviceTier ? { serviceTier } : {}),
+            ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
             ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),

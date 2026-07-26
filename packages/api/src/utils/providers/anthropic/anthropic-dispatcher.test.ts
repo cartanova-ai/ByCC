@@ -175,6 +175,18 @@ describe("AnthropicDispatcher", () => {
     expect(call.jsonSchema).toBe(JSON.stringify({ type: "object", properties: {} }));
   });
 
+  it("요청 timeoutMs를 Claude session에 전달하고 미지정 시 240초 기본값을 쓴다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+
+    await d.generate(baseReq({ timeoutMs: 360_000 }));
+    expect(firstRunRequest().timeoutMs).toBe(360_000);
+
+    runClaudeSessionMock.mockClear();
+    await d.generate(baseReq());
+    expect(firstRunRequest().timeoutMs).toBe(240_000);
+  });
+
   it("quota 소진 → 에러", async () => {
     const d = new AnthropicDispatcher();
     d.onTokenAdded(1, "tok-A", creds(), null, 1);

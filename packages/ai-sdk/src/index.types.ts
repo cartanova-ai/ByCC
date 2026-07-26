@@ -30,6 +30,12 @@ export type QgridProviderOptions = {
   /** OpenAI/codex service tier. OpenAI/codex route에서만 적용된다. */
   serviceTier?: string;
   /**
+   * qgrid 서버의 provider 실행 제한(ms). Anthropic 경로에서는 Claude Code 프로세스 타이머로
+   * 사용된다. AI SDK 표준 timeout은 provider에 숫자를 전달하지 않고 abortSignal로 변환되므로,
+   * 서버 측 제한을 바꾸려면 이 옵션을 사용한다. 양의 정수만 허용하며 최대 30분, 기본 240초다.
+   */
+  timeoutMs?: number;
+  /**
    * @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록.
    * Claude Code가 처리하는 Fable 5 safety-refusal fallback과는 무관하다.
    */

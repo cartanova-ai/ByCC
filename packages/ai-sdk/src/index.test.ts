@@ -133,6 +133,7 @@ describe("qgrid AI SDK provider", () => {
           verbosity: "medium",
           reasoningSummary: "concise",
           serviceTier: "flex",
+          timeoutMs: 360_000,
           logger: false,
           fallbackModels: ["openai/gpt-5.4-mini"],
         },
@@ -145,6 +146,7 @@ describe("qgrid AI SDK provider", () => {
         verbosity: "medium",
         reasoningSummary: "concise",
         serviceTier: "flex",
+        timeout: 360_000,
         logger: false,
       },
     });
@@ -634,14 +636,14 @@ describe("qgrid AI SDK provider", () => {
 
     const result = await qgrid("openai/gpt-5.5").doStream({
       prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-      providerOptions: { qgrid: { logger: false } },
+      providerOptions: { qgrid: { logger: false, timeoutMs: 360_000 } },
     } as never);
     for await (const _part of result.stream) {
       // drain
     }
 
     const prepareCall = calls.find((c) => c.url.includes("/prepareStream"));
-    expect(prepareCall?.body.args).toMatchObject({ logger: false });
+    expect(prepareCall?.body.args).toMatchObject({ logger: false, timeout: 360_000 });
     expect(prepareCall?.body.args).not.toHaveProperty("logMode");
 
     // SDK는 직접 lifecycle 호출 안 함

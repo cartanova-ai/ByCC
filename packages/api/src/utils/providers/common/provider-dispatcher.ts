@@ -55,6 +55,8 @@ export interface GenerateRequest {
   verbosity?: string;
   reasoningSummary?: string;
   serviceTier?: string;
+  // provider 실행 제한(ms). 현재 Anthropic Claude session 타이머가 사용한다.
+  timeoutMs?: number;
   abortSignal?: AbortSignal;
   // 첫 turn / 재사용 폴백 시 보낼 input — 전체 prompt. 항상 설정.
   coldInput: Array<UserInput>;

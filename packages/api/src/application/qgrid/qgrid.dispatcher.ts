@@ -60,9 +60,7 @@ export class QgridDispatcherClass {
     }));
   }
 
-  async query(input: QueryInput, timeoutMs?: number): Promise<QueryOutput> {
-    void timeoutMs;
-
+  async query(input: QueryInput, abortSignal?: AbortSignal): Promise<QueryOutput> {
     if (input.tools?.length && input.jsonSchema) {
       throw new ProcessError("tools and jsonSchema cannot be used together");
     }
@@ -87,6 +85,7 @@ export class QgridDispatcherClass {
         coldHistory: decision.coldHistory,
         reuse: decision.reuse,
         reuseInput: decision.reuseInput,
+        abortSignal,
         imageGeneration: input.imageGeneration,
         imageGenerationOptions: input.imageGenerationOptions,
       });
@@ -108,6 +107,8 @@ export class QgridDispatcherClass {
         systemPrompt: input.system,
         outputSchema,
         effort: input.effort,
+        timeoutMs: input.timeout,
+        abortSignal,
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
         imageGeneration: input.imageGeneration,
@@ -183,6 +184,7 @@ export class QgridDispatcherClass {
           effort: input.effort,
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
+          timeoutMs: input.timeout,
           abortSignal,
           imageGeneration: input.imageGeneration,
           imageGenerationOptions: input.imageGenerationOptions,

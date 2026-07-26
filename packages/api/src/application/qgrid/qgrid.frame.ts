@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import { getLogger } from "@logtape/logtape";
-import { type FastifyReply } from "fastify";
+import { type FastifyReply, type FastifyRequest } from "fastify";
 import { api, BadRequestException, BaseFrameClass, Sonamu, stream } from "sonamu";
 import { getCacheManagerRef } from "sonamu/cache";
 
@@ -100,6 +100,43 @@ function rejectLegacyLogMode(args: QueryInput): void {
   );
 }
 
+function createHttpDisconnectHandle(): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const abortController = new AbortController();
+  let requestRaw: FastifyRequest["raw"] | undefined;
+  let responseRaw: FastifyReply["raw"] | undefined;
+
+  try {
+    const ctx = Sonamu.getContext();
+    requestRaw = ctx.request?.raw;
+    if (ctx.transport === "http") responseRaw = ctx.reply.raw;
+  } catch {
+    // Direct frame calls (for example unit tests) do not have an HTTP context.
+  }
+
+  const abort = () => abortController.abort();
+  const abortOnIncompleteResponseClose = () => {
+    if (!responseRaw?.writableEnded) abort();
+  };
+
+  requestRaw?.once("aborted", abort);
+  responseRaw?.once("close", abortOnIncompleteResponseClose);
+
+  if (requestRaw?.aborted || (responseRaw?.destroyed && !responseRaw.writableEnded)) {
+    abort();
+  }
+
+  return {
+    signal: abortController.signal,
+    dispose: () => {
+      requestRaw?.removeListener("aborted", abort);
+      responseRaw?.removeListener("close", abortOnIncompleteResponseClose);
+    },
+  };
+}
+
 const logger = getLogger(["qgrid"]);
 const oauthLogger = getLogger(["qgrid", "oauth"]);
 
@@ -111,33 +148,49 @@ class QgridFrameClass extends BaseFrameClass {
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
     rejectLegacyLogMode(args);
-    if (args.logger === false) {
-      return QgridDispatcher.query(args, args.timeout);
-    }
-
-    const { requestLogId, stepIndex } = await beforeQuery(args);
-    let result: QueryOutput;
+    const disconnect = createHttpDisconnectHandle();
     try {
-      result = await QgridDispatcher.query(args, args.timeout);
-    } catch (e) {
-      await finishRunWithError(requestLogId, (e as Error).message, args);
-      throw e;
-    }
+      if (args.logger === false) {
+        return await QgridDispatcher.query(args, disconnect.signal);
+      }
 
-    try {
-      const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
-      // tool-call requestLogId와 provider threadCoord는 서로 독립적으로 유지한다.
-      const threadCoord = result.runContext?.threadCoord;
-      const runContext =
-        lifecycle.runContext || threadCoord
-          ? { ...lifecycle.runContext, ...(threadCoord ? { threadCoord } : {}) }
-          : undefined;
-      return { ...result, runContext };
-    } catch (e) {
-      logger.error(`query afterQuery failed: ${(e as Error).message}`);
-      await finishRunWithError(requestLogId, (e as Error).message, args);
-      // provider 응답은 성공했으므로 로깅 장애가 생성 결과를 덮어쓰지 않는다.
-      return result;
+      const { requestLogId, stepIndex } = await beforeQuery(args);
+      let result: QueryOutput;
+      try {
+        result = await QgridDispatcher.query(args, disconnect.signal);
+      } catch (e) {
+        if (disconnect.signal.aborted) {
+          await finishRunAborted(requestLogId, args);
+        } else {
+          await finishRunWithError(requestLogId, (e as Error).message, args);
+        }
+        throw e;
+      }
+
+      try {
+        const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
+        if (disconnect.signal.aborted) {
+          await finishRunAborted(requestLogId, args);
+        }
+        // tool-call requestLogId와 provider threadCoord는 서로 독립적으로 유지한다.
+        const threadCoord = result.runContext?.threadCoord;
+        const runContext =
+          lifecycle.runContext || threadCoord
+            ? { ...lifecycle.runContext, ...(threadCoord ? { threadCoord } : {}) }
+            : undefined;
+        return { ...result, runContext };
+      } catch (e) {
+        logger.error(`query afterQuery failed: ${(e as Error).message}`);
+        if (disconnect.signal.aborted) {
+          await finishRunAborted(requestLogId, args);
+        } else {
+          await finishRunWithError(requestLogId, (e as Error).message, args);
+        }
+        // provider 응답은 성공했으므로 로깅 장애가 생성 결과를 덮어쓰지 않는다.
+        return result;
+      }
+    } finally {
+      disconnect.dispose();
     }
   }
 

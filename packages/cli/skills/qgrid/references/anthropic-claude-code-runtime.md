@@ -10,6 +10,7 @@ Use this reference before changing Anthropic provider behavior, Claude Code spaw
 - Spawn args
 - Spawn env
 - Config isolation
+- Timeout and cancellation
 - Input adaptation
 - Output adaptation
 - Fable refusal fallback
@@ -118,6 +119,24 @@ Never pass `ANTHROPIC_API_KEY` or inherited auth env vars to child processes. OA
 
 This blocks user-scope Claude settings, hooks, memory, and token cross-contamination as much as the current Claude Code interface allows.
 
+## Timeout and cancellation
+
+Claude sessions default to a 240-second server-side process timeout. AI SDK callers can override it
+with `providerOptions.qgrid.timeoutMs`; the wire value is validated as a positive integer no greater
+than 30 minutes and is applied to both `generateText` and `streamText`.
+
+Do not substitute AI SDK's standard top-level `timeout` for this setting. AI SDK consumes that value
+as its overall client budget and exposes only the resulting `abortSignal` to custom providers. The
+two controls are complementary: `timeoutMs` limits the Claude process, while the AI SDK timeout also
+covers client/network overhead.
+
+Cancellation must reach the child process independently of the timer:
+
+- AI SDK aborts cancel the qgrid HTTP request.
+- Streaming SSE close aborts the provider execution.
+- Non-streaming request abort or incomplete response close aborts the provider execution.
+- Logged requests cancelled by disconnect finish as `aborted`, not `error`.
+
 ## Input adaptation
 
 qgrid sends Claude stdin as JSONL with `--input-format stream-json`.
@@ -134,7 +153,10 @@ This is not equivalent to persistent Claude session reuse. It is full-history re
 Claude stdout JSONL is parsed by `stream-json-adapter.ts`.
 
 - Text mode streams `text_delta`.
-- Structured mode streams `input_json_delta` and preserves `StructuredOutput` tool input as final text.
+- Structured mode streams `input_json_delta`. On a successful result, qgrid returns
+  `result.structured_output`, because earlier assistant `StructuredOutput` inputs may be attempts
+  that Claude Code rejected before an internal retry. The first tool input is retained only as a
+  diagnostic fallback when no successful final structured output is available.
 - `result` lines provide final text, usage, duration, cost, subtype, and terminal reason.
 - Non-success subtype, `is_error`, or `terminal_reason: model_error` is treated as an error.
 - Quota exhaustion is detected when text starts with `You've hit`.
@@ -191,6 +213,11 @@ qgrid strictifies schemas before provider dispatch. Claude Code `--json-schema` 
 qgrid pins this env var only when the call is **structured and streaming**. The pin exists because a retry inside a stream doubles wall-clock time (SON-495); that reasoning does not apply to non-streaming `generate`, which already waits for completion. Streaming is detected via `includePartialMessages`, which only `generateStream` sets.
 
 Non-streaming structured calls therefore keep Claude Code's default retry budget. This matters because Claude models comply with structured output less reliably than OpenAI models: pinning retries to 1 turns a single rejected attempt into an immediate `error_max_structured_output_retries`. Measured on dev0 before the fix, `deti_production` on Opus 4.8 failed 39.6% of non-streaming structured calls for this reason.
+
+When a non-streaming retry succeeds, the result event's `structured_output` is the canonical
+schema-validated value. Do not let a previously captured assistant tool input override it. Preserve
+the first input only for non-success results such as `error_max_turns` or
+`error_max_structured_output_retries`, where it is useful diagnostic evidence.
 
 The other half of SON-495 is unchanged: any non-success subtype still sets `isError`, so a degenerate output after retries fails honestly instead of leaking partial data.
 

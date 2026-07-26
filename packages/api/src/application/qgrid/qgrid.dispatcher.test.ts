@@ -67,7 +67,7 @@ describe("QgridDispatcherClass", () => {
     const abortSignal = new AbortController().signal;
 
     await dispatcher.queryStream(
-      { prompt: "hi", model: "anthropic/claude-sonnet-4-6" },
+      { prompt: "hi", model: "anthropic/claude-sonnet-4-6", timeout: 360_000 },
       {
         onDelta: vi.fn(),
         onComplete: vi.fn(),
@@ -77,6 +77,26 @@ describe("QgridDispatcherClass", () => {
     );
 
     expect(generateStream.mock.calls[0]![0].abortSignal).toBe(abortSignal);
+    expect(generateStream.mock.calls[0]![0].timeoutMs).toBe(360_000);
+  });
+
+  it("Anthropic query 는 timeoutMs와 abortSignal을 provider request로 전달한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (_req: GenerateRequest) =>
+      providerResult({ model: "claude-opus-5" }),
+    );
+    dispatcher.anthropicDispatcher = { generate } as never;
+    const abortSignal = new AbortController().signal;
+
+    await dispatcher.query(
+      { prompt: "hi", model: "anthropic/claude-opus-5", timeout: 360_000 },
+      abortSignal,
+    );
+
+    expect(generate.mock.calls[0]![0]).toMatchObject({
+      timeoutMs: 360_000,
+      abortSignal,
+    });
   });
 
   it("Anthropic queryStream provider error 는 상위 onError 로 전달한다", async () => {

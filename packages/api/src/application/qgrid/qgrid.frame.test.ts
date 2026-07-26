@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+
 import { Sonamu } from "sonamu";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -144,6 +146,10 @@ describe("QgridFrame.updateToken", () => {
 });
 
 describe("QgridFrame.query request logging", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     beforeQueryMock.mockReset().mockResolvedValue({ requestLogId: 41, stepIndex: 0 });
     afterQueryMock.mockReset().mockResolvedValue({});
@@ -237,6 +243,42 @@ describe("QgridFrame.query request logging", () => {
     expect(finishRunWithErrorMock).toHaveBeenCalledWith(41, "provider failed", args);
   });
 
+  it("aborts provider execution and marks the run aborted when the HTTP response closes early", async () => {
+    const requestRaw = Object.assign(new EventEmitter(), { aborted: false });
+    const responseRaw = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+    });
+    vi.spyOn(Sonamu, "getContext").mockReturnValue({
+      transport: "http",
+      request: { raw: requestRaw },
+      reply: { raw: responseRaw },
+    } as never);
+    let providerSignal: AbortSignal | undefined;
+    dispatcherQueryMock.mockImplementationOnce(
+      (_args: unknown, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          providerSignal = signal;
+          signal.addEventListener("abort", () => reject(new Error("provider aborted")), {
+            once: true,
+          });
+        }),
+    );
+    const args = { prompt: "hi", model: "anthropic/claude-opus-5" };
+
+    const queryPromise = QgridFrame.query(args);
+    await vi.waitFor(() => expect(providerSignal).toBeDefined());
+    responseRaw.destroyed = true;
+    responseRaw.emit("close");
+
+    await expect(queryPromise).rejects.toThrow("provider aborted");
+    expect(providerSignal?.aborted).toBe(true);
+    expect(finishRunAbortedMock).toHaveBeenCalledWith(41, args);
+    expect(finishRunWithErrorMock).not.toHaveBeenCalled();
+    expect(requestRaw.listenerCount("aborted")).toBe(0);
+    expect(responseRaw.listenerCount("close")).toBe(0);
+  });
+
   it("returns the provider result when afterQuery persistence fails", async () => {
     const output = queryOutput();
     dispatcherQueryMock.mockResolvedValueOnce(output);
@@ -265,6 +307,13 @@ describe("QgridFrame.query request logging", () => {
     expect(QueryInput.safeParse({ prompt: "hi", logMode: "none" }).success).toBe(false);
     expect(QueryInput.safeParse({ prompt: "hi", logMode: undefined }).success).toBe(false);
     expect(QueryInput.safeParse({ prompt: "hi", logger: false }).success).toBe(true);
+  });
+
+  it("accepts bounded positive integer timeout values only", () => {
+    expect(QueryInput.safeParse({ prompt: "hi", timeout: 360_000 }).success).toBe(true);
+    expect(QueryInput.safeParse({ prompt: "hi", timeout: 0 }).success).toBe(false);
+    expect(QueryInput.safeParse({ prompt: "hi", timeout: 1.5 }).success).toBe(false);
+    expect(QueryInput.safeParse({ prompt: "hi", timeout: 1_800_001 }).success).toBe(false);
   });
 });
 

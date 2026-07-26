@@ -326,7 +326,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
           system: req.systemPrompt,
           jsonSchema,
           effort: req.effort,
-          timeoutMs: DEFAULT_TIMEOUT_MS,
+          timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           coldHistory: req.coldHistory,
           input: req.coldInput,
           abortSignal: req.abortSignal,

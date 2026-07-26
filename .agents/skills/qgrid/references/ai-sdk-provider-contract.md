@@ -63,11 +63,19 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 - `verbosity`: OpenAI/Codex route only.
 - `reasoningSummary`: OpenAI/Codex route only.
 - `serviceTier`: OpenAI/Codex route only.
+- `timeoutMs`: Anthropic server-side Claude Code process timeout in milliseconds. It must be a positive integer no greater than 30 minutes and defaults to 240 seconds.
 - `fallbackModels`: reserved for future qgrid server-side fallback routing. It is not the Fable 5 safety-refusal fallback, which is owned by Claude Code upstream.
 - `imageGeneration`: OpenAI/Codex non-stream only. Enables Codex's built-in `image_generation` tool for that request.
 - `imageGenerationOptions`: optional image quality/size hints and cost-estimation basis. Current supported values are `quality: "low" | "medium" | "high"` and `size: "1024x1024" | "1024x1536" | "1536x1024"`.
 
 `providerOptions.qgrid` does not currently support `projectName` or `project_name`. Prefer `QGRID_PROJECT_NAME` for the default project label; use config `projectName` only when a caller needs to override that default.
+
+AI SDK's standard top-level `timeout` is still the overall client-side budget. AI SDK converts it
+to the `abortSignal` in `LanguageModelV3CallOptions`, so a custom provider cannot recover the
+original numeric duration. Do not infer or duplicate that timeout. Use
+`providerOptions.qgrid.timeoutMs` only for the server-side Claude Code limit, and recommend setting
+the AI SDK timeout high enough to include network and server overhead. Client cancellation and
+non-streaming HTTP disconnects propagate separately through `AbortSignal`.
 
 ## Request logging
 
