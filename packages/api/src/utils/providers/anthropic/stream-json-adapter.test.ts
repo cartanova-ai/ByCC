@@ -265,6 +265,72 @@ describe("handleStreamJsonLine (출력 어댑터)", () => {
     expect(result!.costUsd).toBe(0.0042);
   });
 
+  it("structured retry 성공: 첫 거절 입력이 아니라 최종 structured_output을 반환", () => {
+    const rejected = {
+      l2: "en",
+      line_id: "s1_l1",
+      speaker: "Minjae",
+      title: "첫 시도",
+      scenes: [],
+    };
+    const accepted = {
+      title: "두 번째 시도",
+      opening_line: "스키마를 만족한 최종 응답",
+      scenes: [],
+    };
+    const { result } = runLines(
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", name: "StructuredOutput", input: rejected }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                is_error: true,
+                content: "Output does not match required schema",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", name: "StructuredOutput", input: accepted }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                content: "Structured output provided successfully",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          structured_output: accepted,
+          usage: { input_tokens: 10, output_tokens: 20 },
+        }),
+      ],
+      { structuredOutput: true },
+    );
+
+    expect(JSON.parse(result!.text)).toEqual(accepted);
+    expect(result!.isError).toBe(false);
+    expect(result!.subtype).toBe("success");
+  });
+
   // SON-495: error_max_structured_output_retries 는 모델이 schema 를 못 맞춘 비정상 종료다.
   // CC structured output 은 constrained decoding 이 아니라 사후 AJV 검증이라, 모델이 가끔
   // placeholder($PARAMETER_NAME)·거부("just kidding")·필드 누락 같은 발작/불완전 출력을 낸다.

@@ -406,9 +406,20 @@ export function handleStreamJsonLine(
   }
 
   if (j.type === "result") {
+    const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
+    const terminalReason = typeof j.terminal_reason === "string" ? j.terminal_reason : undefined;
+    const resultSucceeded =
+      j.is_error !== true &&
+      terminalReason !== "model_error" &&
+      (subtype === undefined || subtype === "success");
     let text: string;
     const preservedStructuredOutput = structuredOutput ? state?.structuredOutputText : undefined;
-    if (preservedStructuredOutput !== undefined) {
+    // Claude Code는 StructuredOutput 스키마 검증 실패 후 내부 재시도를 할 수 있다. assistant
+    // 이벤트의 첫 tool input은 거절된 시도일 수 있으므로, 성공 result가 제공한 최종 검증값을
+    // 우선한다. 첫 입력 보존값은 max_turns/retry 초과처럼 성공 result가 없는 진단 경로용이다.
+    if (structuredOutput && resultSucceeded && j.structured_output !== undefined) {
+      text = JSON.stringify(j.structured_output);
+    } else if (preservedStructuredOutput !== undefined) {
       text = preservedStructuredOutput;
     } else if (j.structured_output !== undefined) {
       text = JSON.stringify(j.structured_output);
@@ -429,8 +440,6 @@ export function handleStreamJsonLine(
     }
     const usage = toUsageBreakdown(rawUsage as ClaudeUsage);
     const quotaExhausted = text.startsWith("You've hit");
-    const subtype = typeof j.subtype === "string" ? j.subtype : undefined;
-    const terminalReason = typeof j.terminal_reason === "string" ? j.terminal_reason : undefined;
 
     // SON-495: 비정상 종료(error_max_structured_output_retries 등)는 정직하게 에러로 처리한다.
     // CC structured output 은 constrained decoding 이 아니라 "tool input 생성 후 사후 AJV 검증"이라
