@@ -1,4 +1,11 @@
 import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
+import {
+  SCHEMA_ARRAY_KEYWORDS,
+  SCHEMA_DEPENDENCIES_KEYWORD,
+  SCHEMA_MAP_KEYWORDS,
+  SCHEMA_SINGLE_KEYWORDS,
+  UNSUPPORTED_REFERENCE_KEYWORDS,
+} from "../../utils/providers/common/json-schema-keywords";
 import { type QgridTool } from "./qgrid.types";
 
 const USER_OUTPUT_DEFINITION = "__qgrid_user_output";
@@ -85,28 +92,9 @@ function rebaseUserOutputSchema(schema: JsonValue): JsonValue {
   return rewriteSchemaNode(schema, "$");
 }
 
-const SCHEMA_MAP_KEYWORDS = new Set([
-  "$defs",
-  "definitions",
-  "dependentSchemas",
-  "patternProperties",
-  "properties",
-]);
-const SCHEMA_ARRAY_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const SCHEMA_KEYWORDS = new Set([
-  "additionalItems",
-  "additionalProperties",
-  "contains",
-  "contentSchema",
-  "else",
-  "if",
-  "items",
-  "not",
-  "propertyNames",
-  "then",
-  "unevaluatedItems",
-  "unevaluatedProperties",
-]);
+const MAP_KEYWORDS = new Set<string>(SCHEMA_MAP_KEYWORDS);
+const ARRAY_KEYWORDS = new Set<string>(SCHEMA_ARRAY_KEYWORDS);
+const SINGLE_KEYWORDS = new Set<string>(SCHEMA_SINGLE_KEYWORDS);
 
 function rewriteSchemaNode(value: JsonValue, path: string): JsonValue {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
@@ -114,8 +102,8 @@ function rewriteSchemaNode(value: JsonValue, path: string): JsonValue {
   const source = value as Record<string, JsonValue>;
   const result: Record<string, JsonValue> = { ...source };
 
-  for (const unsupportedKeyword of ["$id", "$dynamicRef", "$recursiveRef", "$recursiveAnchor"]) {
-    if (unsupportedKeyword in source) {
+  for (const unsupportedKeyword of UNSUPPORTED_REFERENCE_KEYWORDS) {
+    if (Object.hasOwn(source, unsupportedKeyword)) {
       throw new ToolSchemaCompositionError(
         `${unsupportedKeyword} is not supported`,
         `${path}.${unsupportedKeyword}`,
@@ -137,14 +125,14 @@ function rewriteSchemaNode(value: JsonValue, path: string): JsonValue {
   for (const [keyword, child] of Object.entries(source)) {
     const keywordPath = `${path}.${keyword}`;
 
-    if (SCHEMA_MAP_KEYWORDS.has(keyword) && isJsonObject(child)) {
+    if (MAP_KEYWORDS.has(keyword) && isJsonObject(child)) {
       result[keyword] = Object.fromEntries(
         Object.entries(child).map(([name, schema]) => [
           name,
           rewriteSchemaNode(schema, `${keywordPath}.${name}`),
         ]),
       ) as JsonValue;
-    } else if (keyword === "dependencies" && isJsonObject(child)) {
+    } else if (keyword === SCHEMA_DEPENDENCIES_KEYWORD && isJsonObject(child)) {
       result[keyword] = Object.fromEntries(
         Object.entries(child).map(([name, dependency]) => [
           name,
@@ -153,11 +141,11 @@ function rewriteSchemaNode(value: JsonValue, path: string): JsonValue {
             : rewriteSchemaNode(dependency, `${keywordPath}.${name}`),
         ]),
       ) as JsonValue;
-    } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(child)) {
+    } else if (ARRAY_KEYWORDS.has(keyword) && Array.isArray(child)) {
       result[keyword] = child.map((schema, index) =>
         rewriteSchemaNode(schema, `${keywordPath}[${index}]`),
       ) as JsonValue;
-    } else if (SCHEMA_KEYWORDS.has(keyword)) {
+    } else if (SINGLE_KEYWORDS.has(keyword)) {
       if (keyword === "items" && Array.isArray(child)) {
         result[keyword] = child.map((schema, index) =>
           rewriteSchemaNode(schema, `${keywordPath}[${index}]`),

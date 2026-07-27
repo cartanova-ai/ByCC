@@ -8,6 +8,13 @@
  *  - recursive 처리 (nested objects, arrays, allOf/anyOf/oneOf)
  */
 
+import {
+  SCHEMA_ARRAY_KEYWORDS,
+  SCHEMA_MAP_KEYWORDS,
+  SCHEMA_SINGLE_KEYWORDS,
+  UNSUPPORTED_REFERENCE_KEYWORDS,
+} from "./json-schema-keywords";
+
 export type JsonSchema = Record<string, unknown>;
 
 export interface StrictifierOptions {
@@ -35,31 +42,38 @@ export function strictify(schema: JsonSchema, options: StrictifierOptions = {}):
   return result;
 }
 
-const SCHEMA_SCAN_MAP_KEYWORDS = [
-  ["$defs", true],
-  ["definitions", true],
-  ["properties", true],
-  ["dependentSchemas", false],
-  ["patternProperties", false],
-] as const;
-const SCHEMA_SCAN_ARRAY_KEYWORDS = [
-  ["allOf", true],
-  ["anyOf", true],
-  ["oneOf", true],
-  ["prefixItems", true],
-] as const;
-const SCHEMA_SCAN_SINGLE_KEYWORDS = [
-  ["additionalProperties", false],
-  ["contains", false],
-  ["contentSchema", false],
-  ["else", false],
-  ["if", false],
-  ["not", false],
-  ["propertyNames", false],
-  ["then", false],
-  ["unevaluatedItems", false],
-  ["unevaluatedProperties", false],
-] as const;
+/**
+ * 위치 목록은 json-schema-keywords 가 소유하고, 여기서는 각 위치의 `normalizable` 여부만 얹는다.
+ * normalizable=true 는 strictifyNode 가 그 위치를 실제로 재작성한다는 뜻이다. `not`/`if` 처럼
+ * 재작성하면 caller 의미가 바뀌는 위치는 false 이고, 그 아래 tuple/`$ref` 는 정규화 대신 거부된다.
+ *
+ * `items`/`additionalItems` 는 tuple 판정과 함께 다뤄야 해서 아래 순회에서 개별 처리한다.
+ */
+const NON_NORMALIZABLE_POSITIONS = new Set<string>([
+  "dependentSchemas",
+  "patternProperties",
+  "additionalProperties",
+  "contains",
+  "contentSchema",
+  "else",
+  "if",
+  "not",
+  "propertyNames",
+  "then",
+  "unevaluatedItems",
+  "unevaluatedProperties",
+]);
+
+function positionEntries(keywords: readonly string[]): ReadonlyArray<readonly [string, boolean]> {
+  return keywords.map((keyword) => [keyword, !NON_NORMALIZABLE_POSITIONS.has(keyword)] as const);
+}
+
+const SCHEMA_SCAN_MAP_KEYWORDS = positionEntries(SCHEMA_MAP_KEYWORDS);
+const SCHEMA_SCAN_ARRAY_KEYWORDS = positionEntries(SCHEMA_ARRAY_KEYWORDS);
+// items/additionalItems 는 tuple 분기에서 직접 다루므로 단일 위치 스캔에서 제외한다.
+const SCHEMA_SCAN_SINGLE_KEYWORDS = positionEntries(
+  SCHEMA_SINGLE_KEYWORDS.filter((keyword) => keyword !== "items" && keyword !== "additionalItems"),
+);
 
 /**
  * Inspect every JSON Schema-bearing position without rewriting it.
@@ -190,16 +204,6 @@ function assertNormalizationCompatibility(
 
   assertReferenceTargets(schema, references);
 }
-
-const UNSUPPORTED_REFERENCE_KEYWORDS = [
-  "$id",
-  "id",
-  "$anchor",
-  "$dynamicAnchor",
-  "$recursiveAnchor",
-  "$dynamicRef",
-  "$recursiveRef",
-] as const;
 
 function assertUnsupportedReferenceKeywords(schema: JsonSchema, path: string): void {
   for (const keyword of UNSUPPORTED_REFERENCE_KEYWORDS) {
@@ -340,12 +344,14 @@ function strictifyNode(node: JsonSchema, path: string, provider?: string): JsonS
   return strictifySchemaArrays(result, path, provider);
 }
 
-const SCHEMA_MAP_KEYWORDS = ["$defs", "definitions"] as const;
+// 재작성 패스는 정의 맵만 재귀한다. properties 는 strictifyObject 가 별도로 처리하므로
+// 공유 위치 목록(SCHEMA_MAP_KEYWORDS)과 의도적으로 범위가 다르다.
+const DEFINITION_MAP_KEYWORDS = ["$defs", "definitions"] as const;
 
 function strictifySchemaMaps(node: JsonSchema, path: string, provider?: string): JsonSchema {
   const result = { ...node };
 
-  for (const keyword of SCHEMA_MAP_KEYWORDS) {
+  for (const keyword of DEFINITION_MAP_KEYWORDS) {
     const schemas = ownValue(node, keyword);
     if (!isSchemaObject(schemas)) continue;
 
@@ -362,12 +368,13 @@ function strictifySchemaMaps(node: JsonSchema, path: string, provider?: string):
   return result;
 }
 
-const SCHEMA_ARRAY_KEYWORDS = ["anyOf", "oneOf", "allOf"] as const;
+// prefixItems 는 strictifyArray 의 tuple 경로가 다루므로 여기서는 조합 keyword 만 재귀한다.
+const COMBINATOR_KEYWORDS = ["anyOf", "oneOf", "allOf"] as const;
 
 function strictifySchemaArrays(node: JsonSchema, path: string, provider?: string): JsonSchema {
   const result = { ...node };
 
-  for (const keyword of SCHEMA_ARRAY_KEYWORDS) {
+  for (const keyword of COMBINATOR_KEYWORDS) {
     const schemas = ownValue(node, keyword);
     if (!schemas) continue;
     result[keyword] = (schemas as JsonSchema[]).map((schema, index) =>
