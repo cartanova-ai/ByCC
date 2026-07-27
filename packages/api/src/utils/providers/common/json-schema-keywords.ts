@@ -7,7 +7,11 @@
  *
  * 세 소비자가 각자 테이블을 들고 있으면 새 keyword 를 한쪽에만 추가하는 순간 조용히 어긋난다.
  * 재작성 패스가 훑지 않는 위치의 `$ref` 는 rebase 되지 않은 채 남고, 검사 패스가 놓친 위치의
- * tuple 은 정규화 없이 provider 로 샌다. 위치 목록은 여기서만 관리한다.
+ * tuple 은 정규화 없이 provider 로 샌다. 실제로 통합 전 `additionalItems` 가 그 상태였다.
+ * 위치 목록은 여기서만 관리한다.
+ *
+ * 왜 이런 순회가 필요한지는 스킬 문서 참고:
+ *   packages/cli/skills/qgrid/references/tool-calling-and-multiturn.md
  *
  * 소비자별로 다른 것은 위치 목록이 아니라 **각 위치를 어떻게 다루는가** 이므로(strictifier 의
  * `normalizable` 플래그 등) 그 판단은 각 소비자가 이 목록 위에 얹는다.

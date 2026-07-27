@@ -1,6 +1,8 @@
 {
   "canonicalSkill": "packages/cli/skills/qgrid",
-  "skillMirrors": [".agents/skills/qgrid"],
+  "skillMirrors": [
+    ".agents/skills/qgrid"
+  ],
   "notionHub": {
     "title": "Qgrid",
     "url": "https://app.notion.com/p/3a5f753e4fb98164a737d42d9e7c605b"
@@ -23,8 +25,13 @@
     },
     {
       "id": "ai-sdk",
-      "code": ["packages/ai-sdk/src/index.ts", "packages/ai-sdk/src/index.types.ts"],
-      "skill": ["packages/cli/skills/qgrid/references/ai-sdk-provider-contract.md"],
+      "code": [
+        "packages/ai-sdk/src/index.ts",
+        "packages/ai-sdk/src/index.types.ts"
+      ],
+      "skill": [
+        "packages/cli/skills/qgrid/references/ai-sdk-provider-contract.md"
+      ],
       "notion": {
         "title": "AI SDK 연동 및 사용법",
         "url": "https://app.notion.com/p/3a5f753e4fb981ca8d90cf6b70b59cdf"
@@ -51,7 +58,9 @@
         "packages/api/src/application/token/token.entity.json",
         "packages/api/src/utils/providers/common/smooth-weighted-round-robin.ts"
       ],
-      "skill": ["packages/cli/skills/qgrid/references/token-auth-quota-lifecycle.md"],
+      "skill": [
+        "packages/cli/skills/qgrid/references/token-auth-quota-lifecycle.md"
+      ],
       "notion": {
         "title": "토큰 풀과 요청 라우팅",
         "url": "https://app.notion.com/p/3a5f753e4fb981b9b86afa2239355ade"
@@ -61,9 +70,14 @@
       "id": "tools-and-structured-output",
       "code": [
         "packages/api/src/application/qgrid/tool-emulation.ts",
-        "packages/ai-sdk/src/index.ts"
+        "packages/ai-sdk/src/index.ts",
+        "packages/api/src/application/qgrid/tool-emulation-schema.ts",
+        "packages/api/src/utils/providers/common/json-schema-keywords.ts",
+        "packages/api/src/utils/providers/common/strictifier.ts"
       ],
-      "skill": ["packages/cli/skills/qgrid/references/tool-calling-and-multiturn.md"],
+      "skill": [
+        "packages/cli/skills/qgrid/references/tool-calling-and-multiturn.md"
+      ],
       "notion": {
         "title": "Tool Calling과 Structured Output",
         "url": "https://app.notion.com/p/3a5f753e4fb981128ceadf8d0cf38ec7"
@@ -75,7 +89,9 @@
         "packages/api/src/application/qgrid/conv-routing.ts",
         "packages/api/src/utils/providers/openai/openai-dispatcher.ts"
       ],
-      "skill": ["packages/cli/skills/qgrid/references/prompt-cache-and-usage.md"],
+      "skill": [
+        "packages/cli/skills/qgrid/references/prompt-cache-and-usage.md"
+      ],
       "notion": {
         "title": "세션 관리와 Prompt Cache",
         "url": "https://app.notion.com/p/3a5f753e4fb981cc9e7ff7ad91f09916"
@@ -132,7 +148,9 @@
         "packages/api/src/application/qgrid/qgrid.frame.ts",
         "packages/api/src/application/request-log/request-log.model.ts"
       ],
-      "skill": ["packages/cli/skills/qgrid/references/decision-rationale.md"],
+      "skill": [
+        "packages/cli/skills/qgrid/references/decision-rationale.md"
+      ],
       "notion": {
         "title": "설계 결정 기록",
         "url": "https://app.notion.com/p/3a5f753e4fb981828ccdde9cc97f47d2"
@@ -145,7 +163,9 @@
         "packages/api/src/server-bootstrap.ts",
         "packages/api/src/startup-migrations.ts"
       ],
-      "skill": ["packages/cli/skills/qgrid/references/cli-env-and-server-boot.md"],
+      "skill": [
+        "packages/cli/skills/qgrid/references/cli-env-and-server-boot.md"
+      ],
       "notion": {
         "title": "배포 및 운영",
         "url": "https://app.notion.com/p/3a5f753e4fb98160a19ed135719644db"
@@ -153,7 +173,10 @@
     },
     {
       "id": "development",
-      "code": ["package.json", "packages/cli/postinstall.mjs"],
+      "code": [
+        "package.json",
+        "packages/cli/postinstall.mjs"
+      ],
       "skill": [
         "packages/cli/skills/qgrid/references/docs-workflow.md",
         "packages/cli/skills/qgrid/references/verification-and-debugging.md"

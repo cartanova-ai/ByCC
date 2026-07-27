@@ -91,13 +91,125 @@ The schema explicitly tells the model:
 
 `qgrid.dispatcher.ts` strictifies this schema through `buildStrictOutputSchema` before it reaches provider dispatchers.
 
-When tools and a user `jsonSchema` are both present, the dispatcher builds the
-same outer envelope on every turn, but replaces `answer: string | null` with
-`answer: <user schema> | null`. The user schema is namespaced under
-`$defs.__qgrid_user_output`, including rebased local JSON pointers, before the
-whole envelope is strictified. This prevents tool availability from disabling
-the final structured-output constraint, including when the model answers without
-calling a tool.
+## Composing Tools With A User Output Schema
+
+This section explains why `tool-emulation-schema.ts` exists at all. Read it
+before changing schema composition; the mechanics look arbitrary without the
+failure it was built to prevent.
+
+### The problem
+
+AI SDK hands the provider `tools` and `responseFormat` independently on every
+step, and gives no "this is the final turn" flag. Before 2.5.4, qgrid saw tools
+and dropped the user schema, so `answer` stayed a free-form string:
+
+```json
+{ "action": "answer", "answer": "string | null", "toolCalls": "…" }
+```
+
+`strict: true` was in force, but only over that outer envelope. A model could
+therefore return valid JSON with trailing garbage and still satisfy the schema:
+
+```jsonc
+// Envelope-valid. answer is a string, so the trailing marker is legal.
+{ "action": "answer", "answer": "{\"title\":\"...\"}<|proto_end|>", "toolCalls": null }
+```
+
+Measured on the Medpath `translateBatch()` path: 5 of 10 raw Terra responses
+were corrupted this way, while the same workload with a schema and no tools
+failed 0 of 385 times. The model was fine; nothing constrained the final answer.
+
+### The fix, and why it needs rebasing
+
+Embed the user schema in the `answer` branch so the provider's
+constrained-output machinery enforces it — the same machinery that scored
+385/385. The model still chooses `tool_call` to continue the loop or `answer` to
+finish, and qgrid never adds an extra turn to "finalize".
+
+Embedding cannot be a verbatim nest, because `$ref` is document-absolute. `#`
+means the root of the *final* document, not the root of the fragment it was
+written in. Nest a caller schema unchanged and its pointers silently retarget
+the envelope:
+
+```jsonc
+// Caller sends this. "#/$defs/Person" resolves inside their own document.
+{
+  "type": "object",
+  "properties": { "author": { "$ref": "#/$defs/Person" } },
+  "$defs": { "Person": { "type": "object", "properties": { "name": { "type": "string" } } } }
+}
+```
+
+Nested verbatim, `#/$defs/Person` now points at the envelope root, where no
+`Person` exists — a broken reference, or worse, a coincidental match against an
+unrelated definition. Validation would then check the wrong shape and say
+nothing.
+
+So composition does two things: park the caller schema under a reserved name,
+and rewrite every local pointer to the new base.
+
+```jsonc
+{
+  "type": "object",
+  "properties": {
+    "action": { "enum": ["answer", "tool_call"] },
+    // string branch becomes a reference to the caller's schema
+    "answer": { "anyOf": [{ "$ref": "#/$defs/__qgrid_user_output" }, { "type": "null" }] },
+    "toolCalls": { "…": "unchanged" }
+  },
+  "$defs": {
+    "__qgrid_user_output": {
+      "type": "object",
+      "properties": { "author": { "$ref": "#/$defs/__qgrid_user_output/$defs/Person" } },
+      "$defs": { "Person": { "type": "object", "properties": { "name": { "type": "string" } } } }
+    }
+  }
+}
+```
+
+Pointer rewriting is mechanical — `#` gains the namespace prefix:
+
+| Caller writes | Becomes |
+| --- | --- |
+| `#` | `#/$defs/__qgrid_user_output` |
+| `#/$defs/Person` | `#/$defs/__qgrid_user_output/$defs/Person` |
+
+### Why the traversal is exhaustive
+
+A missed position means an un-rebased `$ref` shipping to the provider, so the
+rewriter must visit every place a subschema can hide. JSON Schema puts them in
+three shapes — name→schema maps (`properties`, `$defs`), schema arrays
+(`anyOf`, `prefixItems`), and single slots (`items`, `not`, `if`) — plus Draft-7
+`dependencies`, whose value is either a schema or a list of property names.
+
+That position list is shared: `utils/providers/common/json-schema-keywords.ts`
+owns it, and the rebaser, the normalization scan, and the strict rewrite all
+read from it. They previously kept private copies and had already drifted
+(`additionalItems` was rebased but not scanned). Add a new keyword there, not in
+a consumer.
+
+Consumers still differ in what they *do* per position, and that stays local: the
+strictifier marks positions like `not` and `if` non-normalizable because
+tightening them would change caller semantics.
+
+### What is rejected, and why silence is not an option
+
+Composition fails loudly on `$id`, `id`, `$anchor`, `$dynamicAnchor`,
+`$recursiveAnchor`, `$dynamicRef`, and `$recursiveRef`. Each one breaks the
+premise that a pointer's meaning survives relocation: `$id` declares a new base
+URI so descendant refs stop resolving against the document root, and dynamic
+refs pick their target from runtime scope. There is no correct rewrite, and a
+wrong one would validate the wrong shape without complaint — so callers get an
+HTTP 400 naming the offending path instead.
+
+Non-object top-level schemas are also rejected. Only `type: "object"` roots can
+occupy the `answer` branch.
+
+### Compatibility
+
+`answer` falls back to `{ "type": "string" }` whenever no user schema is present.
+That single branch is why tools-only calls and older SDKs keep working against a
+2.5.4 server unchanged.
 
 ## Provider-Specific Path
 
