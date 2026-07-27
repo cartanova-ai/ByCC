@@ -21,6 +21,10 @@ import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import {
+  ARGV_SAFE_MAX_UTF8_BYTES,
+  assertAnthropicSchemaArgvSize,
+} from "../common/schema-validation";
 import { createTtftTracker } from "../common/ttft";
 import {
   ANTHROPIC_CLAUDE_CWD,
@@ -191,7 +195,7 @@ export function shouldPinStructuredRetries(opts: {
 // 시스템 프롬프트가 이를 넘으면 execve 가 E2BIG 로 거부된다. deti 등 대형 프롬프트는 실측
 // 평균 343KB·최대 485KB(opus-4-8)라 일상적으로 초과한다. 한계의 절반(64KB)을 임계값으로 잡아
 // UTF-8 멀티바이트·예측 못 한 여유분까지 안전 마진을 둔다.
-export const SYSTEM_PROMPT_ARGV_MAX_BYTES = 64 * 1024;
+export const SYSTEM_PROMPT_ARGV_MAX_BYTES = ARGV_SAFE_MAX_UTF8_BYTES;
 
 export function buildClaudeArgs(opts: {
   model: string;
@@ -209,6 +213,7 @@ export function buildClaudeArgs(opts: {
   includePartialMessages?: boolean;
 }): Array<string> {
   const useStructured = Boolean(opts.jsonSchema && opts.jsonSchema.length > 0);
+  if (useStructured) assertAnthropicSchemaArgvSize(opts.jsonSchema!);
   // --tools "" 로 전체 차단, structured(jsonSchema 있음) 면 StructuredOutput 만 허용.
   const toolArgs = useStructured
     ? ["--tools", "", "--allowed-tools", "StructuredOutput"]

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
+import { ToolCallEmulationError } from "../../../application/qgrid/tool-emulation";
 import { type AnthropicCredentials } from "../../../application/token/token.types";
 import { type GenerateRequest } from "../common/provider-dispatcher";
 import { ANTHROPIC_DEFAULT_MODEL } from "./anthropic-constants";
@@ -173,6 +174,23 @@ describe("AnthropicDispatcher", () => {
 
     const call = firstRunRequest();
     expect(call.jsonSchema).toBe(JSON.stringify({ type: "object", properties: {} }));
+  });
+
+  it("argv 안전 한도를 넘는 structured schema를 session 실행 전에 거부한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+
+    await expect(
+      d.generate(
+        baseReq({
+          outputSchema: {
+            type: "object",
+            description: "x".repeat(64 * 1024),
+          },
+        }),
+      ),
+    ).rejects.toThrow("Anthropic dispatch schema exceeds argv UTF-8 byte limit");
+    expect(runClaudeSessionMock).not.toHaveBeenCalled();
   });
 
   it("요청 timeoutMs를 Claude session에 전달하고 미지정 시 240초 기본값을 쓴다", async () => {
@@ -467,6 +485,32 @@ describe("AnthropicDispatcher", () => {
 
     expect(deltas).toEqual(["부분"]);
     expect(completed).not.toBeNull();
+    expect(firstRunRequest().includePartialMessages).toBe(true);
+  });
+
+  it("generateStream: completion callback throw를 onError로 전달하고 정상 종료한다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+    runClaudeSessionMock.mockResolvedValueOnce(sessionResult({ text: "malformed envelope" }));
+    const completionError = new ToolCallEmulationError(
+      "response envelope is missing required keys: toolCalls",
+    );
+    const onComplete = vi.fn(() => {
+      throw completionError;
+    });
+    const onError = vi.fn();
+
+    await expect(
+      d.generateStream(baseReq(), {
+        onDelta: vi.fn(),
+        onComplete,
+        onError,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(completionError);
     expect(firstRunRequest().includePartialMessages).toBe(true);
   });
 

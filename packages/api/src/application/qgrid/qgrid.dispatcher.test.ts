@@ -25,7 +25,32 @@ function providerResult(overrides: Partial<GenerateResult> = {}): GenerateResult
   };
 }
 
+function deeplyNestedOutputSchema(depth: number): string {
+  const nestedArray = `${'{"type":"array","items":'.repeat(depth)}{"type":"string"}${"}".repeat(depth)}`;
+  return `{"type":"object","properties":{"value":${nestedArray}}}`;
+}
+
 describe("QgridDispatcherClass", () => {
+  const toolsAndSchema = {
+    tools: [
+      {
+        name: "lookup",
+        description: "Look up a value",
+        inputSchema: {
+          type: "object",
+          properties: { key: { type: "string" } },
+          required: ["key"],
+        },
+      },
+    ],
+    jsonSchema: JSON.stringify({
+      type: "object",
+      properties: {
+        result: { type: "string" },
+      },
+    }),
+  };
+
   it("AnthropicDispatcher 미초기화 시 query 는 폴백 없이 실패한다", async () => {
     const dispatcher = new QgridDispatcherClass();
 
@@ -282,6 +307,68 @@ describe("QgridDispatcherClass", () => {
     expect(contentsArray?.items?.additionalProperties).toBe(false);
   });
 
+  it("tools + schema composition preserves prototype-sensitive keys through serialization", () => {
+    const propertyNames = ["__proto__", "constructor", "prototype"];
+    const properties = JSON.parse(
+      '{"__proto__":{"type":"string"},"constructor":{"type":"integer"},"prototype":{"type":"boolean"}}',
+    ) as Record<string, unknown>;
+    const schema = buildStrictOutputSchema({
+      tools: toolsAndSchema.tools,
+      jsonSchema: JSON.stringify({
+        type: "object",
+        properties,
+        required: propertyNames,
+      }),
+    }) as {
+      $defs?: {
+        __qgrid_user_output?: {
+          properties?: Record<string, unknown>;
+          required?: string[];
+        };
+      };
+    };
+    const strictUserSchema = schema.$defs?.__qgrid_user_output;
+    const strictProperties = strictUserSchema?.properties;
+
+    expect(strictUserSchema?.required).toEqual(propertyNames);
+    for (const propertyName of propertyNames) {
+      expect(Object.prototype.hasOwnProperty.call(strictProperties, propertyName)).toBe(true);
+    }
+
+    const serialized = JSON.stringify(schema);
+    expect(serialized).toContain('"__proto__":{"type":"string"}');
+    expect(serialized).toContain('"constructor":{"type":"integer"}');
+    expect(serialized).toContain('"prototype":{"type":"boolean"}');
+  });
+
+  it.each([
+    ["schema-only", undefined, deeplyNestedOutputSchema(5_000), "jsonSchema"],
+    ["tools + schema", toolsAndSchema.tools, deeplyNestedOutputSchema(5_000), "jsonSchema"],
+    [
+      "tools-only",
+      [
+        {
+          name: "deepTool",
+          inputSchema: JSON.parse(deeplyNestedOutputSchema(5_000)) as unknown,
+        },
+      ],
+      undefined,
+      "tools[0].inputSchema",
+    ],
+  ])(
+    "%s 경로에서 재귀 변환 전에 과도하게 깊은 caller schema를 거부한다",
+    (_label, tools, jsonSchema, errorPath) => {
+      expect(() => buildStrictOutputSchema({ jsonSchema, tools })).toThrow(
+        `qgrid: ${errorPath} exceeds depth limit`,
+      );
+      try {
+        buildStrictOutputSchema({ jsonSchema, tools });
+      } catch (error) {
+        expect(error).not.toBeInstanceOf(RangeError);
+      }
+    },
+  );
+
   // SON-495: anthropic route 도 strict(required 유지)를 쓴다 — required 를 살려야 모델이 필드를
   // 빠짐없이 채운다(실측 확정). optionalize 는 제거됨.
   it("Anthropic route 에 strict(required 유지) outputSchema 를 전달한다", async () => {
@@ -360,6 +447,256 @@ describe("QgridDispatcherClass", () => {
     expect(outputSchema.required).toEqual(["contents"]);
     expect(outputSchema.additionalProperties).toBe(false);
   });
+
+  it("tools + jsonSchema 를 합성하고 user $defs까지 strictify 한다", () => {
+    const schema = buildStrictOutputSchema({
+      tools: toolsAndSchema.tools,
+      jsonSchema: JSON.stringify({
+        type: "object",
+        properties: { item: { $ref: "#/$defs/Item" } },
+        $defs: {
+          Item: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+              optionalNote: { type: "string" },
+            },
+            required: ["value"],
+          },
+        },
+      }),
+    }) as {
+      properties?: { answer?: { anyOf?: Array<{ $ref?: string }> } };
+      $defs?: {
+        __qgrid_user_output?: {
+          required?: string[];
+          additionalProperties?: boolean;
+          properties?: { item?: { anyOf?: Array<{ $ref?: string }> } };
+          $defs?: {
+            Item?: {
+              required?: string[];
+              additionalProperties?: boolean;
+              properties?: { optionalNote?: { anyOf?: unknown[] } };
+            };
+          };
+        };
+      };
+    };
+    const userSchema = schema.$defs?.__qgrid_user_output;
+
+    expect(schema.properties?.answer?.anyOf?.[0]?.$ref).toBe(
+      "#/$defs/__qgrid_user_output",
+    );
+    expect(userSchema).toMatchObject({
+      required: ["item"],
+      additionalProperties: false,
+      properties: {
+        item: {
+          anyOf: [
+            { $ref: "#/$defs/__qgrid_user_output/$defs/Item" },
+            { type: "null" },
+          ],
+        },
+      },
+    });
+    expect(userSchema?.$defs?.Item).toMatchObject({
+      required: ["value", "optionalNote"],
+      additionalProperties: false,
+    });
+    expect(userSchema?.$defs?.Item?.properties?.optionalNote?.anyOf).toEqual([
+      { type: "string" },
+      { type: "null" },
+    ]);
+  });
+
+  it("tools + jsonSchema 합성 경로에서 prefixItems tuple 구성원도 strictify 한다", () => {
+    const schema = buildStrictOutputSchema({
+      tools: toolsAndSchema.tools,
+      jsonSchema: JSON.stringify({
+        type: "object",
+        properties: {
+          tuple: {
+            type: "array",
+            prefixItems: [
+              {
+                type: "object",
+                properties: { label: { type: "string" } },
+                required: ["label"],
+              },
+              { type: "integer" },
+            ],
+            minItems: 2,
+            maxItems: 2,
+          },
+        },
+        required: ["tuple"],
+      }),
+    }) as {
+      $defs?: {
+        __qgrid_user_output?: {
+          properties?: {
+            tuple?: {
+              prefixItems?: Array<{
+                required?: string[];
+                additionalProperties?: boolean;
+              }>;
+            };
+          };
+        };
+      };
+    };
+
+    expect(
+      schema.$defs?.__qgrid_user_output?.properties?.tuple?.prefixItems?.[0],
+    ).toMatchObject({
+      required: ["label"],
+      additionalProperties: false,
+    });
+  });
+
+  it("OpenAI tools + draft-07 tuple schema를 위치 제약을 보존해 정규화한다", () => {
+    const schema = buildStrictOutputSchema(
+      {
+        tools: toolsAndSchema.tools,
+        jsonSchema: JSON.stringify({
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          properties: {
+            tuple: {
+              type: "array",
+              items: [
+                {
+                  type: "object",
+                  properties: { label: { type: "string" } },
+                },
+                { type: "integer" },
+              ],
+            },
+          },
+          required: ["tuple"],
+        }),
+      },
+      "openai",
+    ) as {
+      $defs?: {
+        __qgrid_user_output?: {
+          properties?: {
+            tuple?: {
+              items?: unknown;
+              prefixItems?: unknown[];
+              minItems?: number;
+              maxItems?: number;
+            };
+          };
+        };
+      };
+    };
+    const tuple = schema.$defs?.__qgrid_user_output?.properties?.tuple;
+
+    expect(tuple).toMatchObject({
+      minItems: 2,
+      maxItems: 2,
+    });
+    expect(Array.isArray(tuple?.items)).toBe(false);
+    expect(tuple?.prefixItems).toHaveLength(2);
+  });
+
+  it("Anthropic tools + positional tuple schema는 의미를 약화하지 않고 거부한다", () => {
+    expect(() =>
+      buildStrictOutputSchema(
+        {
+          tools: toolsAndSchema.tools,
+          jsonSchema: JSON.stringify({
+            type: "object",
+            properties: {
+              tuple: {
+                type: "array",
+                items: [{ type: "string" }, { type: "integer" }],
+              },
+            },
+            required: ["tuple"],
+          }),
+        },
+        "anthropic",
+      ),
+    ).toThrow(/positional tuple schemas are not supported on Anthropic/);
+  });
+
+  it.each([
+    ["openai", "query"],
+    ["openai", "queryStream"],
+    ["anthropic", "query"],
+    ["anthropic", "queryStream"],
+  ] as const)(
+    "%s %s 모두 tools + jsonSchema composed outputSchema를 provider에 전달한다",
+    async (provider, method) => {
+      const dispatcher = new QgridDispatcherClass();
+      const model =
+        provider === "openai" ? "openai/gpt-5.5" : "anthropic/claude-sonnet-4-6";
+      let request: GenerateRequest | undefined;
+      let mappedText: string | undefined;
+
+      if (method === "query") {
+        const generate = vi.fn(async (req: GenerateRequest) => {
+          request = req;
+          return providerResult({
+            text: '{"action":"answer","answer":{"result":"ok"},"toolCalls":null}',
+          });
+        });
+        if (provider === "openai") dispatcher.openaiDispatcher = { generate } as never;
+        else dispatcher.anthropicDispatcher = { generate } as never;
+
+        const output = await dispatcher.query({ prompt: "hi", model, ...toolsAndSchema });
+        mappedText = output.text;
+      } else {
+        const generateStream = vi.fn(
+          async (req: GenerateRequest, cb: GenerateStreamCallbacks) => {
+            request = req;
+            cb.onComplete(
+              providerResult({
+                text: '{"action":"answer","answer":{"result":"ok"},"toolCalls":null}',
+              }),
+            );
+          },
+        );
+        if (provider === "openai") {
+          dispatcher.openaiDispatcher = { generateStream } as never;
+        } else {
+          dispatcher.anthropicDispatcher = { generateStream } as never;
+        }
+
+        await dispatcher.queryStream(
+          { prompt: "hi", model, ...toolsAndSchema },
+          {
+            onDelta: vi.fn(),
+            onComplete: (output) => {
+              mappedText = output.text;
+            },
+            onError: vi.fn(),
+          },
+        );
+      }
+
+      expect(request?.outputSchema).toMatchObject({
+        properties: {
+          answer: {
+            anyOf: [
+              { $ref: "#/$defs/__qgrid_user_output" },
+              { type: "null" },
+            ],
+          },
+        },
+        $defs: {
+          __qgrid_user_output: {
+            type: "object",
+            required: ["result"],
+            additionalProperties: false,
+          },
+        },
+      });
+      expect(mappedText).toBe('{"result":"ok"}');
+    },
+  );
 
   it("provider 가 산출한 costUsd 를 가격표 fallback 보다 우선한다", async () => {
     const dispatcher = new QgridDispatcherClass();

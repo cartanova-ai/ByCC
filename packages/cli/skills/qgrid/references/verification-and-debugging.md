@@ -30,6 +30,7 @@ AI SDK package `@cartanova/qgrid-ai-sdk`:
 - `pnpm --filter @cartanova/qgrid-ai-sdk test`.
 - `pnpm --filter @cartanova/qgrid-ai-sdk build`.
 - `pnpm --filter @cartanova/qgrid-ai-sdk e2e`.
+- `pnpm --filter @cartanova/qgrid-ai-sdk e2e:tools-output`.
 - `pnpm --filter @cartanova/qgrid-ai-sdk e2e:logger`.
 
 CLI package `@cartanova/qgrid-cli`:
@@ -54,7 +55,7 @@ Choose by affected area:
 | AI SDK logger integration | `packages/ai-sdk/src/logger.test.ts` |
 | qgrid provider routing and strict schema | `packages/api/src/application/qgrid/qgrid.dispatcher.test.ts` |
 | conversation/thread reuse routing | `packages/api/src/application/qgrid/conv-routing.test.ts` |
-| tool-call emulation | `packages/api/src/application/qgrid/tool-emulation.test.ts` |
+| tool-call emulation | `packages/api/src/application/qgrid/tool-emulation.test.ts`, `tool-emulation-schema.test.ts` |
 | request-log run lifecycle | `packages/api/src/application/qgrid/qgrid-run-lifecycle.test.ts` |
 | qgrid frame API behavior | `packages/api/src/application/qgrid/qgrid.frame.test.ts` |
 | token subscriber and LISTEN/NOTIFY handling | `packages/api/src/application/qgrid/token-subscriber.test.ts` |
@@ -100,6 +101,20 @@ AI SDK structured output:
 - Uses local `packages/ai-sdk/src/index`.
 - Env: `QGRID_URL`, `SMOKE_MODEL`, `SMOKE_CASES`, `SMOKE_REPEAT`.
 - Uses AI SDK 6 `streamText` with `Output.object`; useful for structured-output regressions.
+
+AI SDK tools plus structured output:
+
+- `packages/ai-sdk/e2e/tools-structured-output.ts`
+- This is the public-path release acceptance matrix: `qgrid()` HTTP/SSE,
+  `generateText`/`streamText`, OpenAI/Anthropic, direct final answers, and one
+  client-tool result followed by `Output.object`.
+- It consumes real provider quota and requires the explicit
+  `QGRID_REAL_PROVIDER_ACCEPTANCE=1` opt-in.
+- Uses `QGRID_URL`, `QGRID_ACCEPTANCE_OPENAI_MODEL`, and
+  `QGRID_ACCEPTANCE_ANTHROPIC_MODEL`. OpenAI direct-final coverage defaults to
+  10 generate plus 10 stream attempts and can be changed with
+  `QGRID_ACCEPTANCE_OPENAI_DIRECT_REPEATS_PER_MODE`. Request logs use the stable
+  project name `qgrid-ai-sdk-tools-output-acceptance`.
 
 Image generation:
 

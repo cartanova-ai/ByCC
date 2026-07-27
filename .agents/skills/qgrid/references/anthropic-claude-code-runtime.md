@@ -85,6 +85,9 @@ Important details:
 - `--setting-sources project` plus seeded settings isolates user configuration.
 - `--system-prompt` or `--system-prompt-file` is always supplied. Omitting it would allow Claude Code default system prompt injection.
 - Large system prompts over 64 KiB are written to a temporary file to avoid argv `E2BIG`.
+- Final structured-output schemas are limited to 64 KiB UTF-8 because Claude Code receives each
+  schema as one `--json-schema` argv value. qgrid applies this check before request-log or stream
+  allocation and repeats it at dispatcher/session boundaries.
 - `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 requires always-on adaptive thinking. Opus 5 defaults to adaptive thinking and rejects disabled thinking at `xhigh`/`max` effort. qgrid omits all three suppressors for both models and uses `effort` to control depth.
 
 ## Spawn env

@@ -23,6 +23,7 @@ import {
   type GenerateStreamCallbacks,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
+import { serializeAndValidateDispatchSchema } from "../common/schema-validation";
 import { SmoothWeightedRoundRobin } from "../common/smooth-weighted-round-robin";
 import { assertSupportedOneMillionSuffix, canonicalAnthropicModel } from "./anthropic-constants";
 import { readAnthropicQuotaUsage, type AnthropicQuotaUsageResult } from "./anthropic-quota";
@@ -287,8 +288,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     // 의 "sonnet" 별칭 우회 차단. 정규화 규칙은 fallback 경로와 공유(canonicalAnthropicModel).
     assertSupportedOneMillionSuffix(req.model);
     const model = canonicalAnthropicModel(req.model);
-    const jsonSchema =
-      req.outputSchema !== undefined ? JSON.stringify(req.outputSchema) : undefined;
+    const jsonSchema = serializeAndValidateDispatchSchema(req.outputSchema, "anthropic");
 
     const token = await this.selectToken();
     if (!token) throw new Error("No anthropic tokens available");

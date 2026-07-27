@@ -233,6 +233,109 @@ describe("qgrid run lifecycle TTFT", () => {
     );
   });
 
+  it("persists an immediate structured final answer as JSON text", async () => {
+    await afterQuery(
+      10,
+      0,
+      {
+        prompt: "answer",
+        tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+        jsonSchema: JSON.stringify({
+          type: "object",
+          properties: { result: { type: "string" } },
+        }),
+      },
+      queryOutput({
+        text: '{"result":"ok"}',
+        content: [{ type: "text", text: '{"result":"ok"}' }],
+      }),
+    );
+
+    expect(appendStepMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        step_index: 0,
+        type: "generate",
+        finish_reason: "stop",
+      }),
+    );
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        status: "succeeded",
+        response: '{"result":"ok"}',
+      }),
+    );
+  });
+
+  it("persists a tool turn and a structured final answer on the continued run", async () => {
+    const schema = JSON.stringify({
+      type: "object",
+      properties: { result: { type: "string" } },
+    });
+    const first = await afterQuery(
+      10,
+      0,
+      { prompt: "lookup", tools: [{ name: "lookup", inputSchema: {} }], jsonSchema: schema },
+      queryOutput({
+        text: "",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            input: '{"key":"value"}',
+          },
+        ],
+        finishReason: "tool-calls",
+      }),
+    );
+
+    expect(first).toEqual({ runContext: { requestLogId: 10 } });
+    expect(finishRunMock).not.toHaveBeenCalled();
+    expect(appendStepMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        step_index: 0,
+        type: "tool_call",
+        tool_call_id: "call-1",
+      }),
+    );
+
+    await afterQuery(
+      10,
+      2,
+      {
+        prompt: "continue",
+        tools: [{ name: "lookup", inputSchema: {} }],
+        jsonSchema: schema,
+        runContext: { requestLogId: 10 },
+        toolResults: [{ toolCallId: "call-1", output: '{"value":"found"}' }],
+      },
+      queryOutput({
+        text: '{"result":"found"}',
+        content: [{ type: "text", text: '{"result":"found"}' }],
+        finishReason: "stop",
+      }),
+    );
+
+    expect(appendStepMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        step_index: 2,
+        type: "generate",
+        finish_reason: "stop",
+      }),
+    );
+    expect(finishRunMock).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        status: "succeeded",
+        response: '{"result":"found"}',
+      }),
+    );
+  });
+
   it("finishes runs with image data-url img tags in response", async () => {
     await afterQuery(
       10,

@@ -27,6 +27,13 @@ function tool() {
   };
 }
 
+const structuredOutputSchema = {
+  type: "object",
+  properties: { result: { type: "string" } },
+  required: ["result"],
+  additionalProperties: false,
+};
+
 function toolPrompt(callIds: string[]) {
   return [
     { role: "user", content: [{ type: "text", text: "weather" }] },
@@ -200,6 +207,7 @@ describe("qgrid AI SDK provider", () => {
       },
     });
     expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty("logMode");
+    expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty("jsonSchema");
     expect(result.finishReason).toEqual({ unified: "tool-calls", raw: "tool_call" });
     expect(result.content).toEqual([
       {
@@ -209,6 +217,86 @@ describe("qgrid AI SDK provider", () => {
         input: JSON.stringify({ city: "Seoul" }),
       },
     ]);
+  });
+
+  it("sends tools and structured output together in an exact generate payload", async () => {
+    let queryArgs: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryArgs = JSON.parse(String(init?.body)).args;
+          return new Response(
+            JSON.stringify({
+              text: '{"result":"ok"}',
+              content: [{ type: "text", text: '{"result":"ok"}' }],
+              finishReason: "stop",
+              model: "gpt-5.6-terra",
+              usage,
+              durationMs: 50,
+              costUsd: 0.001,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.6-terra").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
+      tools: [tool()],
+      responseFormat: { type: "json", schema: structuredOutputSchema },
+    } as never);
+
+    expect(queryArgs).toEqual({
+      prompt: "weather",
+      model: "openai/gpt-5.6-terra",
+      effort: "low",
+      tools: [
+        {
+          name: "getWeather",
+          description: "Get weather",
+          inputSchema: tool().inputSchema,
+        },
+      ],
+      jsonSchema: JSON.stringify(structuredOutputSchema),
+    });
+  });
+
+  it("keeps schema-only generate payloads free of tools", async () => {
+    let queryArgs: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/query")) {
+          queryArgs = JSON.parse(String(init?.body)).args;
+          return new Response(
+            JSON.stringify({
+              text: '{"result":"ok"}',
+              model: "gpt-5.6-terra",
+              usage,
+              durationMs: 50,
+              costUsd: 0.001,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await qgrid("openai/gpt-5.6-terra").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "answer" }] }],
+      responseFormat: { type: "json", schema: structuredOutputSchema },
+    } as never);
+
+    expect(queryArgs).toEqual({
+      prompt: "answer",
+      model: "openai/gpt-5.6-terra",
+      effort: "low",
+      jsonSchema: JSON.stringify(structuredOutputSchema),
+    });
   });
 
   it("sends runContext and toolResults on tool-call follow-up", async () => {
@@ -247,8 +335,8 @@ describe("qgrid AI SDK provider", () => {
           // follow-up (stop)
           return new Response(
             JSON.stringify({
-              text: "Seoul is 22°C",
-              content: [{ type: "text", text: "Seoul is 22°C" }],
+              text: '{"result":"Seoul is 22°C"}',
+              content: [{ type: "text", text: '{"result":"Seoul is 22°C"}' }],
               finishReason: "stop",
               model: "gpt-5.5",
               usage,
@@ -268,12 +356,14 @@ describe("qgrid AI SDK provider", () => {
     await model.doGenerate({
       prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
       tools: [tool()],
+      responseFormat: { type: "json", schema: structuredOutputSchema },
     } as never);
 
     // 턴 2: follow-up with tool result
     const result = await model.doGenerate({
       prompt: toolPrompt(["call_1"]),
       tools: [tool()],
+      responseFormat: { type: "json", schema: structuredOutputSchema },
     } as never);
 
     // follow-up 호출에 runContext + toolResults가 포함되어야 함
@@ -283,13 +373,19 @@ describe("qgrid AI SDK provider", () => {
       toolResults: [{ toolCallId: "call_1" }],
     });
     expect(followUpQuery?.body.args).not.toHaveProperty("logMode");
+    const queryArgs = calls
+      .filter((c) => c.url.includes("/query"))
+      .map((c) => c.body.args as Record<string, unknown>);
+    expect(queryArgs).toHaveLength(2);
+    expect(queryArgs[0]?.jsonSchema).toBe(JSON.stringify(structuredOutputSchema));
+    expect(queryArgs[1]?.jsonSchema).toBe(JSON.stringify(structuredOutputSchema));
 
     // SDK는 직접 createRun/appendStep/finishRun 호출 안 함
     expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
     expect(calls.filter((c) => c.url.includes("/appendStep"))).toHaveLength(0);
     expect(calls.filter((c) => c.url.includes("/finishRun"))).toHaveLength(0);
 
-    expect(result.content).toEqual([{ type: "text", text: "Seoul is 22°C" }]);
+    expect(result.content).toEqual([{ type: "text", text: '{"result":"Seoul is 22°C"}' }]);
   });
 
   it("continues logger-disabled image generation through a client tool without runContext", async () => {
@@ -650,6 +746,149 @@ describe("qgrid AI SDK provider", () => {
     expect(calls.filter((c) => c.url.includes("/createRun"))).toHaveLength(0);
     expect(calls.filter((c) => c.url.includes("/finishRun"))).toHaveLength(0);
   });
+
+  it("sends tools and structured output together in an exact stream prepare payload", async () => {
+    let prepareArgs: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/prepareStream")) {
+          prepareArgs = JSON.parse(String(init?.body)).args;
+          return new Response(JSON.stringify({ streamId: "combined-schema" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.includes("/queryStream")) {
+          return new Response(
+            sseDone({
+              text: '{"result":"ok"}',
+              content: [{ type: "text", text: '{"result":"ok"}' }],
+              finishReason: "stop",
+              model: "gpt-5.6-terra",
+              usage,
+              durationMs: 50,
+              costUsd: 0.001,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const result = await qgrid("openai/gpt-5.6-terra").doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
+      tools: [tool()],
+      responseFormat: { type: "json", schema: structuredOutputSchema },
+    } as never);
+    for await (const _part of result.stream) {
+      // drain
+    }
+
+    expect(prepareArgs).toEqual({
+      prompt: "weather",
+      model: "openai/gpt-5.6-terra",
+      effort: "low",
+      tools: [
+        {
+          name: "getWeather",
+          description: "Get weather",
+          inputSchema: tool().inputSchema,
+        },
+      ],
+      jsonSchema: JSON.stringify(structuredOutputSchema),
+    });
+  });
+
+  it.each([
+    ["generate", false, { type: "array", items: { type: "string" } }, "array"],
+    ["generate", true, { type: "array", items: { type: "string" } }, "array"],
+    ["stream", false, { type: "array", items: { type: "string" } }, "array"],
+    ["stream", true, { type: "array", items: { type: "string" } }, "array"],
+    ["generate", false, false, "unknown"],
+    ["generate", true, false, "unknown"],
+    ["stream", false, false, "unknown"],
+    ["stream", true, false, "unknown"],
+    ["generate", false, true, "unknown"],
+    ["generate", true, true, "unknown"],
+    ["stream", false, true, "unknown"],
+    ["stream", true, true, "unknown"],
+  ] as const)(
+    "warns and omits unsupported top-level schemas consistently for %s (tools=%s, schema=%j)",
+    async (mode, withTools, unsupportedSchema, expectedType) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let args: Record<string, unknown> | undefined;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes("/query") && !url.includes("/queryStream")) {
+            args = JSON.parse(String(init?.body)).args;
+            return new Response(
+              JSON.stringify({
+                text: "ok",
+                content: [{ type: "text", text: "ok" }],
+                finishReason: "stop",
+                model: "gpt-5.6-terra",
+                usage,
+                durationMs: 10,
+                costUsd: 0,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+          if (url.includes("/prepareStream")) {
+            args = JSON.parse(String(init?.body)).args;
+            return new Response(JSON.stringify({ streamId: "unsupported-schema" }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (url.includes("/queryStream")) {
+            return new Response(
+              sseDone({
+                text: "ok",
+                content: [{ type: "text", text: "ok" }],
+                finishReason: "stop",
+                model: "gpt-5.6-terra",
+                usage,
+                durationMs: 10,
+                costUsd: 0,
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response("{}", { status: 200 });
+        }),
+      );
+
+      const options = {
+        prompt: [{ role: "user", content: [{ type: "text", text: "answer" }] }],
+        ...(withTools ? { tools: [tool()] } : {}),
+        responseFormat: {
+          type: "json",
+          schema: unsupportedSchema,
+        },
+      } as never;
+
+      if (mode === "generate") {
+        await qgrid("openai/gpt-5.6-terra").doGenerate(options);
+      } else {
+        const result = await qgrid("openai/gpt-5.6-terra").doStream(options);
+        for await (const _part of result.stream) {
+          // drain
+        }
+      }
+
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(`top-level type is "${expectedType}"`),
+      );
+      expect(args).not.toHaveProperty("jsonSchema");
+      expect(args?.tools !== undefined).toBe(withTools);
+      warn.mockRestore();
+    },
+  );
 
   it("continues a logger-disabled streamed tool run without server runContext", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];

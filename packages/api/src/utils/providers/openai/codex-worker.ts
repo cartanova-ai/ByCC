@@ -756,8 +756,12 @@ export class CodexAppServerWorker {
         if (settled) return;
         settled = true;
         cleanup();
-        cb.onError(error);
-        reject(error);
+        try {
+          cb.onError(error);
+          reject(error);
+        } catch (callbackError) {
+          reject(callbackError);
+        }
       };
 
       const finishWithComplete = (result: TurnResult) => {
@@ -765,8 +769,12 @@ export class CodexAppServerWorker {
         settled = true;
         cleanup();
         if (result.imageAttempted) this.cleanupGeneratedImages();
-        cb.onComplete(result);
-        resolve();
+        try {
+          cb.onComplete(result);
+          resolve();
+        } catch (callbackError) {
+          reject(callbackError);
+        }
       };
 
       abort = finishWithError;

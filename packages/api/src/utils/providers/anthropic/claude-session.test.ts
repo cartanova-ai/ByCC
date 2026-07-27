@@ -234,6 +234,16 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(args).not.toContain("--max-turns");
   });
 
+  it("argv 안전 한도를 넘는 structured schema를 spawn 전에 거부한다", () => {
+    expect(() =>
+      buildClaudeArgs({
+        model: "m",
+        sessionId: "u",
+        jsonSchema: "x".repeat(SYSTEM_PROMPT_ARGV_MAX_BYTES + 1),
+      }),
+    ).toThrow("Anthropic dispatch schema exceeds argv UTF-8 byte limit");
+  });
+
   it("1M suffix 는 CLI --model 인자에만 반영된다", () => {
     const args = buildClaudeArgs({
       model: "claude-sonnet-4-6",

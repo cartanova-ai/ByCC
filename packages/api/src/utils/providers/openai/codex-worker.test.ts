@@ -164,6 +164,37 @@ describe("CodexAppServerWorker active turn cleanup", () => {
       expect.objectContaining({ message: "codex worker exited while turn was running" }),
     );
   });
+
+  it("rejects the stream promise when the completion callback throws", async () => {
+    const { worker, handlers } = createWorkerWithFakeRpc();
+    const callbacks: StreamCallbacks = {
+      onDelta: vi.fn(),
+      onComplete: () => {
+        throw new Error("completion mapping failed");
+      },
+      onError: vi.fn(),
+    };
+    const promise = (
+      worker as unknown as {
+        consumeStreamNotifications(
+          threadId: string,
+          model: string,
+          cb: StreamCallbacks,
+        ): Promise<void>;
+      }
+    ).consumeStreamNotifications("thread-1", "gpt-test", callbacks);
+
+    handlers.get("turn/completed")?.({
+      threadId: "thread-1",
+      turn: { status: "completed", durationMs: 90 },
+    } as never);
+
+    await expect(promise).rejects.toThrow("completion mapping failed");
+    expect(callbacks.onError).not.toHaveBeenCalled();
+    expect(
+      (worker as unknown as { activeTurnAbort?: (error: Error) => void }).activeTurnAbort,
+    ).toBeUndefined();
+  });
 });
 
 describe("CodexAppServerWorker TTFT", () => {

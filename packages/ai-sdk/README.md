@@ -93,7 +93,7 @@ console.log(output.title, output.authors);
 Schemas with a top-level `object` are forwarded to server-side structured output and enforced.
 If the top level is not an `object` (e.g. array), the AI SDK falls back to client-side parsing and a warning is logged.
 
-> **Note for Anthropic models:** OpenAI/codex structured output constrains decoding to the schema, so this class of failure is rare there. Claude Code's `--json-schema`, however, works as a StructuredOutput tool + post-hoc validation, so the model may fail to honor a complex schema. qgrid disables Claude Code's internal retries by default (`MAX_STRUCTURED_OUTPUT_RETRIES=1` = one attempt; values below 1 are clamped to 1) and returns an explicit error on validation failure instead of broken JSON. You can raise the server env var to allow retries, but rejected attempts accumulating on the streaming path can break AI SDK parsing, so keeping the default is recommended.
+> **Note for Anthropic models:** OpenAI/codex structured output constrains decoding to the schema, so this class of failure is rare there. Claude Code's `--json-schema`, however, works as a `StructuredOutput` tool plus post-hoc validation, so the model may fail to honor a complex schema. For structured streaming only, qgrid sets `MAX_STRUCTURED_OUTPUT_RETRIES=1` (one attempt; values below 1 are clamped to 1) to bound stream latency. Non-streaming `generate` leaves that override unset and uses Claude Code's default retry budget. Validation failures after the applicable attempts return an explicit error instead of broken JSON.
 
 ### Streaming
 
@@ -114,7 +114,7 @@ for await (const chunk of textStream) {
 ### Tool Calling
 
 ```typescript
-import { generateText, tool } from "ai";
+import { generateText, stepCountIs, tool } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
@@ -124,17 +124,55 @@ const { text } = await generateText({
   tools: {
     getWeather: tool({
       description: "Get the current weather for a city",
-      parameters: z.object({ city: z.string() }),
+      inputSchema: z.object({ city: z.string() }),
       execute: async ({ city }) => {
         return { temperature: 22, condition: "sunny" };
       },
     }),
   },
+  stopWhen: stepCountIs(3),
 });
 ```
 
 Tool calls work through the qgrid server's structured output emulation.
 The AI SDK manages tool execution; qgrid handles only each turn's LLM call.
+Executable tools require a bounded `stopWhen` so the AI SDK continues after a
+tool-call step and asks the model for the final response.
+
+Tools can be combined with `Output.object`:
+
+```typescript
+import { generateText, Output, stepCountIs, tool } from "ai";
+import { qgrid } from "@cartanova/qgrid-ai-sdk";
+import { z } from "zod";
+
+const { output } = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  prompt: "Look up Seoul's weather and return a forecast.",
+  tools: {
+    getWeather: tool({
+      description: "Get the current weather for a city",
+      inputSchema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, temperature: 22 }),
+    }),
+  },
+  stopWhen: stepCountIs(3),
+  output: Output.object({
+    schema: z.object({
+      city: z.string(),
+      summary: z.string(),
+    }),
+  }),
+});
+```
+
+qgrid 2.5.4 constrains every model turn with a composed action envelope. Tool-call
+turns remain AI SDK tool calls, while the final `answer` is constrained by the
+user schema and returned as `output`. Keep a bounded `stopWhen`; otherwise AI SDK
+stops after its default first step and cannot produce the final structured output.
+This requires both qgrid server 2.5.4 and `@cartanova/qgrid-ai-sdk` 2.5.4. AI SDK
+`toolChoice` is not currently transported or enforced; tool selection remains
+model-driven.
 
 ### Provider Options
 
@@ -370,7 +408,33 @@ If multiple projects/workflows share one qgrid server, set `QGRID_PROJECT_NAME`.
 
 - Sampling parameters such as `temperature` and `maxOutputTokens` are ignored — the CLI runtimes (OpenAI: codex app-server, Anthropic: Claude Code) do not support them.
 - Structured output is server-enforced only for top-level `object` schemas. Top-level `array` falls back to client-side parsing.
-- `tools` and a structured output schema cannot be used together on the server. When tools are present, the schema is not forwarded and the AI SDK parses the final text client-side.
+- Combining `tools` with `Output.object` requires qgrid server and AI SDK 2.5.4 or later.
+- AI SDK/Zod positional tuples emitted as Draft-7 `items: [...]` are normalized
+  in supported positive schema positions before OpenAI dispatch and their
+  positional constraints are enforced. An omitted tuple tail is treated as
+  fixed-length; an explicitly unrestricted `additionalItems: true` tail is
+  rejected with HTTP 400. Tuples in negative, conditional, or otherwise
+  non-normalizable schema positions are also rejected instead of being
+  rewritten with changed semantics. References from those positions are
+  rejected for the same reason because definitions are normalized globally.
+  Anthropic positional tuple schemas are rejected with HTTP 400 because Claude
+  Code cannot preserve their positional semantics. Tuple nodes must explicitly
+  declare `type: "array"`; express nullable tuples with an `anyOf` array/null
+  branch.
+- Structured schemas accept only local root-relative JSON Pointer `$ref` values
+  targeting the document root or a chain of `$defs`/`definitions` entry roots.
+  References into properties, tuple internals, conditionals, or literal values
+  fail with HTTP 400 because normalization can move or rewrite those targets.
+  Resource IDs, anchors, external refs, dynamic refs, and recursive refs are
+  also rejected.
+- Output/tool schema serialization, tool names, descriptions, JSON escaping,
+  and composition framing share an aggregate 512 KiB UTF-8 preprocessing
+  budget. Schema values also share a 20,000-node budget and have a maximum
+  depth of 128 per schema. Invalid or over-budget inputs fail with HTTP 400
+  before provider execution.
+- On Anthropic routes, the final composed schema must also fit the 64 KiB safe
+  single-argument budget used by the Claude Code transport.
+- AI SDK `toolChoice` is not currently supported by qgrid.
 
 ## Requirements
 

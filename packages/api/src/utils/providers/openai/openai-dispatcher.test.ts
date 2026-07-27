@@ -5,15 +5,17 @@ import { type OpenAICredentials } from "../../../application/token/token.types";
 import { type GenerateRequest, type GenerateResult } from "../common/provider-dispatcher";
 import { type CodexAppServerWorker } from "./codex-worker";
 import {
-  estimateOpenAIWorkerRssGiB,
   ImageGenerationError,
   makeOpenAIWorkerId,
-  MAX_OPENAI_WORKERS_PER_TOKEN,
-  type OpenAIWorkerPoolConfig,
   OpenAIDispatcher,
-  resolveOpenAIWorkerPoolConfig,
 } from "./openai-dispatcher";
 import { type OpenAIQuotaUsageResult } from "./openai-quota";
+import {
+  estimateOpenAIWorkerRssGiB,
+  MAX_OPENAI_WORKERS_PER_TOKEN,
+  type OpenAIWorkerPoolConfig,
+  resolveOpenAIWorkerPoolConfig,
+} from "./openai-worker-pool-config";
 
 const { readOpenAIQuotaUsageMock, loggerInfoMock, loggerWarnMock } = vi.hoisted(() => ({
   readOpenAIQuotaUsageMock: vi.fn(),

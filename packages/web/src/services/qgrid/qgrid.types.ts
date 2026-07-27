@@ -74,6 +74,9 @@ export const QgridInputPart = z.discriminatedUnion("type", [
 ]);
 export type QgridInputPart = z.infer<typeof QgridInputPart>;
 
+export const MAX_QUERY_TIMEOUT_MS = 30 * 60_000;
+export const QueryTimeoutMs = z.number().int().positive().max(MAX_QUERY_TIMEOUT_MS);
+
 // ─── Run Lifecycle Context (SDK ↔ Server contract) ───
 
 // codex thread 좌표. thread 재사용으로 conversation_id(=prompt_cache_key)를 고정해
@@ -108,7 +111,7 @@ export const QueryInput = z
     prompt: z.string(),
     input: z.array(QgridInputPart).optional(),
     model: z.string().optional(),
-    timeout: z.number().optional(),
+    timeout: QueryTimeoutMs.optional(),
     jsonSchema: z.string().optional(),
     tools: z.array(QgridTool).optional(),
     effort: z.string().optional(),

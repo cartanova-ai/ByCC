@@ -64,6 +64,22 @@ function warnDroppedImages(droppedImageCount: number): void {
   );
 }
 
+function serializeObjectResponseFormat(
+  responseFormat: LanguageModelV3CallOptions["responseFormat"],
+): string | undefined {
+  const rawSchema = responseFormat?.type === "json" ? responseFormat.schema : undefined;
+  if (rawSchema === undefined) return undefined;
+
+  const schemaType = (rawSchema as { type?: string }).type;
+  if (schemaType !== "object") {
+    console.warn(
+      `[qgrid] responseFormat.schema top-level type is "${schemaType ?? "unknown"}". ${TOP_LEVEL_SCHEMA_WARNING}`,
+    );
+    return undefined;
+  }
+  return JSON.stringify(rawSchema);
+}
+
 function getThreadCoord(sessionKey: string): QgridThreadCoord | undefined {
   const entry = threadCoordStore.get(sessionKey);
   if (!entry) return undefined;
@@ -212,17 +228,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const sessionKey = qgridOptions.sessionKey;
       const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
 
-      // top-level이 object인지 검사, 아니면 무시 (SDK 방어로직)
-      const rawSchema =
-        options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
-      const schemaType = rawSchema ? (rawSchema as { type?: string }).type : undefined;
-      if (rawSchema && !hasTools && schemaType !== "object") {
-        console.warn(
-          `[qgrid] responseFormat.schema top-level type is "${schemaType ?? "unknown"}". ${TOP_LEVEL_SCHEMA_WARNING}`,
-        );
-      }
-      const jsonSchema =
-        !hasTools && rawSchema && schemaType === "object" ? JSON.stringify(rawSchema) : undefined;
+      // qgrid server는 object root schema만 받는다. tools 유무와 무관하게 같은 계약을 적용한다.
+      const jsonSchema = serializeObjectResponseFormat(options.responseFormat);
 
       // follow-up 판단 + toolResults 구성
       let runContext: ClientRunContext | undefined;
@@ -371,12 +378,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const sessionKey = qgridOptions.sessionKey;
       const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
 
-      const rawSchema =
-        options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined;
-      const jsonSchema =
-        !hasTools && rawSchema && (rawSchema as { type?: string }).type === "object"
-          ? JSON.stringify(rawSchema)
-          : undefined;
+      const jsonSchema = serializeObjectResponseFormat(options.responseFormat);
 
       // follow-up 판단
       let runContext: ClientRunContext | undefined;

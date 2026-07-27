@@ -93,7 +93,7 @@ console.log(output.title, output.authors);
 top-level이 `object`인 schema는 서버 structured output으로 전달되어 강제됩니다.
 top-level이 `object`가 아니면 (예: array) AI SDK 클라이언트 파싱으로 fallback되며 경고 로그가 출력됩니다.
 
-> **Anthropic 모델 주의:** OpenAI/codex structured output은 디코딩 단계에서 schema를 강제(constrained decoding)하므로 이 부류 실패가 거의 없지만, Claude Code의 `--json-schema`는 StructuredOutput tool + 사후 검증 방식이라 복잡한 schema는 모델이 준수하지 못할 수 있습니다. qgrid는 Claude Code의 내부 재시도를 기본 차단하고(`MAX_STRUCTURED_OUTPUT_RETRIES=1` = 1회 시도, 1 미만 값은 1로 클램프) 검증 실패 시 깨진 JSON 대신 명시적 에러를 반환합니다. 서버 환경변수로 값을 올려 재시도를 허용할 수 있지만, 재시도 시 누적되는 rejected 출력이 스트리밍 경로의 AI SDK 파싱을 깨뜨릴 수 있어 기본값 유지를 권장합니다.
+> **Anthropic 모델 주의:** OpenAI/codex structured output은 디코딩 단계에서 schema를 강제(constrained decoding)하므로 이 부류 실패가 거의 없지만, Claude Code의 `--json-schema`는 `StructuredOutput` tool + 사후 검증 방식이라 복잡한 schema는 모델이 준수하지 못할 수 있습니다. qgrid는 structured streaming에만 `MAX_STRUCTURED_OUTPUT_RETRIES=1`을 주입해 1회 시도로 제한합니다(1 미만 값은 1로 클램프). non-stream `generate`에는 이 override를 주입하지 않고 Claude Code의 기본 retry 예산을 사용합니다. 각 경로의 시도 이후 검증이 실패하면 깨진 JSON 대신 명시적 에러를 반환합니다.
 
 ### 스트리밍
 
@@ -114,7 +114,7 @@ for await (const chunk of textStream) {
 ### Tool Calling
 
 ```typescript
-import { generateText, tool } from "ai";
+import { generateText, stepCountIs, tool } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
@@ -124,17 +124,54 @@ const { text } = await generateText({
   tools: {
     getWeather: tool({
       description: "도시의 현재 날씨 조회",
-      parameters: z.object({ city: z.string() }),
+      inputSchema: z.object({ city: z.string() }),
       execute: async ({ city }) => {
         return { temperature: 22, condition: "맑음" };
       },
     }),
   },
+  stopWhen: stepCountIs(3),
 });
 ```
 
 tool-call은 qgrid 서버의 structured output emulation으로 동작합니다.
 AI SDK가 tool 실행을 관리하고, qgrid는 각 턴의 LLM 호출만 담당합니다.
+실행 가능한 tool을 쓸 때는 제한이 있는 `stopWhen`을 지정해야 AI SDK가
+tool-call 턴 뒤에도 계속 진행해 모델의 최종 응답을 받습니다.
+
+`tools`와 `Output.object`를 함께 사용할 수도 있습니다.
+
+```typescript
+import { generateText, Output, stepCountIs, tool } from "ai";
+import { qgrid } from "@cartanova/qgrid-ai-sdk";
+import { z } from "zod";
+
+const { output } = await generateText({
+  model: qgrid("openai/gpt-5.4"),
+  prompt: "서울 날씨를 조회해서 예보를 반환해줘.",
+  tools: {
+    getWeather: tool({
+      description: "도시의 현재 날씨 조회",
+      inputSchema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, temperature: 22 }),
+    }),
+  },
+  stopWhen: stepCountIs(3),
+  output: Output.object({
+    schema: z.object({
+      city: z.string(),
+      summary: z.string(),
+    }),
+  }),
+});
+```
+
+qgrid 2.5.4는 모든 모델 턴에 합성된 action envelope를 강제합니다. tool-call
+턴은 AI SDK tool call로 유지되고, 마지막 `answer`는 사용자 schema로 강제된 뒤
+`output`으로 반환됩니다. 제한이 있는 `stopWhen`을 지정하지 않으면 AI SDK가
+기본 첫 번째 step에서 멈춰 최종 structured output을 만들 수 없습니다. qgrid server
+2.5.4와 `@cartanova/qgrid-ai-sdk` 2.5.4가 모두 필요합니다. AI SDK의
+`toolChoice`는 현재 전송하거나 강제하지 않으며 tool 선택은 모델이 결정합니다.
 
 ### Provider Options
 
@@ -369,7 +406,30 @@ qgrid(modelId, {
 
 - `temperature`, `maxOutputTokens` 등 sampling 파라미터는 CLI 런타임(OpenAI: codex app-server, Anthropic: Claude Code)이 지원하지 않아 무시됩니다.
 - Structured output은 top-level `object` schema만 서버에서 강제됩니다. top-level `array`는 클라이언트 파싱 fallback.
-- `tools`와 structured output schema는 서버에서 동시에 사용할 수 없습니다. tools가 있으면 schema는 서버로 전달되지 않고 최종 텍스트를 AI SDK가 클라이언트에서 파싱합니다.
+- `tools`와 `Output.object`를 함께 사용하려면 qgrid server와 AI SDK가 모두 2.5.4 이상이어야 합니다.
+- AI SDK/Zod가 Draft-7 `items: [...]`로 만드는 위치 기반 tuple은 지원되는
+  positive schema 위치에서 OpenAI 호출 전에 정규화되고 위치별 제약이
+  강제됩니다. tuple tail이 생략되면 고정 길이로 해석하며,
+  `additionalItems: true`로 명시한 무제한 tail은 HTTP 400으로 거부합니다.
+  negative, conditional 등 안전하게 정규화할 수 없는 위치의 tuple도 의미가
+  바뀌는 변환 대신 HTTP 400으로 거부합니다. definition은 전역 정규화되므로
+  해당 위치에서 참조하는 경우도 같은 이유로 거부합니다. Anthropic 위치 기반
+  tuple schema는 Claude Code가 위치 의미를 보존할 수 없어 HTTP 400으로
+  거부됩니다. tuple node는 `type: "array"`를 명시해야 하며 nullable tuple은
+  array/null `anyOf`로 표현합니다.
+- structured schema에서는 문서 root 또는 `$defs`/`definitions` entry root만
+  연속으로 가리키는 로컬 root-relative JSON Pointer `$ref`를 허용합니다.
+  property, tuple 내부, conditional, literal 값을 가리키는 ref는 정규화 중
+  target이 이동하거나 다시 작성될 수 있어 HTTP 400으로 거부합니다. resource
+  ID, anchor, 외부 ref, dynamic ref, recursive ref도 허용하지 않습니다.
+- output/tool schema serialization, tool 이름, 설명, JSON escaping,
+  composition framing은 합산 UTF-8 512 KiB 전처리 한도를 공유합니다.
+  schema 값에는 별도로 합산 20,000 node와 schema별 최대 깊이 128 한도가
+  적용됩니다. 잘못되거나 한도를 넘는 입력은 provider 실행 전에 HTTP 400으로
+  실패합니다.
+- Anthropic 경로에서는 최종 합성 schema가 Claude Code 전송의 안전한 단일 argv
+  한도인 64 KiB도 넘지 않아야 합니다.
+- AI SDK의 `toolChoice`는 현재 qgrid에서 지원하지 않습니다.
 
 ## 요구사항
 

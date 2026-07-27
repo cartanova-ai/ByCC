@@ -56,15 +56,19 @@ vi.mock("../token/token.model", () => ({
   },
 }));
 
-vi.mock("./qgrid.dispatcher", () => ({
-  QgridDispatcher: {
-    query: dispatcherQueryMock,
-    queryStream: dispatcherQueryStreamMock,
-    openaiDispatcher: {
-      getRateLimitsByTokenId: getRateLimitsByTokenIdMock,
+vi.mock("./qgrid.dispatcher", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./qgrid.dispatcher")>();
+  return {
+    ...original,
+    QgridDispatcher: {
+      query: dispatcherQueryMock,
+      queryStream: dispatcherQueryStreamMock,
+      openaiDispatcher: {
+        getRateLimitsByTokenId: getRateLimitsByTokenIdMock,
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock("./qgrid-run-lifecycle", () => ({
   beforeQuery: beforeQueryMock,
@@ -89,6 +93,10 @@ const tokenEntry = {
   quota_threshold: null,
   weight: 1,
 };
+
+function deeplyNestedInputSchema(depth: number): unknown {
+  return JSON.parse(`${"[".repeat(depth)}0${"]".repeat(depth)}`) as unknown;
+}
 
 describe("QgridFrame.updateToken", () => {
   beforeEach(() => {
@@ -209,6 +217,34 @@ describe("QgridFrame.query request logging", () => {
     expect(result.runContext).toEqual(queryOutput().runContext);
   });
 
+  it("persists an immediate tools+schema structured answer as final JSON text", async () => {
+    const output = {
+      ...queryOutput(),
+      text: '{"result":"ok"}',
+      content: [{ type: "text" as const, text: '{"result":"ok"}' }],
+    };
+    dispatcherQueryMock.mockResolvedValueOnce(output);
+    const args = {
+      prompt: "answer",
+      model: "openai/gpt-5.6-terra",
+      tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+      jsonSchema: JSON.stringify({
+        type: "object",
+        properties: { result: { type: "string" } },
+        required: ["result"],
+      }),
+    };
+
+    await expect(QgridFrame.query(args)).resolves.toMatchObject({
+      text: '{"result":"ok"}',
+      content: [{ type: "text", text: '{"result":"ok"}' }],
+      finishReason: "stop",
+    });
+    expect(beforeQueryMock).toHaveBeenCalledWith(args);
+    expect(afterQueryMock).toHaveBeenCalledWith(41, 0, args, output);
+    expect(finishRunWithErrorMock).not.toHaveBeenCalled();
+  });
+
   it("does not create or update logs when logger is false", async () => {
     const output = queryOutput();
     dispatcherQueryMock.mockResolvedValueOnce(output);
@@ -241,6 +277,23 @@ describe("QgridFrame.query request logging", () => {
     await expect(QgridFrame.query(args)).rejects.toThrow("provider failed");
 
     expect(finishRunWithErrorMock).toHaveBeenCalledWith(41, "provider failed", args);
+  });
+
+  it("marks an incoherent structured envelope failure as a request-log error", async () => {
+    const error = new Error(
+      "tool-call emulation: structured response envelope is missing required keys: toolCalls",
+    );
+    dispatcherQueryMock.mockRejectedValueOnce(error);
+    const args = {
+      prompt: "answer",
+      model: "anthropic/claude-sonnet-4-6",
+      tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+      jsonSchema: JSON.stringify({ type: "object", properties: {} }),
+    };
+
+    await expect(QgridFrame.query(args)).rejects.toThrow(error.message);
+    expect(finishRunWithErrorMock).toHaveBeenCalledWith(41, error.message, args);
+    expect(afterQueryMock).not.toHaveBeenCalled();
   });
 
   it("aborts provider execution and marks the run aborted when the HTTP response closes early", async () => {
@@ -303,6 +356,353 @@ describe("QgridFrame.query request logging", () => {
     expect(dispatcherQueryMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["malformed JSON", '{"type":"object"'],
+    ["unsupported top-level array schema", '{"type":"array","items":{"type":"string"}}'],
+  ])("returns a deterministic 400 before logging or dispatch for %s", async (_label, jsonSchema) => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.5",
+        jsonSchema,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("qgrid: jsonSchema"),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a deeply nested tools-only schema before logging or dispatch", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.5",
+        tools: [{ name: "deepTool", inputSchema: deeplyNestedInputSchema(256) }],
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("tools[0].inputSchema exceeds depth limit"),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an unsupported composed-schema reference before logging or dispatch", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.5",
+        tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+        jsonSchema: JSON.stringify({
+          $id: "urn:example:answer",
+          type: "object",
+          properties: { answer: { type: "string" } },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("$id is not supported"),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a malformed normalization keyword before logging or dispatch", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.5",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          anyOf: {},
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("caller schema cannot be normalized"),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an unrestricted positional tuple before logging or dispatch", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.6-terra",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          properties: {
+            tuple: {
+              type: "array",
+              items: [{ type: "string" }],
+              additionalItems: true,
+            },
+          },
+          required: ["tuple"],
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("unrestricted tuple rest is not supported"),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an Anthropic positional tuple before logging or dispatch", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "anthropic/claude-opus-4-8",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          properties: {
+            tuple: {
+              type: "array",
+              items: [{ type: "string" }, { type: "integer" }],
+            },
+          },
+          required: ["tuple"],
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining(
+        "positional tuple schemas are not supported on Anthropic",
+      ),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an Anthropic tuple nested under not before logging or dispatch", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "anthropic/claude-opus-4-8",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          not: {
+            type: "array",
+            items: [{ type: "string" }],
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining(
+        "positional tuple schemas are not supported on Anthropic",
+      ),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an OpenAI tuple under not instead of changing negative semantics", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.6-terra",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          not: {
+            type: "array",
+            items: [{ type: "string" }],
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining(
+        "positional tuple schemas are not supported in this schema position",
+      ),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a definition referenced under not before globally normalizing it", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "openai/gpt-5.6-terra",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          $defs: {
+            Forbidden: {
+              type: "object",
+              properties: { value: { const: 0 } },
+              required: ["value"],
+            },
+          },
+          not: { $ref: "#/$defs/Forbidden" },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining(
+        "schema references are not supported in this schema position",
+      ),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "a literal JSON value",
+      {
+        type: "object",
+        properties: {
+          payload: { $ref: "#/$defs/Carrier/enum/0" },
+        },
+        required: ["payload"],
+        $defs: {
+          Carrier: {
+            enum: [{ type: "object", properties: { value: { type: "string" } } }],
+          },
+        },
+      },
+      "$ref target must be the document root or a definition root",
+    ],
+    [
+      "a conditional schema position",
+      {
+        type: "object",
+        properties: {
+          payload: { $ref: "#/if" },
+        },
+        required: ["payload"],
+        if: {
+          type: "object",
+          properties: { secret: { type: "string" } },
+        },
+      },
+      "$ref target must be the document root or a definition root",
+    ],
+  ] as const)(
+    "returns 400 for an OpenAI ref targeting %s before logging or dispatch",
+    async (_label, schema, message) => {
+      await expect(
+        QgridFrame.query({
+          prompt: "hi",
+          model: "openai/gpt-5.6-terra",
+          jsonSchema: JSON.stringify(schema),
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: expect.stringContaining(message),
+      });
+
+      expect(beforeQueryMock).not.toHaveBeenCalled();
+      expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["missing", undefined],
+    ["nullable union", ["array", "null"]],
+  ] as const)(
+    "returns 400 for an OpenAI positional tuple with %s type before logging or dispatch",
+    async (_label, type) => {
+      await expect(
+        QgridFrame.query({
+          prompt: "hi",
+          model: "openai/gpt-5.6-terra",
+          jsonSchema: JSON.stringify({
+            type: "object",
+            properties: {
+              tuple: {
+                ...(type === undefined ? {} : { type }),
+                items: [{ type: "string" }, { type: "integer" }],
+              },
+            },
+            required: ["tuple"],
+          }),
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: expect.stringContaining(
+          'positional tuple schemas must declare type "array"',
+        ),
+      });
+
+      expect(beforeQueryMock).not.toHaveBeenCalled();
+      expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["missing", undefined],
+    ["nullable union", ["array", "null"]],
+  ] as const)(
+    "returns 400 for an Anthropic positional tuple with %s type before logging or dispatch",
+    async (_label, type) => {
+      await expect(
+        QgridFrame.query({
+          prompt: "hi",
+          model: "anthropic/claude-opus-4-8",
+          jsonSchema: JSON.stringify({
+            type: "object",
+            properties: {
+              tuple: {
+                ...(type === undefined ? {} : { type }),
+                prefixItems: [{ type: "string" }, { type: "integer" }],
+              },
+            },
+            required: ["tuple"],
+          }),
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: expect.stringContaining(
+          "positional tuple schemas are not supported on Anthropic",
+        ),
+      });
+
+      expect(beforeQueryMock).not.toHaveBeenCalled();
+      expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns 400 when the final Anthropic schema exceeds the safe argv size", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        tools: [
+          {
+            name: "lookup",
+            description: "x".repeat(64 * 1024),
+            inputSchema: { type: "object" },
+          },
+        ],
+        jsonSchema: JSON.stringify({
+          type: "object",
+          properties: { answer: { type: "string" } },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("Anthropic dispatch schema exceeds argv"),
+    });
+
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
   it("rejects legacy logMode in the wire schema", () => {
     expect(QueryInput.safeParse({ prompt: "hi", logMode: "none" }).success).toBe(false);
     expect(QueryInput.safeParse({ prompt: "hi", logMode: undefined }).success).toBe(false);
@@ -334,6 +734,96 @@ describe("QgridFrame.prepareStream", () => {
 
     expect(dispatcherQueryMock).not.toHaveBeenCalled();
     expect(requestLogSaveMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an invalid schema before allocating a stream id", async () => {
+    await expect(
+      QgridFrame.prepareStream({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        jsonSchema: "null",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: 'qgrid: jsonSchema top-level type must be "object"',
+    });
+  });
+
+  it("returns 400 for an Anthropic tuple under patternProperties before allocating a stream id", async () => {
+    await expect(
+      QgridFrame.prepareStream({
+        prompt: "hi",
+        model: "anthropic/claude-opus-4-8",
+        jsonSchema: JSON.stringify({
+          type: "object",
+          patternProperties: {
+            "^tuple$": {
+              type: "array",
+              prefixItems: [{ type: "string" }],
+            },
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining(
+        "positional tuple schemas are not supported on Anthropic",
+      ),
+    });
+
+    expect(requestLogSaveMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a deeply nested tool schema before allocating a stream id", async () => {
+    await expect(
+      QgridFrame.prepareStream({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        tools: [{ name: "deepTool", inputSchema: deeplyNestedInputSchema(256) }],
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("tools[0].inputSchema exceeds depth limit"),
+    });
+  });
+
+  it("returns 400 for an unsupported composed-schema reference before allocating a stream id", async () => {
+    await expect(
+      QgridFrame.prepareStream({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+        jsonSchema: JSON.stringify({
+          type: "object",
+          properties: { answer: { $ref: "#named-anchor" } },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining(
+        "only root-relative JSON Pointer $ref values are supported",
+      ),
+    });
+  });
+
+  it("returns 400 for an oversized Anthropic argv schema before allocating a stream id", async () => {
+    await expect(
+      QgridFrame.prepareStream({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        tools: [
+          {
+            name: "lookup",
+            description: "x".repeat(64 * 1024),
+            inputSchema: { type: "object" },
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("Anthropic dispatch schema exceeds argv"),
+    });
   });
 });
 
@@ -519,6 +1009,88 @@ describe("QgridFrame.queryStream request logging", () => {
     expect(finishRunAbortedMock).not.toHaveBeenCalled();
     expect(sse.publish).toHaveBeenCalledWith("error", { message: "provider failed" });
   });
+
+  it.each([
+    ["openai", "openai/gpt-5.6-terra", "gpt-5.6-terra"],
+    ["anthropic", "anthropic/claude-sonnet-4-6", "claude-sonnet-4-6"],
+  ] as const)(
+    "finishes a malformed %s structured stream through the real dispatcher without hanging",
+    async (provider, requestedModel, servedModel) => {
+      const sse = installSseContext();
+      const { QgridDispatcherClass } =
+        await vi.importActual<typeof import("./qgrid.dispatcher")>("./qgrid.dispatcher");
+      const dispatcher = new QgridDispatcherClass();
+      const generateStream = vi.fn(
+        async (
+          _request: unknown,
+          callbacks: {
+            onComplete: (result: {
+              text: string;
+              tokenName: string;
+              usage: {
+                totalTokens: number;
+                inputTokens: number;
+                cachedInputTokens: number;
+                outputTokens: number;
+                reasoningOutputTokens: number;
+              };
+              durationMs: number;
+              model: string;
+              threadCoord: { workerId: number; threadId: string; epoch: number };
+            }) => void;
+          },
+        ) => {
+          // 실제 provider adapter 완료 지점: toolCalls 누락 envelope가 dispatcher mapper에서 throw.
+          callbacks.onComplete({
+            text: '{"action":"answer","answer":{"result":"ok"}}',
+            tokenName: `${provider}/test`,
+            usage: {
+              totalTokens: 10,
+              inputTokens: 5,
+              cachedInputTokens: 0,
+              outputTokens: 5,
+              reasoningOutputTokens: 0,
+            },
+            durationMs: 12,
+            model: servedModel,
+            threadCoord: { workerId: 1, threadId: "thread-malformed", epoch: 0 },
+          });
+        },
+      );
+      if (provider === "openai") {
+        dispatcher.openaiDispatcher = { generateStream } as never;
+      } else {
+        dispatcher.anthropicDispatcher = { generateStream } as never;
+      }
+      dispatcherQueryStreamMock.mockImplementationOnce((args, callbacks, signal) =>
+        dispatcher.queryStream(args, callbacks, signal),
+      );
+
+      const args = {
+        prompt: "answer",
+        model: requestedModel,
+        tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+        jsonSchema: JSON.stringify({
+          type: "object",
+          properties: { result: { type: "string" } },
+        }),
+      };
+      const { streamId } = await QgridFrame.prepareStream(args);
+
+      await expect(QgridFrame.queryStream(streamId)).resolves.toBeUndefined();
+
+      expect(generateStream).toHaveBeenCalledOnce();
+      expect(finishRunWithErrorMock).toHaveBeenCalledWith(
+        52,
+        expect.stringContaining("invalid structured-output envelope"),
+        args,
+      );
+      const errorMessage = finishRunWithErrorMock.mock.calls[0]?.[1];
+      expect(afterQueryMock).not.toHaveBeenCalled();
+      expect(sse.publish).toHaveBeenCalledWith("error", { message: errorMessage });
+      expect(sse.end).toHaveBeenCalledOnce();
+    },
+  );
 
   it("marks the run aborted on close regardless of the provider error message", async () => {
     const sse = installSseContext();

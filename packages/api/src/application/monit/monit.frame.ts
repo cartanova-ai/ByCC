@@ -6,7 +6,7 @@
  */
 import { api, BaseFrameClass, DB } from "sonamu";
 
-import { resolveOpenAIWorkerPoolConfig } from "../../utils/providers/openai/openai-dispatcher";
+import { resolveOpenAIWorkerPoolConfig } from "../../utils/providers/openai/openai-worker-pool-config";
 import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
 import { monitLogBuffer } from "./log-buffer";
 import { type MonitLogChunk, type MonitServerInfo, type MonitVitals } from "./monit.types";

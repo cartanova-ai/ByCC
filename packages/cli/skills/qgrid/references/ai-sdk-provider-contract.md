@@ -134,7 +134,7 @@ Payload responsibilities:
 
 - Extract current prompt, system prompt, and history from AI SDK prompt messages.
 - Convert AI SDK function tools to qgrid tools.
-- Send `jsonSchema` only when no tools are present and response format top-level schema is `object`.
+- Send `jsonSchema` whenever the response format top-level schema is `object`, including requests that also contain tools.
 - Send `history` as JSON string when prior messages exist.
 - Send `projectName` when configured.
 - Send `logger: false` when the per-call option disables request logging; otherwise rely on the server default.
@@ -145,7 +145,35 @@ Payload responsibilities:
 - Send AI SDK multimodal image/file message parts as qgrid `input` only when `imageGeneration` is enabled. Normal non-image-generation calls keep `user_prompt` text-only and do not forward image input.
 - Reject oversized reference-image data URLs before the request leaves the SDK. Reference images travel as JSON data URLs; callers should compress/resize large photos, preferably to WebP/JPEG.
 
-Tools and `jsonSchema` cannot be used together at qgrid dispatcher level.
+Tools and `jsonSchema` can be used together as of qgrid 2.5.4. The server composes
+them into one strict action envelope for every provider turn. `toolChoice` is not
+part of the current qgrid wire contract and must not be described as supported.
+
+Before provider dispatch, qgrid validates caller output schemas and every tool
+input schema with an iterative preflight. Output/tool schema serialization, tool
+names, descriptions, JSON escaping, and composition framing share an aggregate
+512 KiB UTF-8 budget. Schema JSON values are limited to 20,000 in aggregate, and
+each schema is limited to depth 128. Malformed, unsupported top-level output, or
+over-budget schemas fail with HTTP 400 before request-log creation or stream ID
+allocation. The fully composed and strictified schema is checked again against
+the 512 KiB budget. Anthropic routes additionally enforce a 64 KiB UTF-8 ceiling
+because Claude Code receives that schema as one `--json-schema` argv value.
+
+OpenAI normalizes positional tuple schemas in supported positive schema
+positions and enforces their positional constraints. Tuples in negative,
+conditional, or otherwise non-normalizable schema positions fail with HTTP 400
+instead of being rewritten with changed semantics. References from those
+positions fail for the same reason because definitions are normalized globally.
+Anthropic positional tuple schemas fail with HTTP 400 because Claude Code cannot
+preserve positional semantics. Tuple nodes must explicitly declare
+`type: "array"`; express nullable tuples with an `anyOf` array/null branch.
+
+Structured schemas accept only local root-relative JSON Pointer `$ref` values
+targeting the document root or a chain of `$defs`/`definitions` entry roots.
+References into properties, tuple internals, conditionals, or literal values
+fail with HTTP 400 because normalization can move or rewrite those targets.
+Resource IDs, anchors, external refs, dynamic refs, and recursive refs are also
+rejected.
 
 When tools are present, qgrid sends tool definitions to the server as `tools`; it does not send them to OpenAI or Anthropic as native provider tools. The server converts them into a strict structured-output schema and maps the model's structured result back into AI SDK `tool-call` content.
 
@@ -162,6 +190,10 @@ qgrid response content maps to AI SDK content:
 - qgrid `image` -> AI SDK file content with `mediaType: "image/png"`.
 
 `finishReason` maps `tool-calls` when qgrid returns tool calls.
+
+For tools plus structured output, qgrid serializes the final schema-constrained
+`answer` as JSON text. AI SDK then parses and validates that text into
+`Output.object`'s `output`. This path requires both server and SDK 2.5.4 or later.
 
 When `imageGeneration` was requested and the server returns no image part, the AI SDK provider throws a version-skew/error guard instead of silently accepting text-only output.
 

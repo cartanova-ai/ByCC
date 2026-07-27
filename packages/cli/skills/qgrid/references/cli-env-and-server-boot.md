@@ -74,7 +74,7 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 | `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Refuse scale-up when estimated qgrid worker RSS would exceed this value. Estimate: `0.71 + 0.157 * totalWorkerCount` GiB. |
 | `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Refuse scale-up when current host available memory is below this value. |
 | `QGRID_OPENAI_THREAD_REUSE` | enabled | Set to `"false"` to disable OpenAI thread reuse and force cold thread behavior. |
-| `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic calls | Claude Code structured-output retry count, clamped to at least 1 by qgrid. |
+| `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic streaming calls | Claude Code structured-output retry count for streaming only, clamped to at least 1 by qgrid. Non-streaming `generate` leaves the variable unset and uses Claude Code's default retry budget. |
 
 ## Server boot lifecycle
 

@@ -49,7 +49,16 @@ Sources:
 Key decisions:
 
 - qgrid tool calling is intentionally implemented through structured-output emulation, not native provider tool use. The provider call returns a structured action with tool calls; the AI SDK loop executes tools and sends follow-up turns.
-- Tools and `jsonSchema` are mutually exclusive at the qgrid dispatcher boundary because both need the provider structured-output slot.
+- Tools and `jsonSchema` share one provider structured-output slot by composing
+  an action envelope on every turn. Its final `answer` branch embeds the user's
+  schema; its `tool_call` branch carries emulated AI SDK calls. This keeps final
+  output constrained even when tools are available but never called.
+- Final output is identified by `action: "answer"`, not by tool presence or turn
+  count. Structured answers are serialized as JSON text for AI SDK
+  `Output.object` parsing, while tools-only callers retain their legacy string
+  answer and tolerant parse fallback.
+- AI SDK `toolChoice` remains outside qgrid's wire contract. Do not imply that
+  qgrid transports or enforces it.
 - Tool-call request logs are a multi-step run: create run, append generate/tool steps, then finish run. This makes AI SDK multi-step behavior visible in the dashboard instead of logging only one opaque completion.
 - Tool results update the existing `tool_call` step by `request_log_id + tool_call_id`. They are not logged as a second unrelated completion row.
 - The server infers single-turn completion versus an open tool run from context and finish reason. The removed caller-selected `logMode` contract must not be recreated.

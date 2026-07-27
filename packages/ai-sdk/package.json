@@ -23,6 +23,7 @@
     "build": "tsdown",
     "test": "vitest run",
     "e2e": "tsx e2e/e2e.ts",
+    "e2e:tools-output": "tsx e2e/tools-structured-output.ts",
     "e2e:logger": "tsx e2e/e2e-logger.ts"
   },
   "devDependencies": {
@@ -30,7 +31,8 @@
     "ai": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "zod": "4.4.3"
   },
   "peerDependencies": {
     "@ai-sdk/provider": "^3.0.0",

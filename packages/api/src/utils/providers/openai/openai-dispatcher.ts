@@ -1,7 +1,7 @@
 /**
  * OpenAIDispatcher — codex app-server worker pool + 토큰 라우팅.
  *
- * - 토큰당 N worker (CodexAppServerWorker), 기본 3
+ * - 토큰당 CodexAppServerWorker 자동 확장 (기본 5~15, hard cap 20)
  * - idle worker round-robin 선택 + 큐 대기 (전부 busy 시)
  * - TokenSubscriber 이벤트로 worker pool 동기화
  * - backpressure: 큐 full 또는 timeout 시 SERVER_BUSY
@@ -29,6 +29,11 @@ import {
   type OpenAIRateLimitsWithMeta,
 } from "./openai-quota";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
+import {
+  estimateOpenAIWorkerRssGiB,
+  type OpenAIWorkerPoolConfig,
+  resolveOpenAIWorkerPoolConfig,
+} from "./openai-worker-pool-config";
 
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
 
@@ -49,87 +54,9 @@ export class ImageGenerationError extends Error {
 }
 
 const DEFAULT_EFFORT = "low";
-export const MAX_OPENAI_WORKERS_PER_TOKEN = 20;
-const DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN = 5;
-const DEFAULT_OPENAI_MAX_WORKERS_PER_TOKEN = 15;
 const QUEUE_TIMEOUT_MS = 60_000;
 const MAX_QUEUE_SIZE = 50;
 const SPAWN_INTERVAL_MS = 500;
-
-export const OPENAI_WORKER_BASE_RSS_GIB = 0.71;
-export const OPENAI_WORKER_RSS_GIB = 0.157;
-
-export type OpenAIWorkerPoolConfig = {
-  autoscale: boolean;
-  minWorkersPerToken: number;
-  maxWorkersPerToken: number;
-  scaleIntervalMs: number;
-  scaleDownIdleMs: number;
-  maxEstimatedRssGiB: number;
-  minHostAvailableGiB: number;
-};
-
-function boundedInteger(
-  value: string | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(Math.floor(parsed), max));
-}
-
-function boundedNumber(value: string | undefined, fallback: number, min: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, parsed);
-}
-
-export function resolveOpenAIWorkerPoolConfig(
-  env: Record<string, string | undefined> = process.env,
-): OpenAIWorkerPoolConfig {
-  const autoscale = env.QGRID_OPENAI_AUTOSCALE !== "false" && env.QGRID_OPENAI_AUTOSCALE !== "0";
-  const legacyWorkers = boundedInteger(
-    env.QGRID_WORKERS_PER_TOKEN,
-    DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN,
-    1,
-    MAX_OPENAI_WORKERS_PER_TOKEN,
-  );
-  const minWorkersPerToken = boundedInteger(
-    env.QGRID_OPENAI_MIN_WORKERS_PER_TOKEN,
-    legacyWorkers,
-    1,
-    MAX_OPENAI_WORKERS_PER_TOKEN,
-  );
-  const configuredMax = boundedInteger(
-    env.QGRID_OPENAI_MAX_WORKERS_PER_TOKEN,
-    autoscale ? DEFAULT_OPENAI_MAX_WORKERS_PER_TOKEN : minWorkersPerToken,
-    1,
-    MAX_OPENAI_WORKERS_PER_TOKEN,
-  );
-
-  return {
-    autoscale,
-    minWorkersPerToken,
-    maxWorkersPerToken: autoscale
-      ? Math.max(minWorkersPerToken, configuredMax)
-      : minWorkersPerToken,
-    scaleIntervalMs: boundedInteger(env.QGRID_OPENAI_SCALE_INTERVAL_MS, 5_000, 250, 300_000),
-    scaleDownIdleMs: boundedInteger(
-      env.QGRID_OPENAI_SCALE_DOWN_IDLE_MS,
-      10 * 60_000,
-      1_000,
-      24 * 60 * 60_000,
-    ),
-    maxEstimatedRssGiB: boundedNumber(env.QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB, 16, 1),
-    minHostAvailableGiB: boundedNumber(env.QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB, 20, 0),
-  };
-}
-
-export function estimateOpenAIWorkerRssGiB(totalWorkers: number): number {
-  return OPENAI_WORKER_BASE_RSS_GIB + OPENAI_WORKER_RSS_GIB * totalWorkers;
-}
 
 function readHostAvailableGiB(): number {
   try {

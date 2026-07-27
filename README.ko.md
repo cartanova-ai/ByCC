@@ -171,10 +171,11 @@ const { text } = await generateText({
   tools: {
     getWeather: tool({
       description: "도시의 현재 날씨 조회",
-      parameters: z.object({ city: z.string() }),
+      inputSchema: z.object({ city: z.string() }),
       execute: async ({ city }) => ({ temperature: 22, condition: "맑음" }),
     }),
   },
+  stopWhen: stepCountIs(3),
 });
 ```
 
@@ -275,7 +276,7 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 
 | Provider | 모델 |
 |---|---|
-| OpenAI | `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
+| OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
 | Anthropic | `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
 
 > `claude-opus-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8`은 자동으로 1M 토큰 컨텍스트로 실행됩니다. Opus 5는 기본 adaptive thinking 동작을 유지하며, qgrid의 `effort` 옵션으로 추론 깊이를 조절합니다.
@@ -295,10 +296,15 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 | `QGRID_DB_USER` | PostgreSQL 사용자 (CLI) | `postgres` |
 | `QGRID_DB_PASSWORD` | PostgreSQL 비밀번호 (CLI) | `postgres` |
 | `QGRID_DB_NAME` | 데이터베이스 이름 (CLI) | `qgrid` |
-| `QGRID_WORKERS_PER_TOKEN` | OpenAI 토큰당 worker 수 | `3` (최대 5) |
+| `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. `false` 또는 `0`이면 고정 크기 pool 사용 | 활성 |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최소 worker 수 | `5` |
+| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최대 worker 수 | `15` |
+| `QGRID_WORKERS_PER_TOKEN` | OpenAI 최소/고정 worker 수의 legacy fallback | `5` |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
 
+> OpenAI worker 수는 토큰당 hard cap 20으로 제한됩니다. autoscaling을 끄면 pool은 설정된 최소 worker 수로 고정됩니다.
+>
 > qgrid는 대시보드 API에 별도 인증을 두지 않습니다. 신뢰할 수 있는 네트워크나 reverse proxy 뒤가 아니라면 `HOST`를 loopback으로 유지하세요. 공개 바인드는 Monit 탭의 서버 로그 피드를 포함한 모든 관리 엔드포인트를 노출합니다.
 >
 > `packages/api`를 직접 실행할 때는 같은 값을 Sonamu 네이티브 환경변수인 `SONAMU_DB_*`로 설정합니다.
@@ -331,6 +337,9 @@ packages/
 ## 주의사항
 
 - **OpenAI 모델**: codex app-server 기반. `temperature`, `maxOutputTokens` 등 sampling 파라미터는 지원하지 않습니다.
-- **Anthropic 모델**: Claude Code 기반. OAuth 로그인 필요. tool calling과 structured output은 OpenAI와 동일하게 동작하지만, 요청마다 fresh process로 실행되므로 `sessionKey` thread reuse는 적용되지 않습니다.
-- **Anthropic structured output**: codex(constrained decoding)와 달리 Claude Code의 `--json-schema`는 생성을 강제하지 않고 가이드+사후 검증하므로, 복잡한 schema는 간헐적으로 검증에 실패할 수 있습니다. qgrid는 내부 재시도를 기본 차단하고 1회만 시도하며, 실패 시 깨진 JSON 대신 명시적 에러를 반환합니다.
+- **Anthropic 모델**: Claude Code 기반. OAuth 로그인 필요. tool calling과 object structured output을 지원하지만, 요청마다 fresh process로 실행되므로 `sessionKey` thread reuse는 적용되지 않습니다.
+- **Anthropic structured output**: codex(constrained decoding)와 달리 Claude Code의 `--json-schema`는 `StructuredOutput` 도구로 생성을 유도하고 사후 검증하므로, 복잡한 schema는 간헐적으로 검증에 실패할 수 있습니다. qgrid는 stream 지연을 제한하기 위해 structured streaming만 1회 시도로 고정하고, non-stream `generate`는 Claude Code의 기본 retry 예산을 유지합니다. 검증 실패는 깨진 JSON 대신 명시적 에러로 반환합니다.
+- **위치 기반 tuple**: OpenAI는 지원되는 positive schema 위치에서 tuple의 위치별 제약을 정규화해 강제합니다. negative, conditional 등 안전하게 정규화할 수 없는 위치의 tuple은 의미가 바뀌는 변환 대신 HTTP 400으로 거부합니다. definition은 전역 정규화되므로 해당 위치에서 참조하는 경우도 같은 이유로 거부합니다. Anthropic 위치 기반 tuple schema도 Claude Code가 위치 의미를 보존할 수 없어 HTTP 400으로 거부됩니다. tuple node는 `type: "array"`를 명시하며 nullable tuple은 `anyOf`로 표현합니다.
+- **Schema reference**: structured schema에서는 문서 root 또는 `$defs`/`definitions` entry root만 연속으로 가리키는 로컬 root-relative JSON Pointer `$ref`를 허용합니다. property, tuple 내부, conditional, literal 값을 가리키는 ref는 정규화 중 target이 이동하거나 다시 작성될 수 있어 HTTP 400으로 거부합니다. resource ID, anchor, 외부 ref, dynamic ref, recursive ref도 허용하지 않습니다.
+- **Schema budget**: output/tool schema serialization, tool 이름, 설명, JSON escaping, composition framing은 합산 UTF-8 512 KiB 한도를 공유합니다.
 - **쿼터 관리**: 구독 rate limit (5시간/7일 rolling window) 적용. 토큰별 quota threshold(기본 80%) 초과 시 라우팅에서 자동 제외되며, 대시보드에서 수동 비활성화도 가능합니다.

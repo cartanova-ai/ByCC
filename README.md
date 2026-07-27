@@ -171,10 +171,11 @@ const { text } = await generateText({
   tools: {
     getWeather: tool({
       description: "Get the current weather for a city",
-      parameters: z.object({ city: z.string() }),
+      inputSchema: z.object({ city: z.string() }),
       execute: async ({ city }) => ({ temperature: 22, condition: "sunny" }),
     }),
   },
+  stopWhen: stepCountIs(3),
 });
 ```
 
@@ -306,10 +307,15 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_DB_USER` | PostgreSQL user (CLI) | `postgres` |
 | `QGRID_DB_PASSWORD` | PostgreSQL password (CLI) | `postgres` |
 | `QGRID_DB_NAME` | Database name (CLI) | `qgrid` |
-| `QGRID_WORKERS_PER_TOKEN` | Workers per OpenAI token | `3` (max 5) |
+| `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. Set to `false` or `0` to keep a fixed-size pool | enabled |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | Minimum OpenAI workers per token while autoscaling | `5` |
+| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | Maximum OpenAI workers per token while autoscaling | `15` |
+| `QGRID_WORKERS_PER_TOKEN` | Legacy fallback for the OpenAI minimum/fixed worker count | `5` |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
 
+> OpenAI worker counts are clamped to a hard cap of 20 per token. With autoscaling disabled, the pool stays at the configured minimum.
+>
 > Qgrid does not add a separate authentication guard to dashboard APIs. Keep `HOST` on loopback unless access is protected by a trusted network or reverse proxy. A public bind exposes every admin endpoint, including the Monit tab's server log feed.
 >
 > When running `packages/api` directly, set the same values with Sonamu's native `SONAMU_DB_*` variables.
@@ -342,6 +348,9 @@ packages/
 ## Notes
 
 - **OpenAI models**: codex app-server based. Sampling parameters like `temperature` and `maxOutputTokens` are not supported.
-- **Anthropic models**: Claude Code based. Requires OAuth login. Tool calling and structured output work the same as OpenAI; `sessionKey` thread reuse does not apply because every request runs in a fresh process.
-- **Structured output on Anthropic**: unlike codex (constrained decoding), Claude Code's `--json-schema` guides rather than constrains generation, so complex schemas can occasionally fail validation. Qgrid runs a single attempt (internal retries disabled by default) and surfaces an explicit error instead of returning broken JSON.
+- **Anthropic models**: Claude Code based. Requires OAuth login. Tool calling and object structured output are supported; `sessionKey` thread reuse does not apply because every request runs in a fresh process.
+- **Structured output on Anthropic**: unlike codex (constrained decoding), Claude Code's `--json-schema` guides generation through a `StructuredOutput` tool and validates afterward, so complex schemas can occasionally fail validation. Qgrid pins streaming structured calls to one attempt to bound stream latency; non-streaming `generate` keeps Claude Code's default retry budget. Validation failures remain explicit instead of returning broken JSON.
+- **Positional tuples**: OpenAI normalizes and enforces positional tuple constraints in supported positive schema positions. Tuples in negative, conditional, or otherwise non-normalizable positions fail with HTTP 400 instead of being rewritten with changed semantics. References from those positions are rejected for the same reason; definitions are normalized globally. Anthropic positional tuple schemas also fail with HTTP 400 because Claude Code cannot preserve their positional semantics. Tuple nodes must explicitly use `type: "array"`; nullable tuples use `anyOf`.
+- **Schema references**: structured schemas accept only local root-relative JSON Pointer `$ref` values targeting the document root or a chain of `$defs`/`definitions` entry roots. References into properties, tuple internals, conditionals, or literal values fail with HTTP 400 because normalization can move or rewrite those targets. Resource IDs, anchors, external refs, dynamic refs, and recursive refs are also rejected.
+- **Schema budget**: output/tool schema serialization, tool names, descriptions, JSON escaping, and composition framing share one aggregate 512 KiB UTF-8 budget.
 - **Quota management**: Subscription rate limits apply (5-hour / 7-day rolling window). Each token has a quota threshold (default 80%) that excludes it from routing when exceeded; tokens can also be disabled manually in the dashboard.

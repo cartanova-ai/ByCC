@@ -11,6 +11,7 @@ import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
 import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
+import { handleServerError } from "./server-error-handler";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
@@ -219,11 +220,7 @@ export default defineConfig({
         log.info("graceful shutdown");
       },
       onError: (error, _request, reply) => {
-        getLogger(["qgrid"]).error(`${error}`);
-        reply.status(500).send({
-          name: error.name,
-          message: error.message,
-        });
+        handleServerError(error, reply);
       },
     },
   },

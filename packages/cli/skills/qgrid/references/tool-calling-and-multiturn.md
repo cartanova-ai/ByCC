@@ -24,6 +24,11 @@ qgrid supports the AI SDK `tools` interface, but it does not use native provider
 - qgrid maps that structured object back into AI SDK `tool-call` content.
 - The AI SDK executes the actual tool functions and calls qgrid again with tool results.
 
+`generateText` and `streamText` default to `stepCountIs(1)`. When an executable
+tool can run before the final answer, callers must set a bounded `stopWhen`
+(for example `stepCountIs(3)`) or the AI SDK stops after the first tool-call
+step and cannot produce the final text or `Output.object` value.
+
 Do not describe this as OpenAI native function calling, Claude native tool use, or Codex/Claude executing client tools. The tools are client-side AI SDK tools requested through structured-output emulation.
 
 ## Client Flow
@@ -36,7 +41,9 @@ When `options.tools` contains function tools:
 2. Convert them with `toQgridTool`.
 3. Send `tools` in `/api/qgrid/query` or `/api/qgrid/prepareStream`.
 4. Forward the per-call `logger` switch when request logging is disabled.
-5. Do not send `jsonSchema` response format at the same time. The server infers whether the logged request becomes a multi-step run.
+5. When a top-level object response format is present, send `jsonSchema` alongside
+   `tools`. The server composes both schemas and infers whether the logged request
+   becomes a multi-step run.
 
 When qgrid responds with `finishReason: "tool-calls"`:
 
@@ -57,9 +64,10 @@ The registry is keyed per pending run so concurrent `generateText(...tools...)` 
 
 ## Server Schema Emulation
 
-`packages/api/src/application/qgrid/tool-emulation.ts` builds the tool-call schema.
+`packages/api/src/application/qgrid/tool-emulation-schema.ts` builds the tool-call schema.
+`tool-emulation.ts` decodes the model's action envelope into qgrid answer/tool-call content.
 
-The schema shape is:
+The tools-only schema shape is:
 
 ```json
 {
@@ -83,7 +91,13 @@ The schema explicitly tells the model:
 
 `qgrid.dispatcher.ts` strictifies this schema through `buildStrictOutputSchema` before it reaches provider dispatchers.
 
-If tools and `jsonSchema` are both present, dispatcher rejects the request.
+When tools and a user `jsonSchema` are both present, the dispatcher builds the
+same outer envelope on every turn, but replaces `answer: string | null` with
+`answer: <user schema> | null`. The user schema is namespaced under
+`$defs.__qgrid_user_output`, including rebased local JSON pointers, before the
+whole envelope is strictified. This prevents tool availability from disabling
+the final structured-output constraint, including when the model answers without
+calling a tool.
 
 ## Provider-Specific Path
 
@@ -111,9 +125,14 @@ In both providers, native provider tools are not the public abstraction. The pub
 `applyToolCallEmulation` handles provider text:
 
 - No tools: return normal text content.
-- Tools present and JSON parse fails: warn and fall back to text with `finishReason: "stop"`.
+- Tools-only mode and JSON parse failure: preserve the legacy warning and text
+  fallback with `finishReason: "stop"`.
+- Tools plus a user schema and malformed or incoherent envelope: return an
+  explicit structured-output error; do not rescue it as successful text.
 - `action: "tool_call"`: validate tool names, generate qgrid `toolCallId`, return `finishReason: "tool-calls"`.
-- `action: "answer"`: return final text with `finishReason: "stop"`.
+- `action: "answer"` in tools-only mode: return the string answer as final text.
+- `action: "answer"` with a user schema: JSON-serialize the structured `answer`
+  as final text so AI SDK can parse and validate `Output.object`.
 
 Unknown tool names throw.
 
@@ -127,6 +146,14 @@ AI SDK multi-step behavior is client-orchestrated:
 4. qgrid asks the model to continue from those results.
 
 This is different from a provider-native tool loop. Neither Codex nor Claude Code executes the AI SDK tool functions.
+
+The composed schema is reapplied to tool-result follow-up turns. Final output is
+identified by `action: "answer"` rather than by whether a tool happened to be
+available or called. AI SDK `toolChoice` is not transported or enforced by
+qgrid; the model selects between the envelope's answer and tool-call actions.
+
+The combined contract requires qgrid server 2.5.4 and
+`@cartanova/qgrid-ai-sdk` 2.5.4.
 
 OpenAI/Codex follow-ups can reuse the same Codex thread when `runContext.threadCoord` remains valid. For tool-result follow-up turns, qgrid sends delta input containing tool result text to the existing thread; cold fallback injects full history.
 

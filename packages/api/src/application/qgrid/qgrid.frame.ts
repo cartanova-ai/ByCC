@@ -11,6 +11,7 @@ import {
   getExpiresAt,
   getRefreshToken,
 } from "../../utils/providers/common/credentials";
+import { CallerSchemaValidationError } from "../../utils/providers/common/schema-validation";
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { TokenModel, type TokenUpdateFields } from "../token/token.model";
@@ -29,7 +30,7 @@ import {
   finishRunAborted,
   finishRunWithError,
 } from "./qgrid-run-lifecycle";
-import { QgridDispatcher } from "./qgrid.dispatcher";
+import { buildAndValidateStrictOutputSchema, QgridDispatcher } from "./qgrid.dispatcher";
 import {
   type QueryInput,
   type AppendStepInput,
@@ -43,6 +44,7 @@ import {
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
+import { ToolSchemaCompositionError } from "./tool-emulation-schema";
 
 const pendingStreams = new Map<string, QueryInput>();
 
@@ -100,6 +102,29 @@ function rejectLegacyLogMode(args: QueryInput): void {
   );
 }
 
+function rejectInvalidCallerSchemas(args: QueryInput): void {
+  if (args.jsonSchema === undefined && !args.tools?.length) return;
+
+  try {
+    buildAndValidateStrictOutputSchema(args);
+  } catch (error) {
+    if (
+      error instanceof CallerSchemaValidationError ||
+      error instanceof ToolSchemaCompositionError
+    ) {
+      throw new BadRequestException(error.message as LocalizedString);
+    }
+    // 잘못된 keyword 형태(anyOf 를 객체로 보내는 등)는 파이프라인에서 untyped 오류로 나오므로,
+    // 타입 좁히기 대신 Error 전체를 caller-fault 400 으로 매핑한다(계약 테스트로 고정됨).
+    if (error instanceof Error) {
+      throw new BadRequestException(
+        `qgrid: caller schema cannot be normalized: ${error.message}` as LocalizedString,
+      );
+    }
+    throw error;
+  }
+}
+
 function createHttpDisconnectHandle(): {
   signal: AbortSignal;
   dispose: () => void;
@@ -148,6 +173,7 @@ class QgridFrameClass extends BaseFrameClass {
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
     rejectLegacyLogMode(args);
+    rejectInvalidCallerSchemas(args);
     const disconnect = createHttpDisconnectHandle();
     try {
       if (args.logger === false) {
@@ -198,6 +224,7 @@ class QgridFrameClass extends BaseFrameClass {
   async prepareStream(args: QueryInput): Promise<{ streamId: string }> {
     rejectLegacyLogMode(args);
     rejectImageGenerationStream(args);
+    rejectInvalidCallerSchemas(args);
     const streamId = crypto.randomUUID();
     pendingStreams.set(streamId, args);
     const expiry = setTimeout(() => pendingStreams.delete(streamId), 30_000);
