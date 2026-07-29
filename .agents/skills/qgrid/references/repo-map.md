@@ -13,7 +13,7 @@ Use this map to orient qgrid work quickly.
 
 ## Deprecated/context-only package
 
-- `packages/sdk`: deprecated. Read only for historical context or migration clues. Do not implement new features, docs, or examples against this package unless explicitly asked for legacy compatibility.
+- `packages/sdk` no longer exists: the v1 SDK (`@cartanova/qgrid-sdk`) was removed from the repository and remains only as a deprecated npm artifact. For its history, read git log or the npm README.
 
 ## Runtime hot spots
 

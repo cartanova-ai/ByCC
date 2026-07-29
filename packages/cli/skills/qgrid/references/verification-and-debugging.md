@@ -43,7 +43,7 @@ Web package `qgrid-web`:
 - `pnpm --filter qgrid-web dev`.
 - `pnpm --filter qgrid-web preview`.
 
-`packages/sdk` is deprecated. Do not use its tests as active public-SDK verification unless explicitly doing legacy work.
+The old v1 SDK package (`packages/sdk`) has been removed from the repository; all public-SDK verification goes through `packages/ai-sdk`.
 
 ## Targeted Test Matrix
 
@@ -141,7 +141,7 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 `SERVER_BUSY`:
 
 - OpenAI worker queue is full or a queued request timed out.
-- Check `QGRID_WORKERS_PER_TOKEN`, worker readiness, long-running turns, and queue pressure.
+- Check `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN`/`QGRID_OPENAI_MAX_WORKERS_PER_TOKEN`, worker readiness, long-running turns, and queue pressure.
 
 `QuotaThresholdExceededError` or `quota_threshold gate: all_exceeded`:
 

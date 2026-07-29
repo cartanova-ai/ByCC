@@ -39,7 +39,7 @@ Request logging is enabled by default. Use `providerOptions.qgrid.logger: false`
 ## Non-Negotiable Boundaries
 
 - Use `packages/ai-sdk` as the active public SDK surface.
-- Treat `packages/sdk` as deprecated. Read it only for legacy context or migration clues. Do not add new examples or features on top of it unless explicitly asked for legacy work.
+- The old v1 SDK package (`packages/sdk`, `@cartanova/qgrid-sdk`) has been removed from the repository. It survives only as a deprecated npm artifact (1.9.0); do not resurrect it or write new code against it.
 - Let the server infer single-turn versus tool-run request-log lifecycle. Do not recreate caller-selected logging modes in the SDK or API examples.
 - Route provider models by prefix: `openai/*` goes to the OpenAI Codex runtime, `anthropic/*` goes to the Anthropic Claude Code runtime. Prefix-less model fallback is not implemented.
 - Treat Fable 5 safety fallback as upstream Claude Code behavior, not qgrid routing: a classifier refusal can retry on Opus 4.8. Do not add a second qgrid retry. Preserve requested Fable versus actual serving Opus, fallback history, and provider-reported cost; a fresh Claude Code process means the fallback is not sticky across qgrid requests.

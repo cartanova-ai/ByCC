@@ -26,7 +26,7 @@ Sources:
 
 Key decisions:
 
-- `packages/ai-sdk` is the active public SDK. `packages/sdk` is deprecated and should be read only for legacy context.
+- `packages/ai-sdk` is the active public SDK. The v1 SDK (`packages/sdk`) was deprecated in 2026-05 and removed from the repository in 2026-07; it remains only as a deprecated npm artifact.
 - qgrid's AI SDK provider follows the AI SDK `LanguageModelV3` contract. Generic usage belongs to AI SDK docs; qgrid-specific docs should focus on qgrid routing, logging, cache/session behavior, and `providerOptions.qgrid`.
 - qgrid-specific options live under `providerOptions.qgrid`, not under provider-specific namespaces such as `providerOptions.openai`. Consumers should not need to branch on Codex versus Claude internals.
 - AI SDK exposes the outer `providerOptions` as a generic JSON record. `QgridProviderOptions` intentionally types the nested `providerOptions.qgrid` value, and examples should apply `satisfies` there to restore qgrid-specific inference without replacing AI SDK's outer contract.

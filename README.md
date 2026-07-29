@@ -308,9 +308,8 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_DB_PASSWORD` | PostgreSQL password (CLI) | `postgres` |
 | `QGRID_DB_NAME` | Database name (CLI) | `qgrid` |
 | `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. Set to `false` or `0` to keep a fixed-size pool | enabled |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | Minimum OpenAI workers per token while autoscaling | `5` |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | Maximum OpenAI workers per token while autoscaling | `15` |
-| `QGRID_WORKERS_PER_TOKEN` | Legacy fallback for the OpenAI minimum/fixed worker count | `5` |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | Minimum OpenAI workers per token while autoscaling | `1` |
+| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | Maximum OpenAI workers per token while autoscaling | `3` |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
 
@@ -329,7 +328,6 @@ packages/
 ├── ai-sdk/  ← @cartanova/qgrid-ai-sdk (AI SDK v6 provider + logger)
 ├── api/     ← Sonamu server (QgridDispatcher, Request Log, OAuth)
 ├── web/     ← Dashboard React app (TanStack Router + Query)
-├── sdk/     ← @cartanova/qgrid-sdk (v1, deprecated)
 └── cli/     ← @cartanova/qgrid-cli (bundles the server)
 ```
 

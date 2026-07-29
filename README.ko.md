@@ -297,9 +297,8 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 | `QGRID_DB_PASSWORD` | PostgreSQL 비밀번호 (CLI) | `postgres` |
 | `QGRID_DB_NAME` | 데이터베이스 이름 (CLI) | `qgrid` |
 | `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. `false` 또는 `0`이면 고정 크기 pool 사용 | 활성 |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최소 worker 수 | `5` |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최대 worker 수 | `15` |
-| `QGRID_WORKERS_PER_TOKEN` | OpenAI 최소/고정 worker 수의 legacy fallback | `5` |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최소 worker 수 | `1` |
+| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최대 worker 수 | `3` |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL | `http://localhost:<port>` |
 | `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
 
@@ -318,7 +317,6 @@ packages/
 ├── ai-sdk/  ← @cartanova/qgrid-ai-sdk (AI SDK v6 provider + logger)
 ├── api/     ← Sonamu 서버 (QgridDispatcher, Request Log, OAuth)
 ├── web/     ← 대시보드 React 앱 (TanStack Router + Query)
-├── sdk/     ← @cartanova/qgrid-sdk (v1, deprecated)
 └── cli/     ← @cartanova/qgrid-cli (서버 번들 포함)
 ```
 

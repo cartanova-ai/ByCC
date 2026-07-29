@@ -4,7 +4,7 @@ Use this reference before changing `packages/ai-sdk`.
 
 ## Active public surface
 
-`packages/ai-sdk` is the active public SDK package. `packages/sdk` is deprecated and context-only.
+`packages/ai-sdk` is the active public SDK package. The old v1 SDK (`@cartanova/qgrid-sdk`) has been removed from the repository.
 
 qgrid's custom provider implements the AI SDK `LanguageModelV3` contract. General usage should follow the AI SDK docs and normal AI SDK APIs such as `generateText`, `streamText`, tools, structured output, and telemetry. Do not re-document generic AI SDK usage in qgrid-specific docs unless the behavior differs. qgrid docs and this skill should focus on qgrid-specific config, `providerOptions.qgrid`, request logging, runtime routing, cache/session behavior, and provider limitations.
 
