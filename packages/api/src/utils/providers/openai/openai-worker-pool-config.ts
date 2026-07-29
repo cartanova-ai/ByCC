@@ -36,15 +36,9 @@ export function resolveOpenAIWorkerPoolConfig(
   env: Record<string, string | undefined> = process.env,
 ): OpenAIWorkerPoolConfig {
   const autoscale = env.QGRID_OPENAI_AUTOSCALE !== "false" && env.QGRID_OPENAI_AUTOSCALE !== "0";
-  const legacyWorkers = boundedInteger(
-    env.QGRID_WORKERS_PER_TOKEN,
-    DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN,
-    1,
-    MAX_OPENAI_WORKERS_PER_TOKEN,
-  );
   const minWorkersPerToken = boundedInteger(
     env.QGRID_OPENAI_MIN_WORKERS_PER_TOKEN,
-    legacyWorkers,
+    DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN,
     1,
     MAX_OPENAI_WORKERS_PER_TOKEN,
   );

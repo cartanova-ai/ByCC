@@ -99,7 +99,6 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 | `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. `false` 또는 `0`이면 고정 크기 pool 사용 | 활성 |
 | `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최소 worker 수 | `5` |
 | `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최대 worker 수 | `15` |
-| `QGRID_WORKERS_PER_TOKEN` | OpenAI 최소/고정 worker 수의 legacy fallback | `5` |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL. 원격 접속 환경에서 설정 | 미설정 시 `http://localhost:<port>/callback` |
 | `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
 

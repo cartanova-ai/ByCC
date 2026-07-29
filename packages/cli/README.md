@@ -100,7 +100,6 @@ Server behavior variables:
 | `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. Set to `false` or `0` to keep a fixed-size pool | enabled |
 | `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | Minimum OpenAI workers per token while autoscaling | `5` |
 | `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | Maximum OpenAI workers per token while autoscaling | `15` |
-| `QGRID_WORKERS_PER_TOKEN` | Legacy fallback for the OpenAI minimum/fixed worker count | `5` |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback. Set it when the server is accessed remotely | `http://localhost:<port>/callback` when unset |
 | `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
 

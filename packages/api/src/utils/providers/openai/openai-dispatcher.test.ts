@@ -215,18 +215,19 @@ describe("OpenAIDispatcher worker capacity", () => {
     expect(makeOpenAIWorkerId(1, 10)).not.toBe(makeOpenAIWorkerId(2, 0));
   });
 
-  it("defaults to autoscaling from 5 to 15 workers per token", () => {
+  it("defaults to autoscaling from 1 to 3 workers per token", () => {
+    // dev0 OOM 사고(SON-516) 응급처치로 기본값을 5-15 에서 1-3 으로 축소 (f6d1333).
     expect(resolveOpenAIWorkerPoolConfig({})).toMatchObject({
       autoscale: true,
-      minWorkersPerToken: 5,
-      maxWorkersPerToken: 15,
+      minWorkersPerToken: 1,
+      maxWorkersPerToken: 3,
     });
   });
 
   it("keeps an explicit fixed worker mode for emergency rollback", () => {
     expect(
       resolveOpenAIWorkerPoolConfig({
-        QGRID_WORKERS_PER_TOKEN: "5",
+        QGRID_OPENAI_MIN_WORKERS_PER_TOKEN: "5",
         QGRID_OPENAI_AUTOSCALE: "false",
       }),
     ).toMatchObject({
@@ -234,6 +235,14 @@ describe("OpenAIDispatcher worker capacity", () => {
       minWorkersPerToken: 5,
       maxWorkersPerToken: 5,
     });
+  });
+
+  it("ignores the removed QGRID_WORKERS_PER_TOKEN variable", () => {
+    // 과거엔 min 의 폴백이었다 — dev0 사고 조사(SON-516)에서 이름과 달리 min 에만
+    // 꽂히는 함정으로 확인되어 제거. QGRID_OPENAI_MIN_WORKERS_PER_TOKEN 하나로 통일.
+    expect(
+      resolveOpenAIWorkerPoolConfig({ QGRID_WORKERS_PER_TOKEN: "15" }),
+    ).toMatchObject({ minWorkersPerToken: 1, maxWorkersPerToken: 3 });
   });
 
   it("estimates worker RSS from the dev0 measurement model", () => {
