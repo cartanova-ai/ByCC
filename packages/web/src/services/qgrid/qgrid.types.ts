@@ -105,40 +105,29 @@ export const QgridToolResultInput = z.object({
 });
 export type QgridToolResultInput = z.infer<typeof QgridToolResultInput>;
 
-export const QueryInput = z
-  .looseObject({
-    system: z.string().optional(),
-    prompt: z.string(),
-    input: z.array(QgridInputPart).optional(),
-    model: z.string().optional(),
-    timeout: QueryTimeoutMs.optional(),
-    jsonSchema: z.string().optional(),
-    tools: z.array(QgridTool).optional(),
-    effort: z.string().optional(),
-    verbosity: Verbosity.optional(),
-    reasoningSummary: ReasoningSummary.optional(),
-    serviceTier: ServiceTier.optional(),
-    history: z.string().optional(),
-    projectName: z.string().optional(),
-    // 호환용 필드. 서버 lifecycle 판단에는 사용하지 않는다.
-    isStep: z.boolean().optional(),
-    // 생략하면 로깅한다. false는 request log 쓰기만 끄고 dispatch/thread는 유지한다.
-    logger: z.boolean().optional(),
-    runContext: QgridRunContext.optional(),
-    toolResults: z.array(QgridToolResultInput).optional(),
-    // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in, non-stream).
-    imageGeneration: z.boolean().optional(),
-    // qgrid 가격 추정 및 Codex 이미지 요청 힌트. 이미지 모델은 gpt-image-2 로 고정 가정한다.
-    imageGenerationOptions: ImageGenerationOptions.optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (!Object.hasOwn(value, "logMode")) return;
-    ctx.addIssue({
-      code: "custom",
-      path: ["logMode"],
-      message: "logMode is no longer supported; use logger: false to disable request logging",
-    });
-  });
+export const QueryInput = z.looseObject({
+  system: z.string().optional(),
+  prompt: z.string(),
+  input: z.array(QgridInputPart).optional(),
+  model: z.string().optional(),
+  timeout: QueryTimeoutMs.optional(),
+  jsonSchema: z.string().optional(),
+  tools: z.array(QgridTool).optional(),
+  effort: z.string().optional(),
+  verbosity: Verbosity.optional(),
+  reasoningSummary: ReasoningSummary.optional(),
+  serviceTier: ServiceTier.optional(),
+  history: z.string().optional(),
+  projectName: z.string().optional(),
+  // 생략하면 로깅한다. false는 request log 쓰기만 끄고 dispatch/thread는 유지한다.
+  logger: z.boolean().optional(),
+  runContext: QgridRunContext.optional(),
+  toolResults: z.array(QgridToolResultInput).optional(),
+  // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in, non-stream).
+  imageGeneration: z.boolean().optional(),
+  // qgrid 가격 추정 및 Codex 이미지 요청 힌트. 이미지 모델은 gpt-image-2 로 고정 가정한다.
+  imageGenerationOptions: ImageGenerationOptions.optional(),
+});
 export type QueryInput = z.infer<typeof QueryInput>;
 
 export const ModelFallback = z.object({
@@ -277,17 +266,6 @@ export const FinishRunInput = z.object({
 export type FinishRunInput = z.infer<typeof FinishRunInput>;
 
 // ─── Token Management ───
-
-export const AddTokenInput = z.object({
-  token: z.string(),
-  name: z.string(),
-});
-export type AddTokenInput = z.infer<typeof AddTokenInput>;
-
-export const RemoveTokenInput = z.object({
-  token: z.string(),
-});
-export type RemoveTokenInput = z.infer<typeof RemoveTokenInput>;
 
 export const TokenStats = z.object({
   token: z.string(),

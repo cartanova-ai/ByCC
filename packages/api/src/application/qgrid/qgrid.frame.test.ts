@@ -343,19 +343,6 @@ describe("QgridFrame.query request logging", () => {
     expect(finishRunWithErrorMock).toHaveBeenCalledWith(41, "request log unavailable", args);
   });
 
-  it("rejects legacy logMode instead of silently enabling logging", async () => {
-    const legacyInput = {
-      prompt: "hi",
-      model: "openai/gpt-5-codex",
-      logMode: "none",
-    } as unknown as Parameters<typeof QgridFrame.query>[0];
-
-    await expect(QgridFrame.query(legacyInput)).rejects.toThrow(/logMode is no longer supported/);
-
-    expect(beforeQueryMock).not.toHaveBeenCalled();
-    expect(dispatcherQueryMock).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["malformed JSON", '{"type":"object"'],
     ["unsupported top-level array schema", '{"type":"array","items":{"type":"string"}}'],
@@ -703,9 +690,7 @@ describe("QgridFrame.query request logging", () => {
     expect(dispatcherQueryMock).not.toHaveBeenCalled();
   });
 
-  it("rejects legacy logMode in the wire schema", () => {
-    expect(QueryInput.safeParse({ prompt: "hi", logMode: "none" }).success).toBe(false);
-    expect(QueryInput.safeParse({ prompt: "hi", logMode: undefined }).success).toBe(false);
+  it("accepts logger: false in the wire schema", () => {
     expect(QueryInput.safeParse({ prompt: "hi", logger: false }).success).toBe(true);
   });
 

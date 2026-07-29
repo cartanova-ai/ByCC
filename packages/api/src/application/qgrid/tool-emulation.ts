@@ -67,15 +67,17 @@ interface EmulationImage {
 interface ToolCallEmulationOptions {
   threadCoord?: QgridThreadCoord;
   images?: EmulationImage[];
-  answerMode?: "legacy" | "structured";
+  // 필수: 호출부가 디코드 모드를 항상 명시해야 한다. 기본값을 두면 새 호출부가
+  // 옵션을 빠뜨렸을 때 조용히 관용 디코더로 떨어져 에러가 숨는다.
+  answerMode: "legacy" | "structured";
 }
 
 export function applyToolCallEmulation(
   result: EmulationResult,
-  tools?: QgridTool[],
-  options: ToolCallEmulationOptions = {},
+  tools: QgridTool[] | undefined,
+  options: ToolCallEmulationOptions,
 ): QueryOutput {
-  const { threadCoord, images, answerMode = "legacy" } = options;
+  const { threadCoord, images, answerMode } = options;
   const runContext = threadCoord ? { threadCoord } : undefined;
 
   if (!tools?.length) {

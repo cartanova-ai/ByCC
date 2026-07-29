@@ -13,13 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest watch --standalone",
     "test:coverage": "vitest run --coverage",
-    "sonamu": "sonamu",
-    "dump": "bash database/scripts/dump.sh",
-    "seedOnly": "bash database/scripts/seed.sh",
-    "seed": "pnpm seedOnly && sonamu fixture sync",
-    "sync:dump": "pnpm seed && pnpm sonamu migrate run && pnpm dump",
-    "docker:up": "docker compose --env-file .env -f database/docker-compose.yml up -d",
-    "docker:down": "docker compose --env-file .env -f database/docker-compose.yml down"
+    "sonamu": "sonamu"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.0",

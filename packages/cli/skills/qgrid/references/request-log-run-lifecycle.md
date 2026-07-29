@@ -11,7 +11,7 @@ qgrid query and stream inputs support `logger?: boolean`:
 
 The AI SDK exposes the switch as `providerOptions.qgrid.logger`. `logger: false` changes observability only: generation, streaming, AI SDK tool execution, tool-result continuation, and provider thread coordination remain active. The SDK keeps pending tool-call correlation locally when no request-log id exists.
 
-`logMode` has been removed and payloads that still contain it are rejected. Migrate old callers as follows:
+`logMode` has been removed. The wire schema no longer special-cases it, so a stray `logMode` key is silently ignored like any unknown key — it must not appear in new code. Migrate old callers as follows:
 
 - Omitted mode or `"auto"`: remove it; omit `logger` or use `logger: true`.
 - `"run"`: remove it; the server infers tool-run lifecycle.

@@ -27,7 +27,7 @@ describe("applyToolCallEmulation image parts", () => {
     const out = applyToolCallEmulation(
       { ...baseResult, text: "here is your image" },
       undefined,
-      { images: [img] },
+      { images: [img], answerMode: "legacy" },
     );
     expect(out.content).toEqual([
       { type: "text", text: "here is your image" },
@@ -42,6 +42,7 @@ describe("applyToolCallEmulation image parts", () => {
       { ...baseResult, text: "here is your image" },
       undefined,
       {
+        answerMode: "legacy",
         images: [
           { data: "iVBORw0KGgoAAA", revisedPrompt: "one" },
           { data: "iVBORw0KGgoBBB", revisedPrompt: "two" },
@@ -54,7 +55,9 @@ describe("applyToolCallEmulation image parts", () => {
   });
 
   it("leaves content unchanged when no images are passed (regression guard)", () => {
-    const out = applyToolCallEmulation({ ...baseResult, text: "here is your image" });
+    const out = applyToolCallEmulation({ ...baseResult, text: "here is your image" }, undefined, {
+      answerMode: "legacy",
+    });
     expect(out.content).toEqual([{ type: "text", text: "here is your image" }]);
   });
 });
@@ -273,7 +276,9 @@ describe("applyToolCallEmulation envelope validation", () => {
   });
 
   it("preserves malformed outer JSON fallback in legacy mode", () => {
-    const out = applyToolCallEmulation({ ...baseResult, text: "not-json" }, tools);
+    const out = applyToolCallEmulation({ ...baseResult, text: "not-json" }, tools, {
+      answerMode: "legacy",
+    });
 
     expect(out.text).toBe("not-json");
     expect(out.content).toEqual([{ type: "text", text: "not-json" }]);

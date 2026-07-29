@@ -95,13 +95,6 @@ function rejectImageGenerationStream(args: QueryInput): void {
   );
 }
 
-function rejectLegacyLogMode(args: QueryInput): void {
-  if (!Object.hasOwn(args, "logMode")) return;
-  throw new BadRequestException(
-    "qgrid: logMode is no longer supported; use logger: false to disable request logging." as LocalizedString,
-  );
-}
-
 function rejectInvalidCallerSchemas(args: QueryInput): void {
   if (args.jsonSchema === undefined && !args.tools?.length) return;
 
@@ -172,7 +165,6 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
-    rejectLegacyLogMode(args);
     rejectInvalidCallerSchemas(args);
     const disconnect = createHttpDisconnectHandle();
     try {
@@ -222,7 +214,6 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async prepareStream(args: QueryInput): Promise<{ streamId: string }> {
-    rejectLegacyLogMode(args);
     rejectImageGenerationStream(args);
     rejectInvalidCallerSchemas(args);
     const streamId = crypto.randomUUID();
@@ -237,7 +228,6 @@ class QgridFrameClass extends BaseFrameClass {
     const args = pendingStreams.get(streamId);
     pendingStreams.delete(streamId);
     if (!args) throw new Error("invalid or expired streamId");
-    rejectLegacyLogMode(args);
     rejectImageGenerationStream(args);
 
     const ctx = Sonamu.getContext();
