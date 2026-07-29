@@ -506,13 +506,18 @@ export class CodexAppServerWorker {
     try {
       ttftTracker.markStart();
       await this.startTurnOnThread(threadId, req);
+      const result = await resultPromise;
+      return { ...result, threadId };
     } catch (e) {
       this.failActiveTurn(e as Error);
       await resultPromise.catch(() => {});
       throw e;
+    } finally {
+      // 이미지 thread 는 1 회용 cold thread 인데 threadMeta 에 등록되지 않아
+      // sweep 이 못 잡는다. MB 급 base64 가 상주하므로 turn 종료 즉시(성공/실패
+      // 불문) 구독을 끊어 codex 30분 언로드 대상으로 만든다.
+      if (req.imageGeneration) this.unsubscribeThread(threadId);
     }
-    const result = await resultPromise;
-    return { ...result, threadId };
   }
 
   async executeTurnStream(
@@ -556,12 +561,15 @@ export class CodexAppServerWorker {
   }
 
   // idle TTL 초과 / 개수 상한 초과 thread 를 정리. createThread 직전 lazy 호출.
-  // codex ephemeral thread 는 명시적 close RPC 없이 맵에서 제거 → 더 이상 turn 안 보냄.
+  // 맵 제거(재사용 라우팅 차단)와 함께 thread/unsubscribe 를 보낸다 — codex 는
+  // "구독자 0 + idle" 이 30분(THREAD_UNLOADING_DELAY, 하드코딩) 지속된 thread 를
+  // 메모리에서 자동 언로드하는데, thread/start 가 이 커넥션을 자동 구독자로 등록해
+  // 두기 때문에 unsubscribe 없이는 그 언로드가 영원히 발동하지 않는다(SON-516 실증).
   sweepIdleThreads(): void {
     const now = Date.now();
     for (const [id, meta] of this.threadMeta) {
       if (now - meta.lastUsedAt > CodexAppServerWorker.THREAD_IDLE_TTL_MS) {
-        this.threadMeta.delete(id);
+        this.evictThread(id);
       }
     }
     // createThread 직전 호출 → 새 thread 1 개가 곧 추가된다. 추가 후에도 MAX 를 넘지 않도록
@@ -572,8 +580,24 @@ export class CodexAppServerWorker {
         (a, b) => a[1].lastUsedAt - b[1].lastUsedAt,
       );
       const over = this.threadMeta.size - limit;
-      for (let i = 0; i < over; i++) this.threadMeta.delete(sorted[i]![0]);
+      for (let i = 0; i < over; i++) this.evictThread(sorted[i]![0]);
     }
+  }
+
+  // thread 재사용 포기: 맵 제거(라우팅 차단)와 구독 해제를 한 단위로 묶는다.
+  // unsubscribe 한 thread 에 turn 을 보내면 알림이 이 커넥션으로 오지 않으므로
+  // 두 동작은 반드시 함께여야 한다.
+  private evictThread(threadId: string): void {
+    this.threadMeta.delete(threadId);
+    this.unsubscribeThread(threadId);
+  }
+
+  // 재사용을 포기한 thread 의 구독을 끊는다. 구독자가 없어진 idle thread 는 codex 가
+  // 30분 뒤 메모리에서 자동 언로드한다(SON-516 실증). fire-and-forget: 실패해도
+  // 무해(restart 시 프로세스째 회수). threadMeta 에 없는 이미지 1회용 thread 는
+  // evictThread 대신 이 메서드를 직접 호출한다.
+  private unsubscribeThread(threadId: string): void {
+    this.rpc?.request("thread/unsubscribe", { threadId }).catch(() => {});
   }
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {

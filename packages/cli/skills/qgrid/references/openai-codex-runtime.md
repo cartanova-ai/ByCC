@@ -22,8 +22,7 @@ OpenAI tokens use persistent Codex app-server workers.
 - Worker: `packages/api/src/utils/providers/openai/codex-worker.ts`.
 - RPC client: `packages/api/src/utils/providers/openai/codex-rpc.ts`.
 - Process command: `codex app-server --listen stdio://`.
-- Workers per token: autoscaling defaults to 5–15 workers per active token, with a hard cap of 20.
-- `QGRID_WORKERS_PER_TOKEN` is the legacy baseline and now supplies the minimum when `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` is absent.
+- Workers per token: autoscaling defaults to 1–3 workers per active token, with a hard cap of 20.
 - Worker id: `tokenId * 100 + workerIndex`.
 - Worker home: `/tmp/qgrid-codex/${tokenId}-${workerIndex}` when `workerIndex` exists.
 - Worker cwd: `${CODEX_HOME}/cwd`.
@@ -102,7 +101,11 @@ Worker thread metadata:
 - max threads per worker: 16.
 - cleanup is lazy before creating a new thread.
 
-There is no explicit close RPC for old ephemeral threads; qgrid removes them from the reuse map and stops routing turns to them.
+Eviction is two-sided. Removing a thread from the reuse map only stops qgrid from routing turns to it; the thread itself stays resident inside the codex process. Codex auto-unloads a thread from memory only when it has zero subscribers and has been idle for 30 minutes (`THREAD_UNLOADING_DELAY`, hardcoded upstream), and `thread/start` auto-registers the creating connection as a permanent subscriber. So on every eviction (TTL sweep or LRU cap) qgrid also sends fire-and-forget `thread/unsubscribe`, which arms that 30-minute unload. Image one-shot threads never enter the reuse map, so they are unsubscribed immediately after their turn completes or fails.
+
+Do not send turns to an unsubscribed thread: its notifications no longer reach qgrid's connection, so the turn would hang until timeout. Map removal must always precede or accompany unsubscribe.
+
+`thread/archive` is not usable here: it requires a rollout file and ephemeral threads have none ("no rollout found"). Without unsubscribe, worker RSS grows without bound (measured ~2 MiB resident per 512 KB injected history; dev0 incident reached ~1.28 GB per worker in two days).
 
 ## Queue and routing
 

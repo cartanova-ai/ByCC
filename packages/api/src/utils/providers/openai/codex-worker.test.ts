@@ -654,3 +654,150 @@ describe("CodexAppServerWorker image generation thread", () => {
     expect(params?.baseInstructions).toContain("Respond with text only");
   });
 });
+
+function unsubscribedIds(request: ReturnType<typeof vi.fn>): string[] {
+  return request.mock.calls
+    .filter(([method]) => method === "thread/unsubscribe")
+    .map(([, params]) => (params as { threadId: string }).threadId);
+}
+
+describe("CodexAppServerWorker thread unsubscribe on eviction", () => {
+  type ThreadMetaInternals = {
+    threadMeta: Map<string, { lastUsedAt: number }>;
+    rpc: { request: ReturnType<typeof vi.fn> };
+  };
+
+  function createWorkerWithUnsubscribeSpy() {
+    const worker = new CodexAppServerWorker({
+      tokenId: 1,
+      tokenName: "token",
+      accessToken: "access",
+      accountId: "account",
+    });
+    const request = vi.fn(async (_method: string, _params?: unknown) => ({}));
+    (worker as unknown as ThreadMetaInternals).rpc = { request };
+    return { worker, request, meta: (worker as unknown as ThreadMetaInternals).threadMeta };
+  }
+
+  it("sends thread/unsubscribe for TTL-expired threads", () => {
+    const { worker, request, meta } = createWorkerWithUnsubscribeSpy();
+    const now = Date.now();
+    meta.set("stale-1", { lastUsedAt: now - 11 * 60_000 });
+    meta.set("stale-2", { lastUsedAt: now - 20 * 60_000 });
+    meta.set("fresh", { lastUsedAt: now });
+
+    worker.sweepIdleThreads();
+
+    // 맵 제거(라우팅 차단)와 구독 해제가 함께 일어나야 codex 30분 언로드가 발동한다.
+    expect(meta.has("stale-1")).toBe(false);
+    expect(meta.has("stale-2")).toBe(false);
+    expect(meta.has("fresh")).toBe(true);
+    expect(unsubscribedIds(request).toSorted()).toEqual(["stale-1", "stale-2"]);
+  });
+
+  it("sends thread/unsubscribe for LRU-evicted threads over the cap", () => {
+    const { worker, request, meta } = createWorkerWithUnsubscribeSpy();
+    const now = Date.now();
+    for (let i = 0; i < 17; i++) {
+      meta.set(`t-${i}`, { lastUsedAt: now - (17 - i) * 1_000 });
+    }
+
+    worker.sweepIdleThreads();
+
+    // 상한(MAX-1=15)으로 줄이며 가장 오래된 2개가 축출·구독 해제된다.
+    expect(meta.size).toBe(15);
+    expect(unsubscribedIds(request).toSorted()).toEqual(["t-0", "t-1"]);
+  });
+
+  it("does not unsubscribe surviving threads", () => {
+    const { worker, request, meta } = createWorkerWithUnsubscribeSpy();
+    meta.set("live", { lastUsedAt: Date.now() });
+
+    worker.sweepIdleThreads();
+
+    expect(unsubscribedIds(request)).toEqual([]);
+  });
+});
+
+describe("CodexAppServerWorker image thread unsubscribe", () => {
+  const IMAGE_B64 = "iVBORw0KGgoBAgMEBQYHCA==";
+
+  it("unsubscribes the one-shot image thread right after a successful turn", async () => {
+    const { worker, request } = createWorkerWithNotificationRpc(
+      async (method, _params, handlers) => {
+        if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+        if (method === "thread/unsubscribe") return {};
+        if (method === "turn/start") {
+          handlers.get("item/completed")?.({
+            threadId: "t1",
+            item: { type: "imageGeneration", id: "img-a", status: "generating", result: IMAGE_B64, revisedPrompt: null },
+          } as never);
+          handlers.get("turn/completed")?.({
+            threadId: "t1",
+            turn: { status: "completed", durationMs: 100 },
+          } as never);
+          return { turn: { id: "turn-1" } };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    );
+
+    await worker.executeTurn({
+      input: [{ type: "text", text: "img", text_elements: [] }],
+      imageGeneration: true,
+    });
+
+    // 이미지 thread 는 threadMeta 미등록이라 sweep 이 못 잡는다 — turn 직후 즉시 구독 해제.
+    expect(unsubscribedIds(request)).toEqual(["t1"]);
+  });
+
+  it("unsubscribes the image thread even when the turn fails", async () => {
+    const { worker, request } = createWorkerWithNotificationRpc(
+      async (method, _params, handlers) => {
+        if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+        if (method === "thread/unsubscribe") return {};
+        if (method === "turn/start") {
+          handlers.get("turn/completed")?.({
+            threadId: "t1",
+            turn: { status: "failed", durationMs: 100, error: { message: "boom" } },
+          } as never);
+          return { turn: { id: "turn-1" } };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    );
+
+    await expect(
+      worker.executeTurn({
+        input: [{ type: "text", text: "img", text_elements: [] }],
+        imageGeneration: true,
+      }),
+    ).rejects.toThrow("turn failed");
+
+    // 실패해도 1 회용 thread 인 것은 같다 — base64 없이도 히스토리가 상주하므로 해제.
+    expect(unsubscribedIds(request)).toEqual(["t1"]);
+  });
+
+  it("keeps text threads subscribed so reuse turns still receive notifications", async () => {
+    const { worker, request } = createWorkerWithNotificationRpc(
+      async (method, _params, handlers) => {
+        if (method === "thread/start") return { thread: { id: "t1" }, model: "gpt-test" };
+        if (method === "turn/start") {
+          handlers.get("turn/completed")?.({
+            threadId: "t1",
+            turn: { status: "completed", durationMs: 100 },
+          } as never);
+          return { turn: { id: "turn-1" } };
+        }
+        throw new Error(`unexpected request: ${method}`);
+      },
+    );
+
+    await worker.executeTurn({
+      input: [{ type: "text", text: "hello", text_elements: [] }],
+    });
+
+    // 텍스트 thread 는 재사용 후보 — 구독을 유지해야 후속 turn 알림을 받는다.
+    expect(unsubscribedIds(request)).toEqual([]);
+  });
+});
