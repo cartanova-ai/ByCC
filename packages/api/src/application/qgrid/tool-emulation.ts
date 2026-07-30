@@ -22,34 +22,42 @@ const logger = getLogger(["qgrid", "tool-emulation"]);
 
 type EmulationResult = Omit<QueryOutput, "content" | "finishReason" | "runContext">;
 type ToolCall = { toolName: string; args: string };
-type LegacyToolCallResponse = {
-  action?: "answer" | "tool_call";
-  answer?: string | null;
-  toolCalls?: ToolCall[] | null;
-};
 
-const StructuredToolCallResponse = z.discriminatedUnion("action", [
-  z.strictObject({
-    action: z.literal("answer"),
-    answer: z.json().refine((answer) => answer !== null, {
-      message: "answer must be non-null",
-    }),
-    toolCalls: z.union([z.null(), z.tuple([])]),
-  }),
-  z.strictObject({
-    action: z.literal("tool_call"),
-    answer: z.null(),
-    toolCalls: z
-      .array(
-        z.strictObject({
-          toolName: z.string(),
-          args: z.string(),
-        }),
-      )
-      .min(1),
-  }),
-]);
-type StructuredResponse = z.infer<typeof StructuredToolCallResponse>;
+// envelope 는 {result: <union>} 한 겹 구조 — 스키마 근거는 tool-emulation-schema.ts 참조.
+// answer 타입만 요청 형태에 따라 다르다: tools-only 는 string(그대로 반환),
+// tools+jsonSchema 는 사용자 스키마의 JSON 값(JSON.stringify 로 반환).
+function buildEnvelopeSchema(answerKind: AnswerKind) {
+  return z.strictObject({
+    result: z.discriminatedUnion("action", [
+      z.strictObject({
+        action: z.literal("answer"),
+        answer:
+          answerKind === "text"
+            ? z.string()
+            : z.json().refine((answer) => answer !== null, {
+                message: "answer must be non-null",
+              }),
+        toolCalls: z.null(),
+      }),
+      z.strictObject({
+        action: z.literal("tool_call"),
+        answer: z.null(),
+        toolCalls: z
+          .array(
+            z.strictObject({
+              toolName: z.string(),
+              args: z.string(),
+            }),
+          )
+          .min(1),
+      }),
+    ]),
+  });
+}
+
+const TEXT_ENVELOPE = buildEnvelopeSchema("text");
+const JSON_ENVELOPE = buildEnvelopeSchema("json");
+type EnvelopeResponse = z.infer<typeof JSON_ENVELOPE>["result"];
 
 export class ToolCallEmulationError extends Error {
   constructor(message: string) {
@@ -64,12 +72,15 @@ interface EmulationImage {
   revisedPrompt?: string | null;
 }
 
+// answer 인코딩 종류. envelope 디코더는 한 벌이고 이 값은 answer 브랜치의 타입과
+// 최종 직렬화(text: 그대로 / json: JSON.stringify)만 가른다.
+export type AnswerKind = "text" | "json";
+
 interface ToolCallEmulationOptions {
   threadCoord?: QgridThreadCoord;
   images?: EmulationImage[];
-  // 필수: 호출부가 디코드 모드를 항상 명시해야 한다. 기본값을 두면 새 호출부가
-  // 옵션을 빠뜨렸을 때 조용히 관용 디코더로 떨어져 에러가 숨는다.
-  answerMode: "legacy" | "structured";
+  // 필수: 호출부가 answer 인코딩을 항상 명시해야 한다 (input.jsonSchema 유무로 판정).
+  answerKind: AnswerKind;
 }
 
 export function applyToolCallEmulation(
@@ -77,59 +88,30 @@ export function applyToolCallEmulation(
   tools: QgridTool[] | undefined,
   options: ToolCallEmulationOptions,
 ): QueryOutput {
-  const { threadCoord, images, answerMode } = options;
+  const { threadCoord, images, answerKind } = options;
   const runContext = threadCoord ? { threadCoord } : undefined;
 
   if (!tools?.length) {
     return answerOutput(result, result.text, images, runContext);
   }
 
-  if (answerMode === "legacy") {
-    return applyLegacyResponse(result, tools, images, runContext);
-  }
-
-  const parsed = parseStructuredResponse(result.text, tools);
+  const parsed = parseEnvelope(result.text, tools, answerKind);
   if (parsed.action === "tool_call") {
     return toolCallOutput(result, parsed.toolCalls, images, runContext);
   }
 
-  return answerOutput(result, JSON.stringify(parsed.answer), images, runContext);
+  return answerOutput(
+    result,
+    answerKind === "text" ? (parsed.answer as string) : JSON.stringify(parsed.answer),
+    images,
+    runContext,
+  );
 }
 
-/**
- * Tools-only requests keep the permissive 2.5.3 contract. Structured-output requests use the
- * strict decoder below because their outer action envelope is an internal server contract.
- */
-function applyLegacyResponse(
-  result: EmulationResult,
-  tools: QgridTool[],
-  images: EmulationImage[] | undefined,
-  runContext: QueryOutput["runContext"],
-): QueryOutput {
-  let parsed: LegacyToolCallResponse;
-  try {
-    parsed = JSON.parse(result.text) as LegacyToolCallResponse;
-  } catch (error) {
-    logger.warn(
-      `tool-call emulation parse failed, falling back to text: ${(error as Error).message}`,
-    );
-    return answerOutput(result, result.text, images, runContext);
-  }
-
-  if (parsed.action === "tool_call") {
-    const toolCalls = parsed.toolCalls ?? [];
-    const unknownTool = findUnknownTool(toolCalls, tools);
-    if (unknownTool !== undefined) throw new Error(`unknown emulated tool: ${unknownTool}`);
-    return toolCallOutput(result, toolCalls, images, runContext);
-  }
-
-  return answerOutput(result, parsed.answer ?? result.text, images, runContext);
-}
-
-function parseStructuredResponse(text: string, tools: QgridTool[]) {
+function parseEnvelope(text: string, tools: QgridTool[], answerKind: AnswerKind) {
   if (Buffer.byteLength(text, "utf8") > STRUCTURED_ENVELOPE_LIMITS.maxUtf8Bytes) {
     throw new ToolCallEmulationError(
-      `structured-output envelope exceeds UTF-8 byte limit of ${STRUCTURED_ENVELOPE_LIMITS.maxUtf8Bytes}`,
+      `tool envelope exceeds UTF-8 byte limit of ${STRUCTURED_ENVELOPE_LIMITS.maxUtf8Bytes}`,
     );
   }
 
@@ -137,23 +119,27 @@ function parseStructuredResponse(text: string, tools: QgridTool[]) {
   try {
     value = JSON.parse(text);
   } catch (error) {
-    throw new ToolCallEmulationError(
-      `invalid structured-output envelope: ${(error as Error).message}`,
-    );
+    // 관용 폴백 없음: envelope 는 양 provider 의 structured output 으로 강제되는 내부
+    // 계약이라 여기 도달한 비 JSON 은 버그다. 과거의 텍스트 구제는 퇴화 봉투를 답변으로
+    // 흘려보내 조용한 오염을 만들었다(2026-07 medpath, 13.5k 건).
+    logger.warn(`tool envelope parse failed: ${(error as Error).message}`);
+    throw new ToolCallEmulationError(`invalid tool envelope: ${(error as Error).message}`);
   }
 
   assertStructuredEnvelopeComplexity(value);
-  const validation = StructuredToolCallResponse.safeParse(value);
+  const schema = answerKind === "text" ? TEXT_ENVELOPE : JSON_ENVELOPE;
+  const validation = schema.safeParse(value);
   if (!validation.success) {
     const issue = validation.error.issues[0];
     const path = issue && issue.path.length > 0 ? ` at ${issue.path.join(".")}` : "";
     const detail = issue?.message ?? "unknown validation issue";
-    throw new ToolCallEmulationError(`invalid structured-output envelope${path}: ${detail}`);
+    logger.warn(`tool envelope validation failed${path}: ${detail}`);
+    throw new ToolCallEmulationError(`invalid tool envelope${path}: ${detail}`);
   }
 
   // Zod clones JSON objects and drops own "__proto__" keys. The parsed JSON is safe to return
   // after validation and preserves the caller's exact structured value.
-  const response = value as StructuredResponse;
+  const response = (value as { result: EnvelopeResponse }).result;
   if (response.action === "tool_call") {
     const unknownTool = findUnknownTool(response.toolCalls, tools);
     if (unknownTool !== undefined) {

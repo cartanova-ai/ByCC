@@ -1067,7 +1067,7 @@ describe("QgridFrame.queryStream request logging", () => {
       expect(generateStream).toHaveBeenCalledOnce();
       expect(finishRunWithErrorMock).toHaveBeenCalledWith(
         52,
-        expect.stringContaining("invalid structured-output envelope"),
+        expect.stringContaining("invalid tool envelope"),
         args,
       );
       const errorMessage = finishRunWithErrorMock.mock.calls[0]?.[1];

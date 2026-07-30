@@ -31,27 +31,48 @@ describe("buildToolCallSchema", () => {
       expect.stringContaining("Do not invoke listed client tools as native Claude Code tools"),
     );
     expect(schema).toHaveProperty(
-      ["properties", "action", "description"],
-      expect.stringContaining("tool_call"),
-    );
-    expect(schema).toHaveProperty(
-      ["properties", "toolCalls", "description"],
+      ["properties", "result", "anyOf", 1, "description"],
       expect.stringContaining("Do not call these tools as native"),
     );
     expect(schema).toHaveProperty(
-      ["properties", "toolCalls", "anyOf", 0, "items", "properties", "toolName", "description"],
+      [
+        "properties",
+        "result",
+        "anyOf",
+        1,
+        "properties",
+        "toolCalls",
+        "items",
+        "properties",
+        "toolName",
+        "description",
+      ],
       expect.stringContaining("getWeather"),
     );
   });
 
-  it("preserves the legacy string answer shape when no user schema is supplied", () => {
+  it("makes degenerate combinations grammatically impossible", () => {
     const schema = buildToolCallSchema(tools);
 
     expect(schema).not.toHaveProperty("$defs");
-    expect(schema).toHaveProperty("properties.answer.anyOf", [
-      { type: "string" },
-      { type: "null" },
-    ]);
+    // answer 변형: answer 는 비 null string 필수, toolCalls 는 null 고정.
+    expect(schema).toHaveProperty(["properties", "result", "anyOf", 0, "properties", "answer"], {
+      type: "string",
+    });
+    expect(schema).toHaveProperty(["properties", "result", "anyOf", 0, "properties", "toolCalls"], {
+      type: "null",
+    });
+    // tool_call 변형: toolCalls 1개 이상 필수, answer 는 null 고정.
+    expect(schema).toHaveProperty(
+      ["properties", "result", "anyOf", 1, "properties", "toolCalls", "minItems"],
+      1,
+    );
+    expect(schema).toHaveProperty(["properties", "result", "anyOf", 1, "properties", "answer"], {
+      type: "null",
+    });
+    // OpenAI structured outputs 제약: 루트는 object, union 은 result property 아래 중첩.
+    expect(schema).toHaveProperty("type", "object");
+    expect(schema).toHaveProperty("required", ["result"]);
   });
 
   it("namespaces a user schema and references it from answer", () => {
@@ -61,10 +82,9 @@ describe("buildToolCallSchema", () => {
     };
     const schema = buildToolCallSchema(tools, userSchema);
 
-    expect(schema).toHaveProperty("properties.answer.anyOf", [
-      { $ref: "#/$defs/__qgrid_user_output" },
-      { type: "null" },
-    ]);
+    expect(schema).toHaveProperty(["properties", "result", "anyOf", 0, "properties", "answer"], {
+      $ref: "#/$defs/__qgrid_user_output",
+    });
     expect(schema).toHaveProperty(userPath(), userSchema);
   });
 

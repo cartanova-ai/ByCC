@@ -466,7 +466,11 @@ describe("QgridDispatcherClass", () => {
         },
       }),
     }) as {
-      properties?: { answer?: { anyOf?: Array<{ $ref?: string }> } };
+      properties?: {
+        result?: {
+          anyOf?: Array<{ properties?: { answer?: { $ref?: string } } }>;
+        };
+      };
       $defs?: {
         __qgrid_user_output?: {
           required?: string[];
@@ -484,7 +488,7 @@ describe("QgridDispatcherClass", () => {
     };
     const userSchema = schema.$defs?.__qgrid_user_output;
 
-    expect(schema.properties?.answer?.anyOf?.[0]?.$ref).toBe(
+    expect(schema.properties?.result?.anyOf?.[0]?.properties?.answer?.$ref).toBe(
       "#/$defs/__qgrid_user_output",
     );
     expect(userSchema).toMatchObject({
@@ -640,7 +644,7 @@ describe("QgridDispatcherClass", () => {
         const generate = vi.fn(async (req: GenerateRequest) => {
           request = req;
           return providerResult({
-            text: '{"action":"answer","answer":{"result":"ok"},"toolCalls":null}',
+            text: '{"result":{"action":"answer","answer":{"payload":"ok"},"toolCalls":null}}',
           });
         });
         if (provider === "openai") dispatcher.openaiDispatcher = { generate } as never;
@@ -654,7 +658,7 @@ describe("QgridDispatcherClass", () => {
             request = req;
             cb.onComplete(
               providerResult({
-                text: '{"action":"answer","answer":{"result":"ok"},"toolCalls":null}',
+                text: '{"result":{"action":"answer","answer":{"payload":"ok"},"toolCalls":null}}',
               }),
             );
           },
@@ -679,10 +683,20 @@ describe("QgridDispatcherClass", () => {
 
       expect(request?.outputSchema).toMatchObject({
         properties: {
-          answer: {
+          result: {
             anyOf: [
-              { $ref: "#/$defs/__qgrid_user_output" },
-              { type: "null" },
+              {
+                properties: {
+                  action: { enum: ["answer"] },
+                  answer: { $ref: "#/$defs/__qgrid_user_output" },
+                },
+              },
+              {
+                properties: {
+                  action: { enum: ["tool_call"] },
+                  toolCalls: { minItems: 1 },
+                },
+              },
             ],
           },
         },
@@ -694,7 +708,7 @@ describe("QgridDispatcherClass", () => {
           },
         },
       });
-      expect(mappedText).toBe('{"result":"ok"}');
+      expect(mappedText).toBe('{"payload":"ok"}');
     },
   );
 

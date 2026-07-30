@@ -68,8 +68,8 @@ export class QgridDispatcherClass {
   async query(input: QueryInput, abortSignal?: AbortSignal): Promise<QueryOutput> {
     const route = parseProviderRoute(input.model);
     const outputSchema = buildAndValidateStrictOutputSchema(input, route.provider);
-    // tools+jsonSchema 합성 시 structured envelope 디코더를 쓴다. 4개 방출 지점이 공유하는 단일 판정.
-    const answerMode = input.jsonSchema ? ("structured" as const) : ("legacy" as const);
+    // answer 인코딩 판정: jsonSchema 있으면 사용자 스키마 JSON, 없으면 평문 string. 4개 방출 지점이 공유.
+    const answerKind = input.jsonSchema ? ("json" as const) : ("text" as const);
 
     // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
     if (route.provider === "openai") {
@@ -102,7 +102,7 @@ export class QgridDispatcherClass {
       return applyToolCallEmulation(toEmulationResult(result), input.tools, {
         threadCoord: coord,
         images: result.images,
-        answerMode,
+        answerKind,
       });
     } else if (route.provider === "anthropic") {
       if (!this.anthropicDispatcher) throw new QuotaError("Anthropic dispatcher not initialized");
@@ -124,7 +124,7 @@ export class QgridDispatcherClass {
 
       return applyToolCallEmulation(toEmulationResult(result), input.tools, {
         threadCoord: issueConvContext(result.threadCoord, decision),
-        answerMode,
+        answerKind,
       });
     }
 
@@ -138,8 +138,8 @@ export class QgridDispatcherClass {
   ): Promise<void> {
     const route = parseProviderRoute(input.model);
     const outputSchema = buildAndValidateStrictOutputSchema(input, route.provider);
-    // tools+jsonSchema 합성 시 structured envelope 디코더를 쓴다. 4개 방출 지점이 공유하는 단일 판정.
-    const answerMode = input.jsonSchema ? ("structured" as const) : ("legacy" as const);
+    // answer 인코딩 판정: jsonSchema 있으면 사용자 스키마 JSON, 없으면 평문 string. 4개 방출 지점이 공유.
+    const answerKind = input.jsonSchema ? ("json" as const) : ("text" as const);
 
     if (route.provider === "openai") {
       if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
@@ -171,7 +171,7 @@ export class QgridDispatcherClass {
             cb.onComplete(
               applyToolCallEmulation(toEmulationResult(turnResult), input.tools, {
                 threadCoord: issueConvContext(turnResult.threadCoord, decision),
-                answerMode,
+                answerKind,
               }),
             );
           },
@@ -204,7 +204,7 @@ export class QgridDispatcherClass {
             cb.onComplete(
               applyToolCallEmulation(toEmulationResult(turnResult), input.tools, {
                 threadCoord: issuedCoord,
-                answerMode,
+                answerKind,
               }),
             );
           },

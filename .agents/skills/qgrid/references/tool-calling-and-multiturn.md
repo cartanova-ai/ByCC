@@ -67,20 +67,33 @@ The registry is keyed per pending run so concurrent `generateText(...tools...)` 
 `packages/api/src/application/qgrid/tool-emulation-schema.ts` builds the tool-call schema.
 `tool-emulation.ts` decodes the model's action envelope into qgrid answer/tool-call content.
 
-The tools-only schema shape is:
+The envelope is a root object with a `result` property holding a discriminated
+union. The union makes degenerate combinations grammatically impossible: the
+answer variant requires a non-null `answer` with `toolCalls: null`, and the
+tool_call variant requires `answer: null` with at least one tool call. The union
+nests under `result` because OpenAI structured outputs requires an object root
+and rejects a top-level `anyOf` (nested `anyOf` and `minItems` are supported;
+verified against both providers on 2026-07-30).
 
-```json
+```jsonc
 {
-  "action": "answer | tool_call",
-  "answer": "string | null",
-  "toolCalls": [
-    {
-      "toolName": "one of the AI SDK tool names",
-      "args": "JSON string"
+  "type": "object",
+  "properties": {
+    "result": {
+      "anyOf": [
+        { "action": "answer", "answer": "string (or user schema $ref)", "toolCalls": null },
+        { "action": "tool_call", "answer": null, "toolCalls": [{ "toolName": "…", "args": "JSON string" }] } // minItems 1
+      ]
     }
-  ]
+  },
+  "required": ["result"]
 }
 ```
+
+The flat pre-2.5.7 envelope allowed `action:"answer", answer:null` through
+constrained decoding; the tolerant decoder then leaked the raw envelope as the
+final answer text (measured 13.5k corrupted medpath rows, 2026-07-03..15). That
+incident is why both the schema and the decoder are strict now.
 
 The schema explicitly tells the model:
 
@@ -152,10 +165,11 @@ and rewrite every local pointer to the new base.
 {
   "type": "object",
   "properties": {
-    "action": { "enum": ["answer", "tool_call"] },
-    // string branch becomes a reference to the caller's schema
-    "answer": { "anyOf": [{ "$ref": "#/$defs/__qgrid_user_output" }, { "type": "null" }] },
-    "toolCalls": { "…": "unchanged" }
+    "result": { "anyOf": [
+      // answer variant: string slot becomes a reference to the caller's schema
+      { "properties": { "action": { "enum": ["answer"] }, "answer": { "$ref": "#/$defs/__qgrid_user_output" }, "toolCalls": { "type": "null" } } },
+      { "…": "tool_call variant unchanged" }
+    ] }
   },
   "$defs": {
     "__qgrid_user_output": {
@@ -207,9 +221,12 @@ occupy the `answer` branch.
 
 ### Compatibility
 
-`answer` falls back to `{ "type": "string" }` whenever no user schema is present.
-That single branch is why tools-only calls and older SDKs keep working against a
-2.5.4 server unchanged.
+The answer variant's `answer` slot falls back to `{ "type": "string" }` whenever
+no user schema is present, and the decoder returns that string verbatim (no JSON
+quoting). The public `QueryOutput` contract is unchanged for well-formed model
+output, so SDK versions are unaffected; only the server-internal envelope shape
+changed in 2.5.7 (`result` wrapper), which resets provider prompt-cache prefixes
+once per deploy.
 
 ## Provider-Specific Path
 
@@ -234,19 +251,20 @@ In both providers, native provider tools are not the public abstraction. The pub
 
 ## Applying Emulated Tool Calls
 
-`applyToolCallEmulation` handles provider text:
+`applyToolCallEmulation` handles provider text with a single strict decoder.
+There is no tolerant mode: any malformed, degenerate, or non-JSON envelope on a
+tools request raises `ToolCallEmulationError` instead of being rescued as text.
+The old tolerant decoder silently shipped degenerate envelopes as answers
+(13.5k medpath rows, 2026-07); rescue is strictly worse than failing loudly.
 
-- No tools: return normal text content.
-- Tools-only mode and JSON parse failure: preserve the legacy warning and text
-  fallback with `finishReason: "stop"`.
-- Tools plus a user schema and malformed or incoherent envelope: return an
-  explicit structured-output error; do not rescue it as successful text.
+- No tools: return normal text content (no envelope involved).
 - `action: "tool_call"`: validate tool names, generate qgrid `toolCallId`, return `finishReason: "tool-calls"`.
-- `action: "answer"` in tools-only mode: return the string answer as final text.
-- `action: "answer"` with a user schema: JSON-serialize the structured `answer`
-  as final text so AI SDK can parse and validate `Output.object`.
+- `action: "answer"` with `answerKind: "text"` (tools-only): return the string answer verbatim as final text.
+- `action: "answer"` with `answerKind: "json"` (tools + user schema): JSON-serialize the
+  `answer` as final text so AI SDK can parse and validate `Output.object`.
 
-Unknown tool names throw.
+Unknown tool names throw. `answerKind` is required and derived from
+`input.jsonSchema` presence at the dispatcher.
 
 ## Multi-Step And Multi-Turn
 

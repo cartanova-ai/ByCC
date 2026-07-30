@@ -34,6 +34,12 @@ export class ToolSchemaCompositionError extends Error {
   }
 }
 
+// envelope 는 result 한 겹 아래에 discriminated union 을 둔다. 두 변형을 문법 수준에서
+// 상호배타로 만들어(answer 변형은 answer 비null 필수, tool_call 변형은 toolCalls 1개 이상)
+// `action:"answer", answer:null` 같은 퇴화 조합을 원천 차단한다 — 평평한 스키마 시절
+// 이 조합이 constrained decoding 을 통과해 13.5k 건의 오염 응답을 만든 실사고가 근거.
+// union 을 result property 안에 중첩하는 이유: OpenAI structured outputs 는 루트가
+// object 여야 하고 top-level anyOf 를 거부한다. 중첩 anyOf 와 minItems 는 지원된다.
 export function buildToolCallSchema(tools: QgridTool[], answerSchema?: JsonValue): JsonValue {
   const toolDescriptions = tools
     .map((tool) => {
@@ -48,48 +54,59 @@ export function buildToolCallSchema(tools: QgridTool[], answerSchema?: JsonValue
   return {
     type: "object",
     description:
-      "Use this schema only through StructuredOutput. Do not invoke listed client tools as native Claude Code tools. To request client-side tool execution, set action to tool_call and include toolCalls. Use action answer only when no further client tool result is needed.",
+      "Use this schema only through StructuredOutput. Do not invoke listed client tools as native Claude Code tools. To request client-side tool execution, set result.action to tool_call and include result.toolCalls. Use action answer only when no further client tool result is needed.",
     properties: {
-      action: {
-        type: "string",
-        enum: ["answer", "tool_call"],
-        description:
-          "Use tool_call to request client-side tool execution through this structured output. Use answer only for a final answer.",
-      },
-      answer: {
-        anyOf: [
-          normalizedAnswerSchema === undefined ? { type: "string" } : { $ref: USER_OUTPUT_REF },
-          { type: "null" },
-        ],
-      },
-      toolCalls: {
-        description:
-          "Client-side tool calls requested through structured output. Do not call these tools as native Claude Code tools.",
+      result: {
         anyOf: [
           {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                toolName: {
-                  type: "string",
-                  enum: tools.map((tool) => tool.name),
-                  description: `Client-side tool name to request through structured output. Do not call this as a native Claude Code tool.\n${toolDescriptions}`,
-                },
-                args: {
-                  type: "string",
-                  description: "Tool arguments as a JSON string for the client-side tool.",
+            type: "object",
+            description: "Final answer. Use only when no further client tool result is needed.",
+            properties: {
+              action: { type: "string", enum: ["answer"] },
+              answer:
+                normalizedAnswerSchema === undefined
+                  ? { type: "string" }
+                  : { $ref: USER_OUTPUT_REF },
+              toolCalls: { type: "null" },
+            },
+            required: ["action", "answer", "toolCalls"],
+            additionalProperties: false,
+          },
+          {
+            type: "object",
+            description:
+              "Request client-side tool execution through this structured output. Do not call these tools as native Claude Code tools.",
+            properties: {
+              action: { type: "string", enum: ["tool_call"] },
+              answer: { type: "null" },
+              toolCalls: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: {
+                    toolName: {
+                      type: "string",
+                      enum: tools.map((tool) => tool.name),
+                      description: `Client-side tool name to request through structured output. Do not call this as a native Claude Code tool.\n${toolDescriptions}`,
+                    },
+                    args: {
+                      type: "string",
+                      description: "Tool arguments as a JSON string for the client-side tool.",
+                    },
+                  },
+                  required: ["toolName", "args"],
+                  additionalProperties: false,
                 },
               },
-              required: ["toolName", "args"],
-              additionalProperties: false,
             },
+            required: ["action", "answer", "toolCalls"],
+            additionalProperties: false,
           },
-          { type: "null" },
         ],
       },
     },
-    required: ["action", "answer", "toolCalls"],
+    required: ["result"],
     additionalProperties: false,
     ...(normalizedAnswerSchema === undefined
       ? {}
