@@ -103,6 +103,8 @@ Worker thread metadata:
 
 Eviction is two-sided. Removing a thread from the reuse map only stops qgrid from routing turns to it; the thread itself stays resident inside the codex process. Codex auto-unloads a thread from memory only when it has zero subscribers and has been idle for 30 minutes (`THREAD_UNLOADING_DELAY`, hardcoded upstream), and `thread/start` auto-registers the creating connection as a permanent subscriber. So on every eviction (TTL sweep or LRU cap) qgrid also sends fire-and-forget `thread/unsubscribe`, which arms that 30-minute unload. Image one-shot threads never enter the reuse map, so they are unsubscribed immediately after their turn completes or fails.
 
+Once `thread/start` returns, `createThread` owns cleanup until history injection and reuse-map registration finish. Any failure during that partial-creation window removes tentative metadata and immediately unsubscribes the thread. Otherwise neither turn cleanup nor the lazy sweep can see it, and repeated failed cold-history requests accumulate permanently subscribed threads.
+
 Do not send turns to an unsubscribed thread: its notifications no longer reach qgrid's connection, so the turn would hang until timeout. Map removal must always precede or accompany unsubscribe.
 
 `thread/archive` is not usable here: it requires a rollout file and ephemeral threads have none ("no rollout found"). Without unsubscribe, worker RSS grows without bound (measured ~2 MiB resident per 512 KB injected history; dev0 incident reached ~1.28 GB per worker in two days).

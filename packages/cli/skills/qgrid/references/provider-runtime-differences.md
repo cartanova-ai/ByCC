@@ -5,7 +5,7 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 | Topic | OpenAI via Codex | Anthropic via Claude Code |
 |---|---|---|
 | Process lifetime | Persistent `codex app-server` workers | Fresh `claude` process per request |
-| Worker pool | Autoscaling pool per token, default 5–15 and hard-capped at 20 | No workers; in-memory token pool only |
+| Worker pool | Autoscaling pool per token, default 1–3 and hard-capped at 20 | No workers; in-memory token pool only |
 | Worker id | `tokenId * 100 + workerIndex` | `tokenId` |
 | Epoch | Worker spawn counter; changes on restart | Always `0` |
 | Request concurrency | One turn per worker; queue when all eligible workers busy | Fresh process per request |

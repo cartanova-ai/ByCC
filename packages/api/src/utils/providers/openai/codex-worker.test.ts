@@ -661,6 +661,39 @@ function unsubscribedIds(request: ReturnType<typeof vi.fn>): string[] {
     .map(([, params]) => (params as { threadId: string }).threadId);
 }
 
+describe("CodexAppServerWorker partial thread creation cleanup", () => {
+  it.each([
+    ["text", false],
+    ["image", true],
+  ])("unsubscribes an untracked %s thread when history injection fails", async (_, imageGeneration) => {
+    const { worker, request } = createWorkerWithNotificationRpc(async (method) => {
+      if (method === "thread/start") {
+        return { thread: { id: "partially-created" }, model: "gpt-test" };
+      }
+      if (method === "thread/inject_items") throw new Error("history injection failed");
+      if (method === "thread/unsubscribe") return {};
+      throw new Error(`unexpected request: ${method}`);
+    });
+
+    await expect(
+      worker.createThread({
+        input: [{ type: "text", text: "current", text_elements: [] }],
+        history: [{ type: "text", text: "previous", text_elements: [] }],
+        imageGeneration,
+      }),
+    ).rejects.toThrow("history injection failed");
+
+    expect(unsubscribedIds(request)).toEqual(["partially-created"]);
+    expect(
+      (
+        worker as unknown as {
+          threadMeta: Map<string, { lastUsedAt: number }>;
+        }
+      ).threadMeta.has("partially-created"),
+    ).toBe(false);
+  });
+});
+
 describe("CodexAppServerWorker thread unsubscribe on eviction", () => {
   type ThreadMetaInternals = {
     threadMeta: Map<string, { lastUsedAt: number }>;

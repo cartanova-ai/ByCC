@@ -54,9 +54,10 @@ Key decisions:
   schema; its `tool_call` branch carries emulated AI SDK calls. This keeps final
   output constrained even when tools are available but never called.
 - Final output is identified by `action: "answer"`, not by tool presence or turn
-  count. Structured answers are serialized as JSON text for AI SDK
-  `Output.object` parsing, while tools-only callers retain their legacy string
-  answer and tolerant parse fallback.
+  count. Tools-only and tools-plus-schema responses use the same strict envelope
+  decoder. Tools-only answers return the validated string verbatim; structured
+  answers are serialized as JSON text for AI SDK `Output.object` parsing.
+  Malformed envelopes fail instead of being rescued as text.
 - AI SDK `toolChoice` remains outside qgrid's wire contract. Do not imply that
   qgrid transports or enforces it.
 - Tool-call request logs are a multi-step run: create run, append generate/tool steps, then finish run. This makes AI SDK multi-step behavior visible in the dashboard instead of logging only one opaque completion.

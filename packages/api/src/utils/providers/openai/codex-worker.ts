@@ -453,20 +453,28 @@ export class CodexAppServerWorker {
     );
 
     const threadId = thread.id;
-    if (req.history?.length) {
-      await this.rpc.request("thread/inject_items", {
-        threadId,
-        items: req.history,
-      } satisfies ThreadInjectItemsParams);
-    }
-    // 이미지 turn 은 재사용에서 제외(R8): base64 가 thread 메모리·캐시 prefix 에
-    // 상주하는 것을 막고, 이미지 thread 를 1 회용으로 둔다. threadMeta 미등록 →
-    // 후속 reuse 조회에서 이 thread 는 후보가 되지 않는다.
-    if (!req.imageGeneration) {
-      this.threadMeta.set(threadId, { lastUsedAt: Date.now() });
-    }
+    try {
+      if (req.history?.length) {
+        await this.rpc.request("thread/inject_items", {
+          threadId,
+          items: req.history,
+        } satisfies ThreadInjectItemsParams);
+      }
+      // 이미지 turn 은 재사용에서 제외(R8): base64 가 thread 메모리·캐시 prefix 에
+      // 상주하는 것을 막고, 이미지 thread 를 1 회용으로 둔다. threadMeta 미등록 →
+      // 후속 reuse 조회에서 이 thread 는 후보가 되지 않는다.
+      if (!req.imageGeneration) {
+        this.threadMeta.set(threadId, { lastUsedAt: Date.now() });
+      }
 
-    return { threadId, model: req.model ?? threadModel };
+      return { threadId, model: req.model ?? threadModel };
+    } catch (error) {
+      // thread/start 는 현재 RPC 커넥션을 구독자로 등록한다. 생성 후 초기화가
+      // 끝나기 전에 실패하면 executeTurn 의 finally 와 lazy sweep 어느 쪽도 이
+      // thread 를 볼 수 없으므로 여기서 즉시 재사용 차단과 구독 해제를 함께 한다.
+      this.evictThread(threadId);
+      throw error;
+    }
   }
 
   // 기존 thread 에 turn 만 실행 (inject 없음). conversation_id 유지 → prompt cache 적중.
