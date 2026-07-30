@@ -20,7 +20,7 @@ project install에서는 symlink를 만들고, symlink가 실패하면 copy로 f
 ## PostgreSQL 준비
 
 Qgrid는 OAuth 토큰과 request log를 저장하기 위해 PostgreSQL이 필요함.
-이미 접근 가능한 PostgreSQL이 있으면 `--db` 또는 `SONAMU_DB_*` 환경변수로 연결하면 됨.
+이미 접근 가능한 PostgreSQL이 있으면 `--db` 또는 `QGRID_DB_*` 환경변수로 연결하면 됨.
 로컬에 PostgreSQL이 없으면 Docker로 띄울 수 있음:
 
 ```bash
@@ -96,13 +96,7 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
 | `NODE_ENV` | Sonamu 실행 프로필. 원격 비프로덕션 배포에는 `staging` 사용 | `production` |
-| `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. `false` 또는 `0`이면 고정 크기 pool 사용 | 활성 |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최소 worker 수 | `1` |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최대 worker 수 | `3` |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL. 원격 접속 환경에서 설정 | 미설정 시 `http://localhost:<port>/callback` |
-| `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
-
-OpenAI worker 수는 토큰당 hard cap 20으로 제한됨. autoscaling을 끄면 pool은 설정된 최소 worker 수로 고정됨.
 
 ## 사전 요구사항
 
@@ -119,7 +113,7 @@ CLI는 Sonamu 기반 서버를 내장 번들로 포함. 실행 시:
 1. DB 연결 확인
 2. 서버 시작 (API + 대시보드 웹 UI)
 3. DB의 등록된 토큰 로드. 이후 토큰 등록/변경은 PostgreSQL LISTEN/NOTIFY로 실행 중인 서버에 실시간 반영
-4. **OpenAI 토큰**: 토큰당 persistent codex app-server 프로세스를 5개에서 15개까지 autoscale (hard cap 20). JSON-RPC로 통신. 요청은 idle worker에 round-robin 라우팅, 전부 busy면 큐 대기 (최대 60초). `sessionKey` 멀티턴 요청은 같은 thread로 재라우팅되어 prompt cache 적중
+4. **OpenAI 토큰**: persistent codex app-server worker pool과 JSON-RPC로 통신. Qgrid가 capacity, queue, thread retention을 내부적으로 관리. `sessionKey` 멀티턴 요청은 같은 thread로 재라우팅되어 prompt cache 적중
 5. **Anthropic 토큰**: 요청마다 격리된 claude 프로세스를 fresh spawn (`stream-json` 입출력). 토큰은 least-used 우선으로 선택. OAuth 토큰 자동 refresh
 6. 토큰별 quota threshold(기본 80%)를 넘은 토큰은 라우팅에서 제외 (사용률 조회 실패 시에는 fail-open으로 통과)
 

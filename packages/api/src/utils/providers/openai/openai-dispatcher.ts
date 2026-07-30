@@ -780,6 +780,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async evaluateAutoscaling(): Promise<void> {
     if (this.stopped) return;
+    this.sweepIdleWorkerThreads();
     const minimumDeficitTokenIds = await this.ensureMinimumWorkersOneStep();
     if (!this.poolConfig.autoscale || this.stopped) return;
     if (this.queue.length > 0) {
@@ -911,6 +912,14 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       if (!used.has(index)) return index;
     }
     return this.poolConfig.maxWorkersPerToken;
+  }
+
+  private sweepIdleWorkerThreads(): void {
+    for (const worker of [...this.workerPool.values()].flat()) {
+      // turn 중 unsubscribe하면 해당 connection으로 notification이 더 오지 않아
+      // 실행 중 요청이 timeout될 수 있다. ready + idle worker만 sweep한다.
+      if (worker.isReady && worker.hasCapacity) worker.sweepIdleThreads();
+    }
   }
 
   private async spawnAndCommitWorker(

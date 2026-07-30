@@ -95,7 +95,7 @@ const result = await generateText({
 
 `logger: false` affects observability only. Generation, streaming, AI SDK client tool execution, multi-step continuation, and OpenAI thread coordination continue normally. When `createQgridLogger` is also installed, it reads the same option and suppresses its external-provider telemetry lifecycle for that generation; qgrid provider calls are always skipped by the telemetry integration to prevent double logging.
 
-For raw qgrid query/stream payloads, the corresponding input is top-level `logger?: boolean`, also defaulting to `true`. The old `logMode` input has been removed and legacy payloads containing it are rejected. Migrate callers as follows:
+For raw qgrid query/stream payloads, the corresponding input is top-level `logger?: boolean`, also defaulting to `true`. The old `logMode` input has been removed. Because the wire schema accepts unknown keys, a legacy payload containing `logMode` is accepted but the field is ignored. It must not appear in new code. Migrate callers as follows:
 
 - Omitted logging mode or `"auto"`: remove it; omit `logger` or send `logger: true`.
 - `"run"`: remove it; the server now infers a continued tool run from `runContext`, tool results, and the provider finish reason.

@@ -20,7 +20,7 @@ Project installs create symlinks, falling back to copies when symlinking fails.
 ## Preparing PostgreSQL
 
 Qgrid needs PostgreSQL to store OAuth tokens and request logs.
-If you already have a reachable PostgreSQL, connect with `--db` or the `SONAMU_DB_*` environment variables.
+If you already have a reachable PostgreSQL, connect with `--db` or the `QGRID_DB_*` environment variables.
 If you don't have one locally, you can spin one up with Docker:
 
 ```bash
@@ -97,13 +97,7 @@ Server behavior variables:
 | Variable | Description | Default |
 |------|------|--------|
 | `NODE_ENV` | Sonamu runtime profile. Set `staging` for a remote non-production deployment | `production` |
-| `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. Set to `false` or `0` to keep a fixed-size pool | enabled |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | Minimum OpenAI workers per token while autoscaling | `1` |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | Maximum OpenAI workers per token while autoscaling | `3` |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback. Set it when the server is accessed remotely | `http://localhost:<port>/callback` when unset |
-| `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
-
-OpenAI worker counts are clamped to a hard cap of 20 per token. With autoscaling disabled, the pool stays at the configured minimum.
 
 ## Prerequisites
 
@@ -120,7 +114,7 @@ The CLI ships the Sonamu-based server as a built-in bundle. On launch:
 1. Verify the DB connection
 2. Start the server (API + dashboard web UI)
 3. Load registered tokens from the DB. Later token additions/changes propagate to the running server in real time via PostgreSQL LISTEN/NOTIFY
-4. **OpenAI tokens**: autoscale persistent codex app-server processes per token from 5 to 15 (hard cap 20), communicating over JSON-RPC. Requests are routed round-robin across idle workers; when all are busy they queue (up to 60 seconds). Multi-turn requests carrying a `sessionKey` are routed back to the same thread for prompt-cache hits
+4. **OpenAI tokens**: use a persistent codex app-server worker pool over JSON-RPC. Qgrid manages capacity, queueing, and thread retention internally. Multi-turn requests carrying a `sessionKey` are routed back to the same thread for prompt-cache hits
 5. **Anthropic tokens**: spawn a fresh, isolated claude process per request (`stream-json` in/out). Tokens are selected least-used-first. OAuth tokens are refreshed automatically
 6. Tokens over their quota threshold (default 80%) are excluded from routing (usage-lookup failures fail open)
 

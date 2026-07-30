@@ -231,7 +231,6 @@ const { text } = await generateText({
 
 - Threads expire after 10 minutes idle. On expiry or worker restart, the request automatically starts a cold thread instead of failing.
 - Ignored for `anthropic/*` models (Claude Code spawns a fresh process per request, so there is no thread reuse).
-- Can be disabled server-side with `QGRID_OPENAI_THREAD_REUSE=false`.
 
 ### Image Generation
 

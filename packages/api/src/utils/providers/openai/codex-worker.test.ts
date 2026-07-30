@@ -382,6 +382,92 @@ describe("CodexAppServerWorker TTFT", () => {
   });
 });
 
+describe("CodexAppServerWorker thread activity timestamps", () => {
+  type ThreadMetaInternals = {
+    threadMeta: Map<string, { lastUsedAt: number }>;
+  };
+
+  it("records non-stream thread activity at turn completion", async () => {
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const { worker, request, handlers } = createWorkerWithNotificationRpc(
+      async (method, _params) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" }, model: "gpt-test" };
+        }
+        if (method === "turn/start") return { turn: { id: "turn-1" } };
+        throw new Error(`unexpected request: ${method}`);
+      },
+    );
+
+    try {
+      const turn = worker.executeTurn({
+        input: [{ type: "text", text: "hi", text_elements: [] }],
+      });
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledWith("turn/start", expect.anything()),
+      );
+      now = 700_000;
+      handlers.get("turn/completed")?.({
+        threadId: "thread-1",
+        turn: { status: "completed", durationMs: 699_000 },
+      } as never);
+
+      await turn;
+
+      expect(
+        (worker as unknown as ThreadMetaInternals).threadMeta.get("thread-1")?.lastUsedAt,
+      ).toBe(700_000);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("records streaming thread activity at turn completion", async () => {
+    let now = 2_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const { worker, request, handlers } = createWorkerWithNotificationRpc(
+      async (method, _params) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" }, model: "gpt-test" };
+        }
+        if (method === "turn/start") return { turn: { id: "turn-1" } };
+        throw new Error(`unexpected request: ${method}`);
+      },
+    );
+    const callbacks: StreamCallbacks = {
+      onDelta: vi.fn(),
+      onComplete: vi.fn(),
+      onError: vi.fn(),
+    };
+
+    try {
+      const turn = worker.executeTurnStream(
+        {
+          input: [{ type: "text", text: "hi", text_elements: [] }],
+        },
+        callbacks,
+      );
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledWith("turn/start", expect.anything()),
+      );
+      now = 800_000;
+      handlers.get("turn/completed")?.({
+        threadId: "thread-1",
+        turn: { status: "completed", durationMs: 798_000 },
+      } as never);
+
+      await turn;
+
+      expect(
+        (worker as unknown as ThreadMetaInternals).threadMeta.get("thread-1")?.lastUsedAt,
+      ).toBe(800_000);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+});
+
 describe("CodexAppServerWorker prompt prefix", () => {
   it("uses the same base instructions with and without an output schema", async () => {
     type WorkerInternals = {
@@ -800,7 +886,7 @@ describe("CodexAppServerWorker thread unsubscribe on eviction", () => {
     expect(unsubscribedIds(request).toSorted()).toEqual(["stale-1", "stale-2"]);
   });
 
-  it("sends thread/unsubscribe for LRU-evicted threads over the cap", () => {
+  it("caps periodic LRU cleanup at the configured maximum", () => {
     const { worker, request, meta } = createWorkerWithUnsubscribeSpy();
     const now = Date.now();
     for (let i = 0; i < 17; i++) {
@@ -809,7 +895,19 @@ describe("CodexAppServerWorker thread unsubscribe on eviction", () => {
 
     worker.sweepIdleThreads();
 
-    // 상한(MAX-1=15)으로 줄이며 가장 오래된 2개가 축출·구독 해제된다.
+    expect(meta.size).toBe(16);
+    expect(unsubscribedIds(request)).toEqual(["t-0"]);
+  });
+
+  it("reserves one LRU slot before creating a new thread", () => {
+    const { worker, request, meta } = createWorkerWithUnsubscribeSpy();
+    const now = Date.now();
+    for (let i = 0; i < 17; i++) {
+      meta.set(`t-${i}`, { lastUsedAt: now - (17 - i) * 1_000 });
+    }
+
+    worker.sweepIdleThreads(true);
+
     expect(meta.size).toBe(15);
     expect(unsubscribedIds(request).toSorted()).toEqual(["t-0", "t-1"]);
   });

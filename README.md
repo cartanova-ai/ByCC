@@ -307,14 +307,8 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_DB_USER` | PostgreSQL user (CLI) | `postgres` |
 | `QGRID_DB_PASSWORD` | PostgreSQL password (CLI) | `postgres` |
 | `QGRID_DB_NAME` | Database name (CLI) | `qgrid` |
-| `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. Set to `false` or `0` to keep a fixed-size pool | enabled |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | Minimum OpenAI workers per token while autoscaling | `1` |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | Maximum OpenAI workers per token while autoscaling | `3` |
 | `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
-| `QGRID_OPENAI_THREAD_REUSE` | Set to `false` to disable OpenAI thread reuse (prompt caching) | enabled |
 
-> OpenAI worker counts are clamped to a hard cap of 20 per token. With autoscaling disabled, the pool stays at the configured minimum.
->
 > Qgrid does not add a separate authentication guard to dashboard APIs. Keep `HOST` on loopback unless access is protected by a trusted network or reverse proxy. A public bind exposes every admin endpoint, including the Monit tab's server log feed.
 >
 > When running `packages/api` directly, set the same values with Sonamu's native `SONAMU_DB_*` variables.

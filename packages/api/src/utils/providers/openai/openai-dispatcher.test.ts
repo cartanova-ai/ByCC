@@ -142,6 +142,7 @@ function fakeWorker(
     releaseTurn: vi.fn(() => {
       busy = false;
     }),
+    sweepIdleThreads: vi.fn(),
     hasThread: vi.fn((threadId: string) => (options.threads ?? []).includes(threadId)),
     getRateLimits: vi.fn(
       async () => options.rateLimits ?? { rateLimits: {}, rateLimitsByLimitId: null },
@@ -294,6 +295,46 @@ describe("OpenAIDispatcher autoscaling", () => {
       findMany.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  it("runs idle-thread cleanup from the fixed-mode health timer", async () => {
+    vi.useFakeTimers();
+    const findMany = vi.spyOn(TokenModel, "findMany").mockResolvedValue({ rows: [] } as never);
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({
+        autoscale: false,
+        minWorkersPerToken: 1,
+        maxWorkersPerToken: 1,
+      }),
+      () => 64,
+    );
+    const worker = fakeWorker({ tokenId: 1 });
+    addWorkers(dispatcher, [worker]);
+
+    try {
+      await dispatcher.start();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(worker.sweepIdleThreads).toHaveBeenCalledTimes(1);
+    } finally {
+      await dispatcher.stop();
+      findMany.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("sweeps only ready idle workers so active turns keep their subscription", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const idle = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    const busy = fakeWorker({ tokenId: 1, workerIndex: 1, busy: true });
+    const restarting = fakeWorker({ tokenId: 1, workerIndex: 2, ready: false });
+    addWorkers(dispatcher, [idle, busy, restarting]);
+
+    await dispatcher.evaluateAutoscaling();
+
+    expect(idle.sweepIdleThreads).toHaveBeenCalledTimes(1);
+    expect(busy.sweepIdleThreads).not.toHaveBeenCalled();
+    expect(restarting.sweepIdleThreads).not.toHaveBeenCalled();
   });
 
   it("repairs an absent token pool after every initial worker spawn failed", async () => {

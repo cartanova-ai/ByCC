@@ -296,14 +296,8 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 | `QGRID_DB_USER` | PostgreSQL 사용자 (CLI) | `postgres` |
 | `QGRID_DB_PASSWORD` | PostgreSQL 비밀번호 (CLI) | `postgres` |
 | `QGRID_DB_NAME` | 데이터베이스 이름 (CLI) | `qgrid` |
-| `QGRID_OPENAI_AUTOSCALE` | OpenAI worker autoscaling. `false` 또는 `0`이면 고정 크기 pool 사용 | 활성 |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최소 worker 수 | `1` |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | autoscaling 중 OpenAI 토큰당 최대 worker 수 | `3` |
 | `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL | `http://localhost:<port>` |
-| `QGRID_OPENAI_THREAD_REUSE` | `false`로 설정 시 OpenAI thread reuse(prompt cache) 비활성화 | 활성 |
 
-> OpenAI worker 수는 토큰당 hard cap 20으로 제한됩니다. autoscaling을 끄면 pool은 설정된 최소 worker 수로 고정됩니다.
->
 > qgrid는 대시보드 API에 별도 인증을 두지 않습니다. 신뢰할 수 있는 네트워크나 reverse proxy 뒤가 아니라면 `HOST`를 loopback으로 유지하세요. 공개 바인드는 Monit 탭의 서버 로그 피드를 포함한 모든 관리 엔드포인트를 노출합니다.
 >
 > `packages/api`를 직접 실행할 때는 같은 값을 Sonamu 네이티브 환경변수인 `SONAMU_DB_*`로 설정합니다.

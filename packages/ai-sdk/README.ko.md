@@ -229,7 +229,6 @@ const { text } = await generateText({
 
 - thread는 idle 10분 후 만료됩니다. 만료되거나 worker가 재시작되면 자동으로 cold thread로 시작하므로 요청이 실패하지는 않습니다.
 - `anthropic/*` 모델에서는 무시됩니다 (Claude Code는 요청마다 fresh process를 띄우므로 thread reuse가 없음).
-- 서버에서 `QGRID_OPENAI_THREAD_REUSE=false`로 비활성화할 수 있습니다.
 
 ### Image Generation
 

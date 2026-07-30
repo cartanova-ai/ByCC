@@ -431,7 +431,7 @@ export class CodexAppServerWorker {
   // thread 의 기본 model 도 반환 (req.model 미지정 시 fallback).
   async createThread(req: TurnRequest): Promise<{ threadId: string; model: string }> {
     if (!this.rpc || !this.ready) throw new Error("worker not ready");
-    this.sweepIdleThreads();
+    this.sweepIdleThreads(true);
 
     const threadConfig: ThreadStartParams["config"] = {
       ...THREAD_DEFAULTS.config,
@@ -528,7 +528,11 @@ export class CodexAppServerWorker {
       // 이미지 thread 는 1 회용 cold thread 인데 threadMeta 에 등록되지 않아
       // sweep 이 못 잡는다. MB 급 base64 가 상주하므로 turn 종료 즉시(성공/실패
       // 불문) 구독을 끊어 codex 30분 언로드 대상으로 만든다.
-      if (req.imageGeneration) this.unsubscribeThread(threadId);
+      if (req.imageGeneration) {
+        this.unsubscribeThread(threadId);
+      } else {
+        this.touchThread(threadId);
+      }
     }
   }
 
@@ -548,18 +552,22 @@ export class CodexAppServerWorker {
     cb.onThreadId?.(threadId);
     const ttftTracker = createTtftTracker();
     const resultPromise = this.consumeStreamNotifications(threadId, model, cb, ttftTracker);
-    let turnId: string;
     try {
-      ttftTracker.markStart();
-      ({ turnId } = await this.startTurnOnThread(threadId, req));
-    } catch (e) {
-      this.failActiveTurn(e as Error);
-      await resultPromise.catch(() => {});
-      throw e;
+      let turnId: string;
+      try {
+        ttftTracker.markStart();
+        ({ turnId } = await this.startTurnOnThread(threadId, req));
+      } catch (e) {
+        this.failActiveTurn(e as Error);
+        await resultPromise.catch(() => {});
+        throw e;
+      }
+      cb.onTurnId?.(turnId);
+      await resultPromise;
+      return { threadId };
+    } finally {
+      this.touchThread(threadId);
     }
-    cb.onTurnId?.(turnId);
-    await resultPromise;
-    return { threadId };
   }
 
   // ── thread 재사용 지원 ───────────────────────────────────────────
@@ -572,21 +580,21 @@ export class CodexAppServerWorker {
     return this.threadMeta.has(threadId);
   }
 
-  // idle TTL 초과 / 개수 상한 초과 thread 를 정리. createThread 직전 lazy 호출.
+  // idle TTL 초과 / 개수 상한 초과 thread 를 정리.
   // 맵 제거(재사용 라우팅 차단)와 함께 thread/unsubscribe 를 보낸다 — codex 는
   // "구독자 0 + idle" 이 30분(THREAD_UNLOADING_DELAY, 하드코딩) 지속된 thread 를
   // 메모리에서 자동 언로드하는데, thread/start 가 이 커넥션을 자동 구독자로 등록해
   // 두기 때문에 unsubscribe 없이는 그 언로드가 영원히 발동하지 않는다(SON-516 실증).
-  sweepIdleThreads(): void {
+  sweepIdleThreads(reserveSlotForNewThread = false): void {
     const now = Date.now();
     for (const [id, meta] of this.threadMeta) {
       if (now - meta.lastUsedAt > CodexAppServerWorker.THREAD_IDLE_TTL_MS) {
         this.evictThread(id);
       }
     }
-    // createThread 직전 호출 → 새 thread 1 개가 곧 추가된다. 추가 후에도 MAX 를 넘지 않도록
-    // MAX-1 이하로 줄여 둔다(그래야 생성 직후 정확히 MAX). LRU: lastUsedAt 오름차순으로 제거.
-    const limit = CodexAppServerWorker.MAX_THREADS_PER_WORKER - 1;
+    // createThread 직전에는 새 thread 1개가 곧 추가되므로 MAX-1을 사용한다.
+    // 주기 sweep은 현재 cap인 MAX까지만 줄인다. LRU: lastUsedAt 오름차순으로 제거.
+    const limit = CodexAppServerWorker.MAX_THREADS_PER_WORKER - (reserveSlotForNewThread ? 1 : 0);
     if (this.threadMeta.size > limit) {
       const sorted = [...this.threadMeta.entries()].toSorted(
         (a, b) => a[1].lastUsedAt - b[1].lastUsedAt,
@@ -594,6 +602,11 @@ export class CodexAppServerWorker {
       const over = this.threadMeta.size - limit;
       for (let i = 0; i < over; i++) this.evictThread(sorted[i]![0]);
     }
+  }
+
+  private touchThread(threadId: string): void {
+    const meta = this.threadMeta.get(threadId);
+    if (meta) meta.lastUsedAt = Date.now();
   }
 
   // thread 재사용 포기: 맵 제거(라우팅 차단)와 구독 해제를 한 단위로 묶는다.

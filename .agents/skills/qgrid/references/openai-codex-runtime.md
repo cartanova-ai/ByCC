@@ -108,9 +108,11 @@ Worker thread metadata:
 
 - idle TTL: 10 minutes.
 - max threads per worker: 16.
-- cleanup is lazy before creating a new thread.
+- cleanup runs from the dispatcher's periodic health evaluation and also lazily before creating a new thread.
 
 Eviction is two-sided. Removing a thread from the reuse map only stops qgrid from routing turns to it; the thread itself stays resident inside the codex process. Codex auto-unloads a thread from memory only when it has zero subscribers and has been idle for 30 minutes (`THREAD_UNLOADING_DELAY`, hardcoded upstream), and `thread/start` auto-registers the creating connection as a permanent subscriber. So on every eviction (TTL sweep or LRU cap) qgrid also sends fire-and-forget `thread/unsubscribe`, which arms that 30-minute unload. Image one-shot threads never enter the reuse map, so they are unsubscribed immediately after their turn completes or fails.
+
+Periodic cleanup scans only ready, idle workers. It must never unsubscribe from a busy worker because turn notifications would stop reaching qgrid and the request could hang. Reusable thread `lastUsedAt` is refreshed when a turn finishes, so a long-running turn receives a full idle TTL after completion. The periodic pass keeps up to 16 threads; the pre-create lazy pass reserves one slot so the newly created thread still leaves the worker at no more than 16.
 
 Once `thread/start` returns, `createThread` owns cleanup until history injection and reuse-map registration finish. Any failure during that partial-creation window removes tentative metadata and immediately unsubscribes the thread. Otherwise neither turn cleanup nor the lazy sweep can see it, and repeated failed cold-history requests accumulate permanently subscribed threads.
 
