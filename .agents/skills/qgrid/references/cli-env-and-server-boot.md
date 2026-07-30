@@ -65,8 +65,8 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 | Env | Default | Meaning |
 |---|---:|---|
-| `QGRID_OPENAI_AUTOSCALE` | enabled | Set to `"false"` or `"0"` to keep the pool fixed at the minimum worker count. |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | `1` | Minimum ready workers maintained for each active OpenAI token. Clamped to 1..20. |
+| `QGRID_OPENAI_AUTOSCALE` | enabled | Set to `"false"` or `"0"` to disable demand expansion and scale-down, keeping capacity fixed at the minimum. Fixed-mode health maintenance still replaces missing or terminal workers. |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | `1` | Steady-state minimum worker slots maintained for each active OpenAI token. Transient restarts keep their slot; terminal or missing slots are replaced. Clamped to 1..20. |
 | `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `3` when autoscaling | Maximum workers per active OpenAI token. It cannot be lower than the resolved minimum and is hard-capped at 20. When autoscaling is disabled, the maximum equals the minimum. |
 | `QGRID_OPENAI_SCALE_INTERVAL_MS` | `5000` | Autoscaling evaluation interval. Clamped to 250..300000 ms. |
 | `QGRID_OPENAI_SCALE_DOWN_IDLE_MS` | `600000` | Idle time before an excess worker becomes eligible for scale-down. Clamped to 1000 ms..24 hours. |

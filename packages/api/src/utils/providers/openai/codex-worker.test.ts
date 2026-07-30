@@ -197,6 +197,78 @@ describe("CodexAppServerWorker active turn cleanup", () => {
   });
 });
 
+describe("CodexAppServerWorker terminal restart failure", () => {
+  it("notifies terminal failure exactly once after exhausting the restart budget", () => {
+    const worker = new CodexAppServerWorker({
+      tokenId: 1,
+      tokenName: "token",
+      accessToken: "access",
+      accountId: "account",
+    });
+    const onTerminalFailure = vi.fn();
+    worker.onTerminalFailure = onTerminalFailure;
+    const internals = worker as unknown as {
+      restartAttempts: number;
+      scheduleRestart(): void;
+    };
+    internals.restartAttempts = 3;
+
+    internals.scheduleRestart();
+    internals.scheduleRestart();
+
+    expect(onTerminalFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report an intentional worker shutdown as terminal failure", () => {
+    const worker = new CodexAppServerWorker({
+      tokenId: 1,
+      tokenName: "token",
+      accessToken: "access",
+      accountId: "account",
+    });
+    const onTerminalFailure = vi.fn();
+    worker.onTerminalFailure = onTerminalFailure;
+    const internals = worker as unknown as {
+      destroyed: boolean;
+      restartAttempts: number;
+      scheduleRestart(): void;
+    };
+    internals.destroyed = true;
+    internals.restartAttempts = 3;
+
+    internals.scheduleRestart();
+
+    expect(onTerminalFailure).not.toHaveBeenCalled();
+  });
+
+  it("resets terminal notification state after a successful initialization", async () => {
+    const worker = new CodexAppServerWorker({
+      tokenId: 1,
+      tokenName: "token",
+      accessToken: "access",
+      accountId: "account",
+    });
+    const request = vi.fn().mockResolvedValue({});
+    const internals = worker as unknown as {
+      rpc: { request: typeof request };
+      restartAttempts: number;
+      terminalFailureNotified: boolean;
+      spawnAndInit(): Promise<void>;
+      waitForLoginCompleted(): Promise<void>;
+    };
+    internals.restartAttempts = 3;
+    internals.terminalFailureNotified = true;
+    internals.rpc = { request };
+    vi.spyOn(internals, "spawnAndInit").mockResolvedValue(undefined);
+    vi.spyOn(internals, "waitForLoginCompleted").mockResolvedValue(undefined);
+
+    await worker.initialize();
+
+    expect(internals.restartAttempts).toBe(0);
+    expect(internals.terminalFailureNotified).toBe(false);
+  });
+});
+
 describe("CodexAppServerWorker TTFT", () => {
   it("captures fast non-stream deltas registered before turn/start completes", async () => {
     let now = 1_000;

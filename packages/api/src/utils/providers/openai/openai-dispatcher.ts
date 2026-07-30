@@ -1,7 +1,7 @@
 /**
  * OpenAIDispatcher — codex app-server worker pool + 토큰 라우팅.
  *
- * - 토큰당 CodexAppServerWorker 자동 확장 (기본 5~15, hard cap 20)
+ * - 토큰당 CodexAppServerWorker 자동 확장 (기본 1~3, hard cap 20)
  * - idle worker round-robin 선택 + 큐 대기 (전부 busy 시)
  * - TokenSubscriber 이벤트로 worker pool 동기화
  * - backpressure: 큐 full 또는 timeout 시 SERVER_BUSY
@@ -127,6 +127,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   queue: QueueItem[] = [];
   readonly poolConfig: OpenAIWorkerPoolConfig;
   private readonly quotaBlockedTokenIds = new Set<number>();
+  private readonly startingTokenIds = new Set<number>();
   private readonly rateLimitsGenerationByToken = new Map<number, number>();
   private readonly weightedSelector = new SmoothWeightedRoundRobin();
   private readonly workerCursorByToken = new Map<number, number>();
@@ -169,13 +170,12 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       }),
     );
 
-    if (this.poolConfig.autoscale) {
-      this.scalerTimer = setInterval(
-        () => this.requestAutoscaleEvaluation(),
-        this.poolConfig.scaleIntervalMs,
-      );
-      this.scalerTimer.unref?.();
-    }
+    // autoscale off도 fixed min의 health maintenance는 계속 필요하다.
+    this.scalerTimer = setInterval(
+      () => this.requestAutoscaleEvaluation(),
+      this.poolConfig.scaleIntervalMs,
+    );
+    this.scalerTimer.unref?.();
   }
 
   async stop(): Promise<void> {
@@ -196,6 +196,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.rateLimitsCache.clear();
     this.rateLimitsGenerationByToken.clear();
     this.quotaBlockedTokenIds.clear();
+    this.startingTokenIds.clear();
   }
 
   // ── Token events (from TokenSubscriber) ─────────────────────────
@@ -224,7 +225,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.invalidateRateLimitsCache(id);
     this.quotaBlockedTokenIds.delete(id);
     await Promise.allSettled(workers.map((w) => w.kill()));
-    if (this.getAllReadyActiveWorkers().length === 0) {
+    if (!this.hasActiveTokenCandidate(new Set())) {
       this.rejectAllQueued("NO_OPENAI_WORKERS");
     }
     if (workers.length > 0) {
@@ -276,7 +277,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       w.active = false;
     });
     if (changed) this.weightedSelector.resetScores();
-    if (this.getAllReadyActiveWorkers().length === 0) {
+    if (!this.hasActiveTokenCandidate(new Set())) {
       this.rejectAllQueued("NO_ACTIVE_WORKERS");
     }
     const label = tokenName ?? `token ${id}`;
@@ -499,8 +500,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     excludedTokenIds = new Set<number>(),
   ): Promise<T> {
     const eligibility = await this.resolveTokenEligibility(excludedTokenIds);
-    if (eligibility.readyActiveTokenIds.size === 0) throw new Error("NO_OPENAI_WORKERS");
-    if (eligibility.eligibleTokenIds.size === 0) this.throwQuotaThresholdExceeded(eligibility);
+    if (
+      eligibility.readyActiveTokenIds.size === 0 &&
+      !this.hasActiveTokenCandidate(excludedTokenIds)
+    ) {
+      throw new Error("NO_OPENAI_WORKERS");
+    }
+    if (eligibility.readyActiveTokenIds.size > 0 && eligibility.eligibleTokenIds.size === 0) {
+      this.throwQuotaThresholdExceeded(eligibility);
+    }
     if (this.queue.length >= MAX_QUEUE_SIZE) {
       throw new Error("SERVER_BUSY");
     }
@@ -527,6 +535,9 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       };
 
       this.queue.push(item);
+      // eligibility 확인과 queue 삽입 사이에 worker가 ready/idle이 된 경우의 lost wake-up을
+      // 닫는다. fixed mode에서도 idle worker가 즉시 queue를 가져가야 한다.
+      this.requestDrainQueue();
       this.requestAutoscaleEvaluation();
     });
   }
@@ -698,14 +709,31 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     quotaThreshold?: number | null,
     weight = 1,
   ): Promise<void> {
+    if (this.startingTokenIds.has(tokenId)) return;
+    this.startingTokenIds.add(tokenId);
     this.setTokenMetadata(tokenId, tokenName, credentials, quotaThreshold, weight);
+    const expectedMetadata = this.tokenMetadata.get(tokenId);
     const workers: CodexAppServerWorker[] = [];
-    for (let i = 0; i < this.poolConfig.minWorkersPerToken; i++) {
-      if (i > 0) await sleep(SPAWN_INTERVAL_MS);
-      const worker = await this.spawnSingleWorker(tokenId, tokenName, credentials, i);
-      if (worker) workers.push(worker);
+    try {
+      for (let i = 0; i < this.poolConfig.minWorkersPerToken; i++) {
+        if (i > 0) await sleep(SPAWN_INTERVAL_MS);
+        const worker = await this.spawnSingleWorker(tokenId, tokenName, credentials, i);
+        if (worker) workers.push(worker);
+      }
+
+      if (
+        !this.stopped &&
+        expectedMetadata?.active &&
+        this.tokenMetadata.get(tokenId) === expectedMetadata &&
+        !this.workerPool.has(tokenId)
+      ) {
+        if (workers.length > 0) this.workerPool.set(tokenId, workers);
+      } else {
+        await Promise.allSettled(workers.map((worker) => worker.kill()));
+      }
+    } finally {
+      this.startingTokenIds.delete(tokenId);
     }
-    if (workers.length > 0) this.workerPool.set(tokenId, workers);
   }
 
   async spawnSingleWorker(
@@ -724,6 +752,13 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     });
 
     worker.onReady = () => this.requestDrainQueue();
+    worker.onTerminalFailure = () => {
+      void this.handleWorkerTerminalFailure(worker).catch((e) =>
+        logger.warn(
+          `terminal worker cleanup failed: ${tokenName}[${workerIndex}]: ${(e as Error).message}`,
+        ),
+      );
+    };
 
     worker.setServerRequestHandler(async (method) => {
       if (method === "account/chatgptAuthTokens/refresh") {
@@ -744,9 +779,13 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async evaluateAutoscaling(): Promise<void> {
+    if (this.stopped) return;
+    const minimumDeficitTokenIds = await this.ensureMinimumWorkersOneStep();
     if (!this.poolConfig.autoscale || this.stopped) return;
     if (this.queue.length > 0) {
-      await this.scaleUpOneStep();
+      // baseline 복구를 시도한 token만 같은 evaluation의 demand expansion에서 제외한다.
+      // 다른 정상 token의 확장까지 막지는 않는다.
+      await this.scaleUpOneStep(minimumDeficitTokenIds);
       return;
     }
     if (Date.now() - this.lastRequestAt >= this.poolConfig.scaleDownIdleMs) {
@@ -754,11 +793,18 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     }
   }
 
-  async scaleUpOneStep(): Promise<void> {
+  async scaleUpOneStep(excludedTokenIds = new Set<number>()): Promise<void> {
     if (!this.poolConfig.autoscale || this.stopped) return;
     await this.runScaling(async () => {
       const candidates = [...this.tokenMetadata.entries()].filter(([tokenId, metadata]) => {
-        if (!metadata.active || this.quotaBlockedTokenIds.has(tokenId)) return false;
+        if (
+          !metadata.active ||
+          this.startingTokenIds.has(tokenId) ||
+          excludedTokenIds.has(tokenId) ||
+          this.quotaBlockedTokenIds.has(tokenId)
+        ) {
+          return false;
+        }
         return (this.workerPool.get(tokenId)?.length ?? 0) < this.poolConfig.maxWorkersPerToken;
       });
       if (candidates.length === 0) return;
@@ -781,34 +827,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       }
 
       const spawned = await Promise.all(
-        candidates.map(async ([tokenId, metadata]) => {
-          const workers = this.workerPool.get(tokenId) ?? [];
-          const workerIndex = this.nextAvailableWorkerIndex(workers);
-          if (workerIndex >= this.poolConfig.maxWorkersPerToken) return null;
-          const worker = await this.spawnSingleWorker(
-            tokenId,
-            metadata.name,
-            metadata.credentials,
-            workerIndex,
-          );
-          if (!worker) return null;
-
-          const currentMetadata = this.tokenMetadata.get(tokenId);
-          const currentWorkers = this.workerPool.get(tokenId);
-          if (
-            !currentMetadata?.active ||
-            this.quotaBlockedTokenIds.has(tokenId) ||
-            currentMetadata !== metadata ||
-            !currentWorkers ||
-            currentWorkers.some((entry) => entry.workerIndex === workerIndex)
-          ) {
-            await worker.kill().catch(() => {});
-            return null;
-          }
-          currentWorkers.push(worker);
-          currentWorkers.sort((a, b) => a.workerIndex - b.workerIndex);
-          return worker;
-        }),
+        candidates.map(([tokenId, metadata]) => this.spawnAndCommitWorker(tokenId, metadata, true)),
       );
 
       const added = spawned.filter((worker) => worker !== null).length;
@@ -826,6 +845,38 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         }
       }
     });
+  }
+
+  async ensureMinimumWorkersOneStep(): Promise<Set<number>> {
+    const minimumDeficitTokenIds = new Set<number>();
+    if (this.stopped) return minimumDeficitTokenIds;
+    await this.runScaling(async () => {
+      const candidates = [...this.tokenMetadata.entries()].filter(([tokenId, metadata]) => {
+        if (!metadata.active || this.startingTokenIds.has(tokenId)) return false;
+        return (this.workerPool.get(tokenId)?.length ?? 0) < this.poolConfig.minWorkersPerToken;
+      });
+      if (candidates.length === 0) return;
+      candidates.forEach(([tokenId]) => minimumDeficitTokenIds.add(tokenId));
+
+      const spawned = await Promise.all(
+        candidates.map(([tokenId, metadata]) =>
+          this.spawnAndCommitWorker(tokenId, metadata, false),
+        ),
+      );
+      const added = spawned.filter((worker) => worker !== null).length;
+      if (added > 0) {
+        logger.info(`openai worker pool repaired: +${added} workers (${this.workerCount} total)`);
+        this.requestDrainQueue();
+        if (this.queue.length > 0) {
+          const timer = setTimeout(
+            () => this.requestAutoscaleEvaluation(),
+            Math.min(this.poolConfig.scaleIntervalMs, 1_000),
+          );
+          timer.unref?.();
+        }
+      }
+    });
+    return minimumDeficitTokenIds;
   }
 
   async scaleDownOneStep(): Promise<void> {
@@ -862,8 +913,65 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     return this.poolConfig.maxWorkersPerToken;
   }
 
+  private async spawnAndCommitWorker(
+    tokenId: number,
+    metadata: TokenMetadata,
+    respectQuotaBlock: boolean,
+  ): Promise<CodexAppServerWorker | null> {
+    const expectedWorkers = this.workerPool.get(tokenId);
+    const workerIndex = this.nextAvailableWorkerIndex(expectedWorkers ?? []);
+    if (workerIndex >= this.poolConfig.maxWorkersPerToken) return null;
+
+    const worker = await this.spawnSingleWorker(
+      tokenId,
+      metadata.name,
+      metadata.credentials,
+      workerIndex,
+    );
+    if (!worker) return null;
+
+    const currentMetadata = this.tokenMetadata.get(tokenId);
+    const currentWorkers = this.workerPool.get(tokenId);
+    if (
+      !currentMetadata?.active ||
+      currentMetadata !== metadata ||
+      currentWorkers !== expectedWorkers ||
+      (respectQuotaBlock && this.quotaBlockedTokenIds.has(tokenId)) ||
+      currentWorkers?.some((entry) => entry.workerIndex === workerIndex)
+    ) {
+      await worker.kill().catch(() => {});
+      return null;
+    }
+
+    const nextWorkers = currentWorkers ?? [];
+    nextWorkers.push(worker);
+    nextWorkers.sort((a, b) => a.workerIndex - b.workerIndex);
+    if (!currentWorkers) this.workerPool.set(tokenId, nextWorkers);
+    return worker;
+  }
+
+  async handleWorkerTerminalFailure(worker: CodexAppServerWorker): Promise<void> {
+    const workers = this.workerPool.get(worker.tokenId);
+    if (!workers?.includes(worker)) return;
+
+    await worker.kill().catch(() => {});
+
+    const currentWorkers = this.workerPool.get(worker.tokenId);
+    if (!currentWorkers?.includes(worker)) return;
+    const remaining = currentWorkers.filter((entry) => entry !== worker);
+    if (remaining.length > 0) {
+      this.workerPool.set(worker.tokenId, remaining);
+    } else {
+      this.workerPool.delete(worker.tokenId);
+    }
+    logger.warn(
+      `terminal worker removed: ${worker.tokenName}[${worker.workerIndex}] (${remaining.length} remaining)`,
+    );
+    this.requestAutoscaleEvaluation();
+  }
+
   private requestAutoscaleEvaluation(): void {
-    if (!this.poolConfig.autoscale || this.stopped) return;
+    if (this.stopped) return;
     void this.evaluateAutoscaling().catch((e) =>
       logger.warn(`openai autoscale evaluation failed: ${(e as Error).message}`),
     );
@@ -934,6 +1042,12 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       active: this.tokenMetadata.get(id)?.active ?? true,
     });
     this.weightedSelector.setToken(id, weight);
+  }
+
+  private hasActiveTokenCandidate(excludedTokenIds: Set<number>): boolean {
+    return [...this.tokenMetadata.entries()].some(
+      ([tokenId, metadata]) => metadata.active && !excludedTokenIds.has(tokenId),
+    );
   }
 
   private getQuotaThreshold(tokenId: number): number | null | undefined {

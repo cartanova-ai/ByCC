@@ -148,12 +148,14 @@ export class CodexAppServerWorker {
   private rpc: CodexRpcClient | null = null;
   private codexHome: string;
   private restartAttempts = 0;
+  private terminalFailureNotified = false;
   private ready = false;
   private destroyed = false;
   private busy = false;
   private activeTurnAbort?: ActiveTurnAbort;
   active = true;
   onReady?: () => void;
+  onTerminalFailure?: () => void;
   // restart 시 rpc 객체가 새로 생성되므로, 핸들러를 보관했다가 매 spawn마다 재바인딩한다.
   serverRequestHandler?: (method: string, params: unknown) => Promise<unknown>;
 
@@ -246,6 +248,7 @@ export class CodexAppServerWorker {
     await this.waitForLoginCompleted();
     this.ready = true;
     this.restartAttempts = 0;
+    this.terminalFailureNotified = false;
   }
 
   async startBrowserLogin(): Promise<string> {
@@ -261,6 +264,7 @@ export class CodexAppServerWorker {
     await this.waitForLoginCompleted();
     this.ready = true;
     this.restartAttempts = 0;
+    this.terminalFailureNotified = false;
     logger.info(`worker ${this.config.tokenName} browser login completed`);
   }
 
@@ -873,9 +877,18 @@ export class CodexAppServerWorker {
   // ── Restart ─────────────────────────────────────────────────────
 
   private scheduleRestart(): void {
-    if (this.destroyed || this.restartAttempts >= MAX_RESTART_ATTEMPTS) {
-      if (this.restartAttempts >= MAX_RESTART_ATTEMPTS) {
+    if (this.destroyed) return;
+    if (this.restartAttempts >= MAX_RESTART_ATTEMPTS) {
+      if (!this.terminalFailureNotified) {
+        this.terminalFailureNotified = true;
         logger.warn(`worker ${this.config.tokenName} max restart attempts reached`);
+        try {
+          this.onTerminalFailure?.();
+        } catch (e) {
+          logger.warn(
+            `worker ${this.config.tokenName} terminal failure callback failed: ${(e as Error).message}`,
+          );
+        }
       }
       return;
     }

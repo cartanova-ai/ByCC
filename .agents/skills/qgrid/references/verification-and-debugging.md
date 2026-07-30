@@ -130,8 +130,10 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 `NO_OPENAI_WORKERS`:
 
-- Check active OpenAI tokens, worker startup logs, Codex CLI availability, and `OpenAIDispatcher.readyWorkerCount`.
+- The request path returns this immediately only when there is no active OpenAI token candidate. If active metadata exists but all workers are temporarily unavailable, qgrid queues while pool health maintenance attempts recovery.
+- Check active OpenAI tokens, worker startup/terminal-failure logs, Codex CLI availability, and `OpenAIDispatcher.readyWorkerCount`.
 - If tokens were recently changed, inspect `TokenSubscriber` status and reconcile behavior.
+- Repeated recovery spawn failures eventually surface as the normal queue timeout (`SERVER_BUSY`), not immediate `NO_OPENAI_WORKERS`.
 
 `NO_ACTIVE_WORKERS`:
 

@@ -36,6 +36,15 @@ Autoscaling is enabled unless `QGRID_OPENAI_AUTOSCALE` is `"false"` or `"0"`. It
 
 All sizing and memory limits can be overridden with the environment variables listed in `cli-env-and-server-boot.md`.
 
+Pool health maintenance is separate from demand autoscaling:
+
+- Every active token maintains the configured minimum worker slots even when demand autoscaling is disabled.
+- An initial all-worker spawn failure is retried by the periodic pool evaluation.
+- A transiently restarting worker keeps its slot so qgrid does not create a duplicate process or worker index.
+- After a worker exhausts its three restart attempts, it emits a one-shot terminal signal. The dispatcher removes that exact worker and repairs the token back to its configured minimum.
+- Minimum repair follows the same operator commitment as startup and is not blocked by the above-min memory guards. Demand expansion above the minimum still uses both guards.
+- A broken token's failed minimum repair does not block healthy tokens from scaling up or down.
+
 ## Codex configuration
 
 qgrid writes a worker-local `config.toml` under `CODEX_HOME` before spawning Codex. The intent is to use Codex as a plain generation backend, not as a coding agent.
@@ -117,8 +126,12 @@ OpenAI worker selection:
 - Otherwise cold selection is two-level: group quota-eligible ready active workers by token, keep only tokens with at least one idle worker, choose the token with the shared smooth weighted round-robin selector (`providers/common/smooth-weighted-round-robin.ts`, driven by `tokens.weight`), then rotate a per-token worker cursor inside the chosen token.
 - Selection is work-conserving: a token whose workers are all busy is omitted from that selection round, so an idle lower-weight token receives the request immediately instead of waiting for the heavy token.
 - If no eligible worker is idle, enqueue. Queue drain re-runs the same weighted cold selection; it must not hand the queue head to the worker that happened to finish first.
+- If active token metadata exists but every worker is starting, restarting, or otherwise unavailable, enqueue instead of returning `NO_OPENAI_WORKERS`. Queue admission immediately requests both a drain and pool evaluation so a recovered worker cannot lose its wake-up.
+- Return `NO_OPENAI_WORKERS` immediately only when there is no active OpenAI token candidate. A zero-ready recovery request still uses the normal 60-second queue timeout.
 - Queue timeout: 60 seconds.
 - Max queue size: 50.
+
+Scale-down uses one pool-wide quiet clock, not per-worker timers. With an empty queue and no new request for `scaleDownIdleMs`, each evaluation removes at most one highest-index idle excess worker per token. Busy workers are never removed, and repeated evaluations stop exactly at the configured `minWorkersPerToken`.
 
 Quota threshold:
 

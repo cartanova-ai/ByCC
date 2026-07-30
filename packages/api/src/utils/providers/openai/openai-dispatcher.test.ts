@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
+import { TokenModel } from "../../../application/token/token.model";
 import { type OpenAICredentials } from "../../../application/token/token.types";
 import { type GenerateRequest, type GenerateResult } from "../common/provider-dispatcher";
-import { type CodexAppServerWorker } from "./codex-worker";
+import { CodexAppServerWorker } from "./codex-worker";
 import {
   ImageGenerationError,
   makeOpenAIWorkerId,
@@ -268,6 +269,244 @@ describe("OpenAIDispatcher monit stats", () => {
 });
 
 describe("OpenAIDispatcher autoscaling", () => {
+  it("runs minimum-capacity maintenance in fixed worker mode", async () => {
+    vi.useFakeTimers();
+    const findMany = vi.spyOn(TokenModel, "findMany").mockResolvedValue({ rows: [] } as never);
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({
+        autoscale: false,
+        minWorkersPerToken: 2,
+        maxWorkersPerToken: 2,
+      }),
+      () => 64,
+    );
+    const evaluateAutoscaling = vi
+      .spyOn(dispatcher, "evaluateAutoscaling")
+      .mockResolvedValue(undefined);
+
+    try {
+      await dispatcher.start();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(evaluateAutoscaling).toHaveBeenCalledTimes(1);
+    } finally {
+      await dispatcher.stop();
+      findMany.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("repairs an absent token pool after every initial worker spawn failed", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const tokenCredentials = credentials();
+    const spawnSingleWorker = vi.spyOn(dispatcher, "spawnSingleWorker").mockResolvedValueOnce(null);
+
+    await dispatcher.spawnWorkers(1, "token", tokenCredentials, null, 1);
+    expect(dispatcher.workerPool.has(1)).toBe(false);
+
+    const recoveredWorker = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    spawnSingleWorker.mockResolvedValueOnce(recoveredWorker);
+    await dispatcher.evaluateAutoscaling();
+
+    expect(dispatcher.workerPool.get(1)).toEqual([recoveredWorker]);
+    expect(recoveredWorker.kill).not.toHaveBeenCalled();
+  });
+
+  it("does not race minimum repair against an in-flight token bootstrap", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const pendingSpawn = deferred<CodexAppServerWorker | null>();
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockReturnValue(pendingSpawn.promise);
+
+    const bootstrap = dispatcher.spawnWorkers(1, "token", credentials(), null, 1);
+    await vi.waitFor(() => expect(spawnSingleWorker).toHaveBeenCalledTimes(1));
+    const evaluation = dispatcher.evaluateAutoscaling();
+
+    expect(spawnSingleWorker).toHaveBeenCalledTimes(1);
+    const worker = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    pendingSpawn.resolve(worker);
+    await Promise.all([bootstrap, evaluation]);
+
+    expect(dispatcher.workerPool.get(1)).toEqual([worker]);
+    expect(worker.kill).not.toHaveBeenCalled();
+  });
+
+  it("discards a bootstrapping worker when its token is removed mid-spawn", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const pendingSpawn = deferred<CodexAppServerWorker | null>();
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockReturnValue(pendingSpawn.promise);
+
+    const bootstrap = dispatcher.spawnWorkers(1, "token", credentials(), null, 1);
+    await vi.waitFor(() => expect(spawnSingleWorker).toHaveBeenCalledTimes(1));
+    await dispatcher.onTokenRemoved(1);
+    const staleWorker = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    pendingSpawn.resolve(staleWorker);
+    await bootstrap;
+
+    expect(dispatcher.workerPool.has(1)).toBe(false);
+    expect(staleWorker.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("repairs the configured minimum even when demand autoscaling is disabled", async () => {
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({
+        autoscale: false,
+        minWorkersPerToken: 2,
+        maxWorkersPerToken: 2,
+      }),
+      () => 0,
+    );
+    const tokenCredentials = credentials();
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", tokenCredentials, null, 1);
+    const existing = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    dispatcher.workerPool.set(1, [existing]);
+    const recovered = fakeWorker({ tokenId: 1, workerIndex: 1 });
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockResolvedValue(recovered);
+
+    await dispatcher.evaluateAutoscaling();
+
+    expect(spawnSingleWorker).toHaveBeenCalledWith(1, "token", tokenCredentials, 1);
+    expect(dispatcher.workerPool.get(1)).toEqual([existing, recovered]);
+  });
+
+  it("does not retry a failed minimum spawn as demand expansion in the same evaluation", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    dispatcher.queue.push({} as never);
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockResolvedValue(null);
+
+    await dispatcher.evaluateAutoscaling();
+
+    expect(spawnSingleWorker).toHaveBeenCalledTimes(1);
+    dispatcher.queue = [];
+  });
+
+  it("keeps scaling healthy tokens when another token minimum repair fails", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "broken", credentials(), null, 1);
+    await dispatcher.onTokenAdded(2, "healthy", credentials(), null, 1);
+    dispatcher.workerPool.set(2, [
+      fakeWorker({ tokenId: 2, tokenName: "healthy", workerIndex: 0, busy: true }),
+    ]);
+    dispatcher.queue.push({} as never);
+    const healthyExpansion = fakeWorker({
+      tokenId: 2,
+      tokenName: "healthy",
+      workerIndex: 1,
+    });
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockImplementation(async (tokenId) => (tokenId === 1 ? null : healthyExpansion));
+
+    await dispatcher.evaluateAutoscaling();
+
+    expect(spawnSingleWorker).toHaveBeenCalledTimes(2);
+    expect(dispatcher.workerPool.get(2)).toHaveLength(2);
+    dispatcher.queue = [];
+  });
+
+  it("does not duplicate a minimum slot while its worker is transiently restarting", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    dispatcher.workerPool.set(1, [
+      fakeWorker({ tokenId: 1, workerIndex: 0, ready: false }),
+    ]);
+    const spawnSingleWorker = vi.spyOn(dispatcher, "spawnSingleWorker");
+
+    await dispatcher.evaluateAutoscaling();
+
+    expect(spawnSingleWorker).not.toHaveBeenCalled();
+    expect(dispatcher.workerPool.get(1)).toHaveLength(1);
+  });
+
+  it("queues while active token metadata exists but every worker is unavailable", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    const evaluateAutoscaling = vi
+      .spyOn(dispatcher, "evaluateAutoscaling")
+      .mockResolvedValue(undefined);
+
+    const queued = dispatcher.enqueue(async (worker) => worker.tokenName);
+    await waitForQueue(dispatcher);
+
+    expect(evaluateAutoscaling).toHaveBeenCalled();
+    const recovered = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    dispatcher.workerPool.set(1, [recovered]);
+    await dispatcher.drainQueue();
+
+    await expect(queued).resolves.toBe("token");
+  });
+
+  it("still rejects immediately when no active OpenAI token metadata exists", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+
+    await expect(dispatcher.enqueue(async () => "ok")).rejects.toThrow("NO_OPENAI_WORKERS");
+    expect(dispatcher.queueLength).toBe(0);
+  });
+
+  it("keeps a recovery queue when another token is removed but an active token remains", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "removed", credentials(), null, 1);
+    await dispatcher.onTokenAdded(2, "recovering", credentials(), null, 1);
+
+    const queued = dispatcher.enqueue(async () => "ok");
+    const rejection = expect(queued).rejects.toThrow("TEST_CLEANUP");
+    await waitForQueue(dispatcher);
+    await dispatcher.onTokenRemoved(1);
+
+    expect(dispatcher.queueLength).toBe(1);
+    dispatcher.rejectAllQueued("TEST_CLEANUP");
+    await rejection;
+  });
+
+  it("keeps a recovery queue when another token is deactivated but an active token remains", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "deactivated", credentials(), null, 1);
+    await dispatcher.onTokenAdded(2, "recovering", credentials(), null, 1);
+
+    const queued = dispatcher.enqueue(async () => "ok");
+    const rejection = expect(queued).rejects.toThrow("TEST_CLEANUP");
+    await waitForQueue(dispatcher);
+    dispatcher.onTokenDeactivated(1);
+
+    expect(dispatcher.queueLength).toBe(1);
+    dispatcher.rejectAllQueued("TEST_CLEANUP");
+    await rejection;
+  });
+
+  it("drains immediately when capacity appears before a fixed-mode queue wake-up", async () => {
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({
+        autoscale: false,
+        minWorkersPerToken: 1,
+        maxWorkersPerToken: 1,
+      }),
+      () => 64,
+    );
+    const worker = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    addWorkers(dispatcher, [worker]);
+    await dispatcher.onTokenUpdated(1, "token", credentials(), null, 1);
+
+    await expect(dispatcher.enqueue(async (selected) => selected.tokenName)).resolves.toBe(
+      "token",
+    );
+    expect(dispatcher.queueLength).toBe(0);
+  });
+
   it("scales six active tokens from 5 to 15 workers per token", async () => {
     const dispatcher = new OpenAIDispatcher(
       autoscaleConfig({
@@ -363,6 +602,40 @@ describe("OpenAIDispatcher autoscaling", () => {
     expect(dispatcher.workerPool.get(2)).toHaveLength(2);
   });
 
+  it("maintains the configured minimum for a quota-blocked token", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    const tokenCredentials = credentials({ accountId: "haze" });
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "openai/haze", tokenCredentials, 80, 1);
+    dispatcher.workerPool.set(1, [
+      fakeWorker({ tokenId: 1, tokenName: "openai/haze", workerIndex: 0 }),
+    ]);
+    readOpenAIQuotaUsageMock.mockResolvedValue(quotaOk(85));
+
+    await expect(dispatcher.acquireIdleWorker()).rejects.toBeInstanceOf(
+      QuotaThresholdExceededError,
+    );
+    dispatcher.workerPool.delete(1);
+    const replacement = fakeWorker({
+      tokenId: 1,
+      tokenName: "openai/haze",
+      workerIndex: 0,
+    });
+    const spawnSingleWorker = vi
+      .spyOn(dispatcher, "spawnSingleWorker")
+      .mockResolvedValue(replacement);
+
+    await dispatcher.evaluateAutoscaling();
+
+    expect(spawnSingleWorker).toHaveBeenCalledWith(
+      1,
+      "openai/haze",
+      tokenCredentials,
+      0,
+    );
+    expect(dispatcher.workerPool.get(1)).toEqual([replacement]);
+  });
+
   it("discards a worker spawned while its token becomes quota-blocked", async () => {
     const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
     const tokenCredentials = credentials();
@@ -442,6 +715,168 @@ describe("OpenAIDispatcher autoscaling", () => {
     expect(idle.kill).toHaveBeenCalledTimes(1);
     expect(busy.kill).not.toHaveBeenCalled();
     expect(dispatcher.workerPool.get(1)).toEqual([busy]);
+  });
+
+  it.each([1, 2, 5])(
+    "converges repeated idle evaluations to configured minimum %i and never below it",
+    async (minimum) => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const initialCount = minimum + 3;
+      const dispatcher = new OpenAIDispatcher(
+        autoscaleConfig({
+          minWorkersPerToken: minimum,
+          maxWorkersPerToken: initialCount,
+          scaleDownIdleMs: 1_000,
+        }),
+        () => 64,
+      );
+      vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+      await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+      const workers = Array.from({ length: initialCount }, (_, workerIndex) =>
+        fakeWorker({ tokenId: 1, workerIndex }),
+      );
+      dispatcher.workerPool.set(1, workers);
+      vi.setSystemTime(2_001);
+
+      await dispatcher.evaluateAutoscaling();
+      expect(dispatcher.workerPool.get(1)).toHaveLength(initialCount - 1);
+      await dispatcher.evaluateAutoscaling();
+      expect(dispatcher.workerPool.get(1)).toHaveLength(initialCount - 2);
+      await dispatcher.evaluateAutoscaling();
+      expect(dispatcher.workerPool.get(1)).toHaveLength(minimum);
+      await dispatcher.evaluateAutoscaling();
+      expect(dispatcher.workerPool.get(1)).toHaveLength(minimum);
+
+      for (let workerIndex = minimum; workerIndex < initialCount; workerIndex++) {
+        expect(workers[workerIndex]?.kill).toHaveBeenCalledTimes(1);
+      }
+      for (let workerIndex = 0; workerIndex < minimum; workerIndex++) {
+        expect(workers[workerIndex]?.kill).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    },
+  );
+
+  it("still scales healthy idle pools down when another token cannot recover its minimum", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const dispatcher = new OpenAIDispatcher(
+        autoscaleConfig({ scaleDownIdleMs: 1_000 }),
+        () => 64,
+      );
+      vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+      await dispatcher.onTokenAdded(1, "broken", credentials(), null, 1);
+      await dispatcher.onTokenAdded(2, "healthy", credentials(), null, 1);
+      const healthyWorkers = [
+        fakeWorker({ tokenId: 2, tokenName: "healthy", workerIndex: 0 }),
+        fakeWorker({ tokenId: 2, tokenName: "healthy", workerIndex: 1 }),
+      ];
+      dispatcher.workerPool.set(2, healthyWorkers);
+      vi.spyOn(dispatcher, "spawnSingleWorker").mockResolvedValue(null);
+      vi.setSystemTime(2_001);
+
+      await dispatcher.evaluateAutoscaling();
+
+      expect(dispatcher.workerPool.get(2)).toEqual([healthyWorkers[0]]);
+      expect(healthyWorkers[1]?.kill).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes a terminal worker by identity and requests minimum repair", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    const terminal = fakeWorker({ tokenId: 1, workerIndex: 0, ready: false });
+    dispatcher.workerPool.set(1, [terminal]);
+    const evaluateAutoscaling = vi
+      .spyOn(dispatcher, "evaluateAutoscaling")
+      .mockResolvedValue(undefined);
+
+    await dispatcher.handleWorkerTerminalFailure(terminal);
+
+    expect(dispatcher.workerPool.has(1)).toBe(false);
+    expect(terminal.kill).toHaveBeenCalledTimes(1);
+    expect(evaluateAutoscaling).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns to the configured minimum after scale-down and terminal failure overlap", async () => {
+    const dispatcher = new OpenAIDispatcher(
+      autoscaleConfig({
+        minWorkersPerToken: 2,
+        maxWorkersPerToken: 3,
+        scaleDownIdleMs: 0,
+      }),
+      () => 64,
+    );
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    const terminal = fakeWorker({ tokenId: 1, workerIndex: 0, ready: false });
+    const survivor = fakeWorker({ tokenId: 1, workerIndex: 1 });
+    const excess = fakeWorker({ tokenId: 1, workerIndex: 2 });
+    dispatcher.workerPool.set(1, [terminal, survivor, excess]);
+
+    await dispatcher.scaleDownOneStep();
+    expect(dispatcher.workerPool.get(1)).toEqual([terminal, survivor]);
+
+    const replacement = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    vi.spyOn(dispatcher, "spawnSingleWorker").mockResolvedValue(replacement);
+    await dispatcher.handleWorkerTerminalFailure(terminal);
+    await vi.waitFor(() =>
+      expect(dispatcher.workerPool.get(1)).toEqual([replacement, survivor]),
+    );
+
+    expect(excess.kill).toHaveBeenCalledTimes(1);
+    expect(terminal.kill).toHaveBeenCalledTimes(1);
+    expect(dispatcher.workerPool.get(1)).toHaveLength(2);
+  });
+
+  it("ignores a stale terminal callback after the token pool was replaced", async () => {
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+    vi.spyOn(dispatcher, "spawnWorkers").mockResolvedValue(undefined);
+    await dispatcher.onTokenAdded(1, "token", credentials(), null, 1);
+    const stale = fakeWorker({ tokenId: 1, workerIndex: 0, ready: false });
+    const current = fakeWorker({ tokenId: 1, workerIndex: 0 });
+    dispatcher.workerPool.set(1, [current]);
+    const evaluateAutoscaling = vi.spyOn(dispatcher, "evaluateAutoscaling");
+
+    await dispatcher.handleWorkerTerminalFailure(stale);
+
+    expect(dispatcher.workerPool.get(1)).toEqual([current]);
+    expect(current.kill).not.toHaveBeenCalled();
+    expect(evaluateAutoscaling).not.toHaveBeenCalled();
+  });
+
+  it("wires a spawned worker terminal signal to dispatcher cleanup", async () => {
+    const initialize = vi
+      .spyOn(CodexAppServerWorker.prototype, "initialize")
+      .mockResolvedValue(undefined);
+    const kill = vi.spyOn(CodexAppServerWorker.prototype, "kill").mockResolvedValue(undefined);
+    const dispatcher = new OpenAIDispatcher(autoscaleConfig(), () => 64);
+
+    try {
+      await dispatcher.spawnWorkers(1, "token", credentials(), null, 1);
+      const worker = dispatcher.workerPool.get(1)?.[0];
+      expect(worker).toBeDefined();
+      const evaluateAutoscaling = vi
+        .spyOn(dispatcher, "evaluateAutoscaling")
+        .mockResolvedValue(undefined);
+
+      worker?.onTerminalFailure?.();
+      await vi.waitFor(() => expect(evaluateAutoscaling).toHaveBeenCalledTimes(1));
+
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(dispatcher.workerPool.has(1)).toBe(false);
+    } finally {
+      initialize.mockRestore();
+      kill.mockRestore();
+    }
   });
 });
 
@@ -987,8 +1422,8 @@ describe("OpenAIDispatcher quota threshold gate", () => {
 
   it("rechecks threshold at drain time before assigning the released worker", async () => {
     const dispatcher = new OpenAIDispatcher();
-    const workerA = fakeWorker({ tokenId: 1, tokenName: "tok-A" });
-    const workerB = fakeWorker({ tokenId: 2, tokenName: "tok-B" });
+    const workerA = fakeWorker({ tokenId: 1, tokenName: "tok-A", busy: true });
+    const workerB = fakeWorker({ tokenId: 2, tokenName: "tok-B", busy: true });
     addWorkers(dispatcher, [workerA, workerB]);
     await dispatcher.onTokenUpdated(1, "tok-A", credentials(), 80);
     await dispatcher.onTokenUpdated(2, "tok-B", credentials(), 80);
@@ -998,6 +1433,8 @@ describe("OpenAIDispatcher quota threshold gate", () => {
     readOpenAIQuotaUsageMock
       .mockResolvedValueOnce(quotaOk(90))
       .mockResolvedValueOnce(quotaOk(10));
+    workerA.releaseTurn();
+    workerB.releaseTurn();
 
     await dispatcher.drainQueue();
 
@@ -1006,12 +1443,13 @@ describe("OpenAIDispatcher quota threshold gate", () => {
 
   it("serializes concurrent drain calls so a queue item is not assigned twice", async () => {
     const dispatcher = new OpenAIDispatcher();
-    const worker = fakeWorker({ tokenId: 1, tokenName: "tok-A" });
+    const worker = fakeWorker({ tokenId: 1, tokenName: "tok-A", busy: true });
     addWorkers(dispatcher, [worker]);
     await dispatcher.onTokenUpdated(1, "tok-A", credentials(), null, 1);
     const execute = vi.fn(async (w: CodexAppServerWorker) => w.tokenName);
     const queued = dispatcher.enqueue(execute);
     await waitForQueue(dispatcher);
+    worker.releaseTurn();
 
     await Promise.all([dispatcher.drainQueue(), dispatcher.drainQueue()]);
 
