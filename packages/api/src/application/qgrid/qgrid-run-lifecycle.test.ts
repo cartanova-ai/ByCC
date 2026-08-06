@@ -109,6 +109,20 @@ describe("qgrid run lifecycle start", () => {
     });
   });
 
+  it("stores attached tool definitions on the run and omits them when absent", async () => {
+    const tools = [
+      { name: "getWeather", description: "Get weather for a city", inputSchema: { type: "object" } },
+      { name: "sendMail" },
+    ];
+
+    await beforeQuery({ prompt: "hi", model: "openai/gpt-5-codex", tools });
+    expect(createRunMock).toHaveBeenCalledWith(expect.objectContaining({ tools }));
+
+    createRunMock.mockClear();
+    await beforeQuery({ prompt: "hi", model: "openai/gpt-5-codex", tools: [] });
+    expect(createRunMock).toHaveBeenCalledWith(expect.objectContaining({ tools: undefined }));
+  });
+
   it("continues an existing parent and completes tool results before the next step", async () => {
     const order: string[] = [];
     continueToolRunMock.mockImplementationOnce(async () => {

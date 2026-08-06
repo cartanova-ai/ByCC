@@ -42,6 +42,16 @@ const TokenCredentials = z.union([
 ]);
 type TokenCredentials = z.infer<typeof TokenCredentials>;
 
+// CustomScalar: ToolDefinitions
+const ToolDefinitions = z.array(
+  z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    inputSchema: z.unknown().optional(),
+  }),
+);
+type ToolDefinitions = z.infer<typeof ToolDefinitions>;
+
 // Enums: RequestLog
 export const RequestLogOrderBy = z.enum(["id-desc"]).describe("RequestLogOrderBy");
 export type RequestLogOrderBy = z.infer<typeof RequestLogOrderBy>;
@@ -111,6 +121,7 @@ export const RequestLogBaseSchema = z.object({
   image_cost_method: z.string().max(100).nullable(),
   effort: z.string().max(10).nullable(),
   history: HistoryItems.nullable(),
+  tools: ToolDefinitions.nullable(),
   status: RequestLogStatus,
   error_message: z.string().nullable(),
   tool_call_count: z.int(),
@@ -141,6 +152,7 @@ export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
     "image_cost_method",
     "effort",
     "history",
+    "tools",
     "status",
     "error_message",
     "tool_call_count",
@@ -308,6 +320,7 @@ export const RequestLogSubsetA = z.object({
   image_cost_method: z.string().max(100).nullable(),
   effort: z.string().max(10).nullable(),
   history: HistoryItems.nullable(),
+  tools: ToolDefinitions.nullable(),
   status: RequestLogStatus,
   error_message: z.string().nullable(),
   tool_call_count: z.int(),

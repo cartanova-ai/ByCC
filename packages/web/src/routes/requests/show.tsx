@@ -12,6 +12,7 @@ import CopyIcon from "~icons/lucide/copy";
 import XIcon from "~icons/lucide/x";
 
 import { cacheHitRate, formatMicroUsd } from "@/lib/cost";
+import { type ToolDefinitions } from "@/services/request-log/request-log.types";
 import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
 import {
   type RequestLogStepSubsetMapping,
@@ -942,6 +943,30 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
   );
 }
 
+function ToolsSection({ tools }: { tools: ToolDefinitions }) {
+  return (
+    <Section title={`Tools (${tools.length})`} defaultOpen={false}>
+      <div className="space-y-1.5">
+        {tools.map((tool, i) => (
+          <div key={`tool-${i}`} className="rounded-md px-3 py-2 bg-caution-400/10">
+            <div className="text-[10px] uppercase tracking-wider text-sand-500 font-medium mb-1">
+              fn: {tool.name}
+            </div>
+            {tool.description && (
+              <p className="text-[12px] text-sand-700 leading-relaxed">{tool.description}</p>
+            )}
+            {tool.inputSchema !== undefined && tool.inputSchema !== null && (
+              <pre className="mt-1 text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
+                {JSON.stringify(tool.inputSchema, null, 2)}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function RequestDetail({ id }: { id: number }) {
   const { data, isLoading } = RequestLogService.useRequestLog("A", id);
   const { data: stepsData } = RequestLogStepService.useRequestLogSteps("T", {
@@ -985,6 +1010,8 @@ function RequestDetail({ id }: { id: number }) {
   const tokensPerSecEnabled = isTokensPerSecEnabled(data);
   const history = data.history ?? null;
   const hasHistory = history !== null && history.length > 0;
+  const tools = data.tools ?? null;
+  const hasTools = tools !== null && tools.length > 0;
 
   const promptSections = (
     <div className="space-y-4">
@@ -1021,6 +1048,8 @@ function RequestDetail({ id }: { id: number }) {
       {data.error_message && <ErrorPanel message={data.error_message} />}
 
       {hasHistory && <HistorySection history={history} />}
+
+      {hasTools && <ToolsSection tools={tools} />}
 
       {hasSteps ? (
         <div className="flex gap-4 items-start">

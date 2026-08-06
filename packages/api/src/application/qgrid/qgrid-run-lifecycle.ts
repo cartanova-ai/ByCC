@@ -65,6 +65,8 @@ export async function beforeQuery(args: QueryInput): Promise<{
   let stepIndex = 0;
 
   // requestLogId 가 있을 때만 기존 run 연장. threadCoord 만 있는 conv 는 새 run 으로 시작.
+  // continuation 은 createRun 을 건너뛰므로 run 의 tools 는 첫 스텝 장착분으로 고정된다 —
+  // AI SDK prepareStep/activeTools 로 스텝마다 툴셋이 바뀌어도 로그에는 반영되지 않는다.
   if (args.runContext?.requestLogId !== undefined) {
     requestLogId = args.runContext.requestLogId;
     // cleanup과 같은 DB advisory lock을 잡고 tool 결과 반영 + 다음 step 예약을 한
@@ -81,6 +83,7 @@ export async function beforeQuery(args: QueryInput): Promise<{
       effort: args.effort,
       project_name: args.projectName,
       history: filterHistoryForStorage(args.history),
+      tools: args.tools?.length ? args.tools : undefined,
       is_image_generation: args.imageGeneration,
     });
   }

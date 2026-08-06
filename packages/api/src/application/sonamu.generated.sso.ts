@@ -42,6 +42,7 @@ export const requestLogSubsetQueries = {
       image_cost_method: "request_logs.image_cost_method",
       effort: "request_logs.effort",
       history: "request_logs.history",
+      tools: "request_logs.tools",
       status: "request_logs.status",
       error_message: "request_logs.error_message",
       tool_call_count: "request_logs.tool_call_count",

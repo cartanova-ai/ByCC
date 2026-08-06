@@ -308,6 +308,10 @@ createQgridLogger({
 
 Everything except `serverUrl` is optional. With defaults in place, passing only `serverUrl` works.
 
+The logger records generate/tool-call steps and usage, but not the attached tool definitions
+(name/description/inputSchema) — the dashboard's "Tools" section appears only for requests that
+go through the qgrid provider.
+
 To opt one generation out of request logging, set `providerOptions.qgrid.logger` to `false`.
 The same option works for qgrid-provider calls and for external-provider calls observed by
 `createQgridLogger`; tool execution and multi-step continuation still work normally.

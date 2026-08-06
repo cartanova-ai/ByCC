@@ -306,6 +306,9 @@ createQgridLogger({
 
 모든 설정은 optional (serverUrl 제외). 기본값이 있으므로 `serverUrl`만 넣으면 동작합니다.
 
+logger는 generate/tool-call step과 usage를 기록하지만, 장착된 tool 정의(name/description/inputSchema)는
+기록하지 않습니다 — 대시보드의 "Tools" 섹션은 qgrid provider를 경유한 요청에만 표시됩니다.
+
 특정 generation을 request log 저장에서 제외하려면 `providerOptions.qgrid.logger`를
 `false`로 설정하세요. qgrid provider 호출과 `createQgridLogger`가 관찰하는 외부 provider
 호출에 모두 적용되며, tool 실행과 multi-step 연결은 계속 정상 동작합니다.

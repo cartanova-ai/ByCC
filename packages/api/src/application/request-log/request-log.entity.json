@@ -98,6 +98,13 @@
       "desc": "inject_items 히스토리"
     },
     {
+      "name": "tools",
+      "type": "json",
+      "id": "ToolDefinitions",
+      "nullable": true,
+      "desc": "요청에 장착된 tool 정의 목록"
+    },
+    {
       "name": "status",
       "type": "enum",
       "id": "RequestLogStatus",
@@ -153,6 +160,7 @@
       "image_cost_method",
       "effort",
       "history",
+      "tools",
       "status",
       "error_message",
       "tool_call_count",

@@ -233,6 +233,7 @@ const entityLabels = {
   "entity.RequestLog.image_cost_method": "이미지 비용 추정 방식",
   "entity.RequestLog.effort": "effort level",
   "entity.RequestLog.history": "inject_items 히스토리",
+  "entity.RequestLog.tools": "요청에 장착된 tool 정의 목록",
   "entity.RequestLog.status": "실행 상태",
   "entity.RequestLog.error_message": "에러 메시지",
   "entity.RequestLog.tool_call_count": "tool call 횟수",

@@ -287,6 +287,7 @@ class RequestLogModelClass extends BaseModelClass<
     effort?: string | null;
     project_name?: string | null;
     history?: unknown;
+    tools?: unknown;
     is_image_generation?: boolean;
   }): Promise<number> {
     const wdb = this.getPuri("w");
@@ -309,6 +310,7 @@ class RequestLogModelClass extends BaseModelClass<
       // 이미지 turn 식별(R13). run 경로(tools+image 조합)도 auto 경로와 동일하게 마킹.
       is_image_generation: params.is_image_generation ?? false,
       ...(params.history !== undefined ? { history: params.history as { type: string }[] } : {}),
+      ...(params.tools !== undefined ? { tools: params.tools as { name: string }[] } : {}),
     });
     return wdb.transaction(async (trx) => {
       const ids = await trx.ubUpsert("request_logs");

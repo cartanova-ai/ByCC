@@ -15,6 +15,16 @@ export const HistoryItems = z.array(
 );
 export type HistoryItems = z.infer<typeof HistoryItems>;
 
+// 요청에 장착된 tool 정의 목록 — qgrid.types.ts QgridTool과 동일 형태.
+export const ToolDefinitions = z.array(
+  z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    inputSchema: z.unknown().optional(),
+  }),
+);
+export type ToolDefinitions = z.infer<typeof ToolDefinitions>;
+
 // RequestLog - ListParams
 // project_name NULL 분기: IS NULL만 조회(unassigned 필터) 또는 IS NOT NULL만(distinct 조회).
 export const RequestLogListParams = RequestLogBaseListParams.extend({

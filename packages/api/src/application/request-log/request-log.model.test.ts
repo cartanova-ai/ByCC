@@ -113,7 +113,7 @@ describe("RequestLogModel run lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  it("stores the requested model but no serving model when a run starts", async () => {
+  it("stores the requested model and attached tools but no serving model when a run starts", async () => {
     const ubRegister = vi.fn();
     const transaction = vi.fn(
       async (cb: (trx: { ubUpsert: () => Promise<number[]> }) => Promise<number>) =>
@@ -130,6 +130,7 @@ describe("RequestLogModel run lifecycle", () => {
       RequestLogModel.createRun({
         user_prompt: "hi",
         requested_model_name: "openai/gpt-5-codex",
+        tools: [{ name: "getWeather", description: "Get weather", inputSchema: { type: "object" } }],
       }),
     ).resolves.toBe(17);
 
@@ -139,6 +140,7 @@ describe("RequestLogModel run lifecycle", () => {
         status: "running",
         requested_model_name: "openai/gpt-5-codex",
         model_name: null,
+        tools: [{ name: "getWeather", description: "Get weather", inputSchema: { type: "object" } }],
       }),
     );
   });
