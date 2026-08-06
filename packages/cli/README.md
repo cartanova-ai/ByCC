@@ -97,7 +97,6 @@ Server behavior variables:
 | Variable | Description | Default |
 |------|------|--------|
 | `NODE_ENV` | Sonamu runtime profile. Set `staging` for a remote non-production deployment | `production` |
-| `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback. Set it when the server is accessed remotely | `http://localhost:<port>/callback` when unset |
 
 ## Prerequisites
 

@@ -307,7 +307,6 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_DB_USER` | PostgreSQL user (CLI) | `postgres` |
 | `QGRID_DB_PASSWORD` | PostgreSQL password (CLI) | `postgres` |
 | `QGRID_DB_NAME` | Database name (CLI) | `qgrid` |
-| `QGRID_PUBLIC_BASE_URL` | Public base URL for the Anthropic OAuth callback | `http://localhost:<port>` |
 
 > Qgrid does not add a separate authentication guard to dashboard APIs. Keep `HOST` on loopback unless access is protected by a trusted network or reverse proxy. A public bind exposes every admin endpoint, including the Monit tab's server log feed.
 >

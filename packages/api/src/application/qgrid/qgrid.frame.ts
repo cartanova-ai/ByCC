@@ -80,12 +80,29 @@ async function deleteOAuthState(state: string): Promise<void> {
   await cache.delete({ key: `${OAUTH_STATE_PREFIX}${state}` });
 }
 
+// OAuth callback 은 대시보드가 접속한 qgrid 주소로 돌아온다. 브라우저가 보낸
+// Origin(우선) 또는 Host 헤더에서 base URL 을 파생하므로 별도 env 설정이 필요 없다.
+// HTTP context 가 없는 직접 호출(테스트 등)만 localhost 로 폴백한다.
 function getOAuthRedirectUri(): string {
-  const publicBaseUrl = process.env.QGRID_PUBLIC_BASE_URL?.replace(/\/+$/, "");
-  if (publicBaseUrl) return `${publicBaseUrl}/callback`;
-
-  const serverPort = process.env.PORT ?? "44900";
-  return `http://localhost:${serverPort}/callback`;
+  try {
+    const { headers, request } = Sonamu.getContext();
+    const origin = headers.origin;
+    if (typeof origin === "string" && /^https?:\/\//.test(origin)) {
+      return `${origin.replace(/\/+$/, "")}/callback`;
+    }
+    const forwardedHost = headers["x-forwarded-host"];
+    const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) ?? headers.host;
+    if (host) {
+      const forwardedProto = headers["x-forwarded-proto"];
+      const proto =
+        (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto)?.split(",")[0] ??
+        request.protocol;
+      return `${proto}://${host}/callback`;
+    }
+  } catch {
+    // direct frame call — HTTP context 없음
+  }
+  return `http://localhost:${process.env.PORT ?? "44900"}/callback`;
 }
 
 function rejectImageGenerationStream(args: QueryInput): void {

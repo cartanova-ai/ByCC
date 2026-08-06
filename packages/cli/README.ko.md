@@ -96,7 +96,6 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
 | `NODE_ENV` | Sonamu 실행 프로필. 원격 비프로덕션 배포에는 `staging` 사용 | `production` |
-| `QGRID_PUBLIC_BASE_URL` | Anthropic OAuth callback 공개 베이스 URL. 원격 접속 환경에서 설정 | 미설정 시 `http://localhost:<port>/callback` |
 
 ## 사전 요구사항
 
