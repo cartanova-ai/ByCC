@@ -10,7 +10,8 @@ type Provider = "anthropic" | "openai";
 
 export function AddTokenModal() {
   const [open, setOpen] = useState(false);
-  const [oauthLoading, setOauthLoading] = useState(false);
+  // 로그인 진행 중인 provider — 스피너를 해당 버튼에만 표시한다.
+  const [oauthLoading, setOauthLoading] = useState<Provider | null>(null);
   const [name, setName] = useState("");
 
   const queryClient = useQueryClient();
@@ -23,7 +24,7 @@ export function AddTokenModal() {
     if (provider === "openai") {
       // popup 을 동기적으로 열어야 브라우저가 차단하지 않음
       const popup = window.open("about:blank", "_blank");
-      setOauthLoading(true);
+      setOauthLoading("openai");
       try {
         const { authUrl } = await oauthStartOpenAIMutation.mutateAsync({ name: name.trim() });
         if (popup) popup.location.href = authUrl;
@@ -38,20 +39,20 @@ export function AddTokenModal() {
         // 5분 후 자동 정리
         setTimeout(() => {
           clearInterval(poll);
-          setOauthLoading(false);
+          setOauthLoading(null);
         }, 300_000);
       } catch (e) {
         console.error("OAuth start failed:", e);
-        setOauthLoading(false);
+        setOauthLoading(null);
       }
     } else {
-      setOauthLoading(true);
+      setOauthLoading("anthropic");
       try {
         const { authUrl } = await oauthStartMutation.mutateAsync({ name: name.trim() });
         window.location.href = authUrl;
       } catch (e) {
         console.error("OAuth start failed:", e);
-        setOauthLoading(false);
+        setOauthLoading(null);
       }
     }
   };
@@ -59,7 +60,7 @@ export function AddTokenModal() {
   const close = () => {
     setOpen(false);
     setName("");
-    setOauthLoading(false);
+    setOauthLoading(null);
   };
 
   return (
@@ -108,10 +109,10 @@ export function AddTokenModal() {
                 <button
                   type="button"
                   className="w-full py-2.5 text-sm font-medium rounded-md bg-sand-900 text-white hover:bg-sand-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-2"
-                  disabled={!name.trim() || oauthLoading}
+                  disabled={!name.trim() || oauthLoading !== null}
                   onClick={() => handleOAuthLogin("openai")}
                 >
-                  {oauthLoading ? (
+                  {oauthLoading === "openai" ? (
                     <span className="flex items-center gap-1.5">
                       <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       Waiting for login...
@@ -133,11 +134,20 @@ export function AddTokenModal() {
                 <button
                   type="button"
                   className="w-full py-2.5 text-sm font-medium rounded-md border border-sand-300 text-sand-700 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-2"
-                  disabled={!name.trim() || oauthLoading}
+                  disabled={!name.trim() || oauthLoading !== null}
                   onClick={() => handleOAuthLogin("anthropic")}
                 >
-                  <KeyIcon className="size-4" />
-                  Login with Claude
+                  {oauthLoading === "anthropic" ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3.5 h-3.5 border-2 border-sand-400 border-t-transparent rounded-full animate-spin" />
+                      Redirecting...
+                    </span>
+                  ) : (
+                    <>
+                      <KeyIcon className="size-4" />
+                      Login with Claude
+                    </>
+                  )}
                 </button>
               </div>
             </div>
