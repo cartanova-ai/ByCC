@@ -112,7 +112,7 @@ describe("qgrid run lifecycle start", () => {
   it("stores attached tool definitions on the run and omits them when absent", async () => {
     const tools = [
       { name: "getWeather", description: "Get weather for a city", inputSchema: { type: "object" } },
-      { name: "sendMail" },
+      { name: "sendMail", inputSchema: { type: "object" } },
     ];
 
     await beforeQuery({ prompt: "hi", model: "openai/gpt-5-codex", tools });

@@ -47,7 +47,7 @@ const ToolDefinitions = z.array(
   z.object({
     name: z.string(),
     description: z.string().optional(),
-    inputSchema: z.unknown().optional(),
+    inputSchema: z.unknown(),
   }),
 );
 type ToolDefinitions = z.infer<typeof ToolDefinitions>;

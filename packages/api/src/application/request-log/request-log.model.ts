@@ -14,7 +14,11 @@ import { SD } from "../../i18n/sd.generated";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogSubsetKey, type RequestLogSubsetMapping } from "../sonamu.generated";
 import { requestLogLoaderQueries, requestLogSubsetQueries } from "../sonamu.generated.sso";
-import { type RequestLogListParams, type RequestLogSaveParams } from "./request-log.types";
+import {
+  type RequestLogListParams,
+  type RequestLogSaveParams,
+  type ToolDefinitions,
+} from "./request-log.types";
 
 // cost_usd는 정수 micro-USD로 저장. 실제 USD = cost_usd / MICRO_USD.
 export const MICRO_USD = 1_000_000;
@@ -287,7 +291,7 @@ class RequestLogModelClass extends BaseModelClass<
     effort?: string | null;
     project_name?: string | null;
     history?: unknown;
-    tools?: unknown;
+    tools?: ToolDefinitions;
     is_image_generation?: boolean;
   }): Promise<number> {
     const wdb = this.getPuri("w");
@@ -310,7 +314,7 @@ class RequestLogModelClass extends BaseModelClass<
       // 이미지 turn 식별(R13). run 경로(tools+image 조합)도 auto 경로와 동일하게 마킹.
       is_image_generation: params.is_image_generation ?? false,
       ...(params.history !== undefined ? { history: params.history as { type: string }[] } : {}),
-      ...(params.tools !== undefined ? { tools: params.tools as { name: string }[] } : {}),
+      ...(params.tools !== undefined ? { tools: params.tools } : {}),
     });
     return wdb.transaction(async (trx) => {
       const ids = await trx.ubUpsert("request_logs");

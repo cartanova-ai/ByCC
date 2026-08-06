@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 
+import { QgridTool } from "../qgrid/qgrid.types";
 import { RequestLogBaseListParams, RequestLogBaseSchema } from "../sonamu.generated";
 
 export const HistoryItems = z.array(
@@ -20,14 +21,8 @@ export const HistoryItems = z.array(
 );
 export type HistoryItems = z.infer<typeof HistoryItems>;
 
-// 요청에 장착된 tool 정의 목록 — qgrid.types.ts QgridTool과 동일 형태.
-export const ToolDefinitions = z.array(
-  z.object({
-    name: z.string(),
-    description: z.string().optional(),
-    inputSchema: z.unknown().optional(),
-  }),
-);
+// 요청에 장착된 tool 정의 목록 — 저장 형태는 QgridTool 계약을 그대로 따른다.
+export const ToolDefinitions = z.array(QgridTool);
 export type ToolDefinitions = z.infer<typeof ToolDefinitions>;
 
 // RequestLog - ListParams

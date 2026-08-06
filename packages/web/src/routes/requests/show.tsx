@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import JsonView from "@uiw/react-json-view";
 import { lightTheme } from "@uiw/react-json-view/light";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod";
@@ -912,6 +912,16 @@ function extractText(content: unknown): string {
   return JSON.stringify(content);
 }
 
+function MonoPre({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <pre
+      className={`text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto ${className ?? ""}`}
+    >
+      {children}
+    </pre>
+  );
+}
+
 function HistorySection({ history }: { history: HistoryItem[] }) {
   return (
     <Section title="History" defaultOpen={false}>
@@ -922,20 +932,10 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
               {historyItemLabel(item)}
             </div>
             {item.content !== null && item.content !== undefined && (
-              <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
-                {extractText(item.content)}
-              </pre>
+              <MonoPre>{extractText(item.content)}</MonoPre>
             )}
-            {item.arguments && (
-              <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
-                {item.arguments}
-              </pre>
-            )}
-            {item.output && (
-              <pre className="text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
-                {item.output}
-              </pre>
-            )}
+            {item.arguments && <MonoPre>{item.arguments}</MonoPre>}
+            {item.output && <MonoPre>{item.output}</MonoPre>}
           </div>
         ))}
       </div>
@@ -956,9 +956,7 @@ function ToolsSection({ tools }: { tools: ToolDefinitions }) {
               <p className="text-[12px] text-sand-700 leading-relaxed">{tool.description}</p>
             )}
             {tool.inputSchema !== undefined && tool.inputSchema !== null && (
-              <pre className="mt-1 text-[12px] text-sand-700 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-40 overflow-auto">
-                {JSON.stringify(tool.inputSchema, null, 2)}
-              </pre>
+              <MonoPre className="mt-1">{JSON.stringify(tool.inputSchema, null, 2)}</MonoPre>
             )}
           </div>
         ))}
