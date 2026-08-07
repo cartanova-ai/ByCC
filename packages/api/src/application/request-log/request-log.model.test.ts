@@ -416,15 +416,14 @@ describe("RequestLogModel cost provenance", () => {
     await expect(RequestLogModel.totalCost()).resolves.toBe(0.003);
   });
 
-  it("sums confirmed cost in SQL instead of fetching those rows", async () => {
+  it("sums every row in SQL without a cost_source predicate", async () => {
     const { sumChain, legacyChain } = mockTotalCostQueries(3_000, []);
 
     await RequestLogModel.totalCost();
 
     expect(sumChain.select).toHaveBeenCalledTimes(1);
-    expect(sumChain.whereRaw).toHaveBeenCalledWith(
-      "request_logs.cost_source IS NOT NULL AND request_logs.cost_usd IS NOT NULL",
-    );
+    // 조건을 걸면 cost_source 가 인덱스에 없어 커버링 인덱스가 무효화된다.
+    expect(sumChain.whereRaw).not.toHaveBeenCalled();
     expect(legacyChain.whereRaw).toHaveBeenCalledWith(
       "request_logs.cost_source IS NULL OR request_logs.cost_usd IS NULL",
     );
@@ -446,6 +445,44 @@ describe("RequestLogModel cost provenance", () => {
     ]);
 
     await expect(RequestLogModel.totalCost()).resolves.toBeCloseTo(0.4725, 10);
+  });
+
+  it("adds only the delta for legacy rows already counted in the SQL sum", async () => {
+    // 전체 SUM 이 저장값 0.2 를 이미 포함하므로, 재계산값 0.4725 와의 차액만 더해야 한다.
+    mockTotalCostQueries(200_000, [
+      {
+        model_name: "claude-sonnet-4-6",
+        input_tokens: 100_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 80_000,
+        cache_creation_5m_tokens: 30_000,
+        cache_creation_1h_tokens: 50_000,
+        cost_usd: 200_000,
+        cost_source: null,
+      },
+    ]);
+
+    await expect(RequestLogModel.totalCost()).resolves.toBeCloseTo(0.4725, 10);
+  });
+
+  it("leaves the stored value untouched for legacy rows without a model name", async () => {
+    // 모델을 모르면 재계산할 수 없다. 저장값이 SUM 에 이미 들어갔으므로 보정하지 않는다.
+    mockTotalCostQueries(5_000, [
+      {
+        model_name: null,
+        input_tokens: 100,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        cache_creation_5m_tokens: null,
+        cache_creation_1h_tokens: null,
+        cost_usd: 5_000,
+        cost_source: null,
+      },
+    ]);
+
+    await expect(RequestLogModel.totalCost()).resolves.toBeCloseTo(0.005, 10);
   });
 
   it("applies list filters to both cost queries so totals match the filtered list", async () => {
@@ -476,7 +513,7 @@ describe("RequestLogModel cost provenance", () => {
     }
   });
 
-  it("adds the SQL-summed confirmed total to the recomputed legacy total", async () => {
+  it("combines the SQL-summed total with the legacy recomputation delta", async () => {
     mockTotalCostQueries(3_000, [
       {
         model_name: "claude-sonnet-4-6",

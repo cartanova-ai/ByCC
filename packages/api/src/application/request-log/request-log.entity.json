@@ -3,17 +3,8 @@
   "table": "request_logs",
   "title": "RequestLog",
   "props": [
-    {
-      "name": "id",
-      "type": "integer",
-      "desc": "ID"
-    },
-    {
-      "name": "created_at",
-      "desc": "등록일시",
-      "dbDefault": "CURRENT_TIMESTAMP",
-      "type": "date"
-    },
+    { "name": "id", "type": "integer", "desc": "ID" },
+    { "name": "created_at", "desc": "등록일시", "dbDefault": "CURRENT_TIMESTAMP", "type": "date" },
     {
       "name": "token_name",
       "toFilter": true,
@@ -45,48 +36,13 @@
       "length": 255,
       "nullable": true
     },
-    {
-      "name": "fallback_count",
-      "type": "integer",
-      "nullable": true,
-      "desc": "모델 fallback 횟수"
-    },
-    {
-      "name": "user_prompt",
-      "type": "string",
-      "nullable": true,
-      "desc": "사용자 프롬프트"
-    },
-    {
-      "name": "system_prompt",
-      "type": "string",
-      "nullable": true,
-      "desc": "시스템 프롬프트"
-    },
-    {
-      "name": "response",
-      "desc": "llm 응답 전문",
-      "type": "string",
-      "dbDefault": "\"\""
-    },
-    {
-      "name": "input_tokens",
-      "type": "integer",
-      "desc": "입력 토큰",
-      "dbDefault": "0"
-    },
-    {
-      "name": "output_tokens",
-      "type": "integer",
-      "desc": "출력 토큰",
-      "dbDefault": "0"
-    },
-    {
-      "name": "cache_read_tokens",
-      "type": "integer",
-      "desc": "캐시 읽기 토큰",
-      "dbDefault": "0"
-    },
+    { "name": "fallback_count", "type": "integer", "nullable": true, "desc": "모델 fallback 횟수" },
+    { "name": "user_prompt", "type": "string", "nullable": true, "desc": "사용자 프롬프트" },
+    { "name": "system_prompt", "type": "string", "nullable": true, "desc": "시스템 프롬프트" },
+    { "name": "response", "desc": "llm 응답 전문", "type": "string", "dbDefault": "\"\"" },
+    { "name": "input_tokens", "type": "integer", "desc": "입력 토큰", "dbDefault": "0" },
+    { "name": "output_tokens", "type": "integer", "desc": "출력 토큰", "dbDefault": "0" },
+    { "name": "cache_read_tokens", "type": "integer", "desc": "캐시 읽기 토큰", "dbDefault": "0" },
     {
       "name": "cache_creation_tokens",
       "type": "integer",
@@ -105,24 +61,9 @@
       "nullable": true,
       "desc": "1시간 TTL 캐시 생성 토큰"
     },
-    {
-      "name": "duration_ms",
-      "type": "integer",
-      "desc": "응답 소요시간(ms)",
-      "dbDefault": "0"
-    },
-    {
-      "name": "ttft_ms",
-      "type": "integer",
-      "desc": "first gen TTFT(ms)",
-      "dbDefault": "0"
-    },
-    {
-      "name": "cost_usd",
-      "type": "integer",
-      "nullable": true,
-      "desc": "API 비용"
-    },
+    { "name": "duration_ms", "type": "integer", "desc": "응답 소요시간(ms)", "dbDefault": "0" },
+    { "name": "ttft_ms", "type": "integer", "desc": "first gen TTFT(ms)", "dbDefault": "0" },
+    { "name": "cost_usd", "type": "integer", "nullable": true, "desc": "API 비용" },
     {
       "name": "cost_source",
       "type": "string",
@@ -143,13 +84,7 @@
       "nullable": true,
       "desc": "이미지 비용 추정 방식"
     },
-    {
-      "name": "effort",
-      "type": "string",
-      "length": 10,
-      "nullable": true,
-      "desc": "effort level"
-    },
+    { "name": "effort", "type": "string", "length": 10, "nullable": true, "desc": "effort level" },
     {
       "name": "history",
       "type": "json",
@@ -171,18 +106,8 @@
       "desc": "실행 상태",
       "dbDefault": "\"succeeded\""
     },
-    {
-      "name": "error_message",
-      "type": "string",
-      "nullable": true,
-      "desc": "에러 메시지"
-    },
-    {
-      "name": "tool_call_count",
-      "type": "integer",
-      "desc": "tool call 횟수",
-      "dbDefault": "0"
-    },
+    { "name": "error_message", "type": "string", "nullable": true, "desc": "에러 메시지" },
+    { "name": "tool_call_count", "type": "integer", "desc": "tool call 횟수", "dbDefault": "0" },
     {
       "name": "is_image_generation",
       "type": "boolean",
@@ -194,21 +119,19 @@
     {
       "type": "index",
       "name": "request_logs_token_name_index",
-      "columns": [
-        {
-          "name": "token_name"
-        }
-      ],
+      "columns": [{ "name": "token_name" }],
       "using": "btree"
     },
     {
       "type": "index",
       "name": "request_logs_project_name_index",
-      "columns": [
-        {
-          "name": "project_name"
-        }
-      ],
+      "columns": [{ "name": "project_name" }],
+      "using": "btree"
+    },
+    {
+      "type": "index",
+      "name": "request_logs_project_name_cost_usd_index",
+      "columns": [{ "name": "project_name" }, { "name": "cost_usd" }],
       "using": "btree"
     }
   ],
@@ -284,9 +207,7 @@
     ]
   },
   "enums": {
-    "RequestLogOrderBy": {
-      "id-desc": "ID최신순"
-    },
+    "RequestLogOrderBy": { "id-desc": "ID최신순" },
     "RequestLogSearchField": {
       "id": "ID",
       "token_name": "토큰이름",

@@ -33,11 +33,11 @@
   },
   {
     "path": "api/src/application/request-log/request-log.entity.json",
-    "checksum": "4124a6209398237eb557aaf1617ef4cda525bba5"
+    "checksum": "92af3063ff995184e01721ae80cffce30fe47e15"
   },
   {
     "path": "api/src/application/request-log/request-log.model.ts",
-    "checksum": "4b9a4c634c1487a63183ce3bea5922e949c8c0e9"
+    "checksum": "2c04be0c74a7b88774e630afafaaa9828adecef6"
   },
   {
     "path": "api/src/application/request-log/request-log.types.ts",

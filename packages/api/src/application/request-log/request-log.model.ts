@@ -622,11 +622,17 @@ class RequestLogModelClass extends BaseModelClass<
   /**
    * 화면 표시용 총 비용. 목록과 같은 필터를 적용한다.
    *
-   * 저장값 sum 이 아닌 이유: 과거 Anthropic cache 계산 버그로 음수 `cost_usd` 가 저장된
-   * row 가 있어, `cost_source` 가 없는 legacy row 는 현재 계산식으로 재계산해 보정한다.
+   * 전체를 조건 없이 SUM 한 뒤, `cost_source` 가 없는 legacy row 의 차액만 보정한다.
+   * 조건 없는 SUM 이어야 `(project_name, cost_usd)` 커버링 인덱스가 Index Only Scan 을
+   * 탄다 — `cost_source IS NOT NULL` 을 걸면 그 컬럼이 인덱스에 없어 heap 을 다시 봐야
+   * 하므로 플래너가 인덱스를 버리고 seq scan 으로 돌아간다(실측 230ms → 814ms).
    *
-   * 필터 조건을 여기서 다시 구현하지 않고 `findMany` 를 경유하는 것이 핵심이다 — 두
-   * 쿼리가 각자 필터를 가지면 화면에서 필터를 걸었을 때 행 수와 비용이 조용히 어긋난다.
+   * legacy 보정을 남겨둔 이유: 백필로 기존 legacy 는 0 이 되었지만, 외부 로거가
+   * `AppendStepInput`/`FinishRunInput` 으로 costSource 없이 넣으면 다시 생길 수 있다.
+   * 그런 row 는 저장값 대신 현재 가격표 재계산값이 맞으므로 차액을 더한다.
+   *
+   * 필터 조건을 여기서 다시 구현하지 않고 `applyListFilters` 를 공유하는 것이 핵심이다 —
+   * 두 쿼리가 각자 필터를 가지면 화면에서 필터를 걸었을 때 행 수와 비용이 조용히 어긋난다.
    */
   async totalCost(rawParams: RequestLogListParams = { num: 0, page: 1 }): Promise<number> {
     const params = {
@@ -636,14 +642,11 @@ class RequestLogModelClass extends BaseModelClass<
       ...rawParams,
     } satisfies RequestLogListParams;
 
-    // 필터 정의는 findMany 가 소유한다(applyListFilters 공유) — 조건을 여기서 다시 쓰면
-    // 목록과 비용의 모수가 갈라진다.
-    const { qb: confirmedQb } = this.getSubsetQueries("C");
-    this.applyListFilters(confirmedQb, params);
+    const { qb: totalQb } = this.getSubsetQueries("C");
+    this.applyListFilters(totalQb, params);
     // subset qb 는 컬럼 목록이 이미 SELECT 에 박혀 있어 집계를 얹으면 GROUP BY 에러가 난다.
     // executeCountQuery 와 같은 방식으로 select 를 비우고 집계만 남긴다.
-    const confirmed = await confirmedQb
-      .whereRaw("request_logs.cost_source IS NOT NULL AND request_logs.cost_usd IS NOT NULL")
+    const stored = await totalQb
       .clear("select")
       // 음수 저장값(과거 버그)은 0 으로 눌러서 더한다 — JS 쪽 Math.max 와 같은 규칙.
       .select({
@@ -651,8 +654,6 @@ class RequestLogModelClass extends BaseModelClass<
       })
       .first();
 
-    // legacy row 만 앱으로 가져와 현재 가격표로 재계산한다. 신규 row 는 모두 cost_source 를
-    // 가지므로, 테이블이 커져도 이 집합은 늘지 않는다.
     const { qb: legacyQb } = this.getSubsetQueries("C");
     this.applyListFilters(legacyQb, params);
     const legacyRows = await legacyQb
@@ -670,11 +671,13 @@ class RequestLogModelClass extends BaseModelClass<
         cost_usd: "request_logs.cost_usd",
       });
 
-    const confirmedTotal = Number(confirmed?.total ?? 0) / MICRO_USD;
+    const storedTotal = Number(stored?.total ?? 0) / MICRO_USD;
 
+    // legacy row 는 위 SUM 에 저장값으로 이미 포함되어 있다. 재계산값과의 차액만 더한다.
     return legacyRows.reduce((sum, row) => {
+      const alreadySummed = Math.max(row.cost_usd ?? 0, 0) / MICRO_USD;
       const usage = normalizedUsageForCost(row);
-      if (!usage.model) return sum + Math.max(row.cost_usd ?? 0, 0) / MICRO_USD;
+      if (!usage.model) return sum;
       return (
         sum +
         calculateCostUsd(usage.model, {
@@ -684,9 +687,10 @@ class RequestLogModelClass extends BaseModelClass<
           cacheCreationInputTokens: usage.cacheCreationInputTokens,
           cacheCreationInputTokens5m: usage.cacheCreationInputTokens5m,
           cacheCreationInputTokens1h: usage.cacheCreationInputTokens1h,
-        })
+        }) -
+        alreadySummed
       );
-    }, confirmedTotal);
+    }, storedTotal);
   }
 
   async distinctProjectNames(): Promise<string[]> {
