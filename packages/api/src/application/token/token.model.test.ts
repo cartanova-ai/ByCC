@@ -110,3 +110,54 @@ describe("TokenModel.updateFields", () => {
     expect(update).toHaveBeenCalledWith({ weight: 4 });
   });
 });
+
+describe("TokenModel.deactivateIfActive", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockKnex(responses: unknown[]) {
+    const raw = vi.fn();
+    for (const response of responses) raw.mockResolvedValueOnce(response);
+    vi.spyOn(TokenModel as unknown as { getPuri: (mode: "w") => unknown }, "getPuri").mockReturnValue(
+      { knex: { raw } } as unknown as MockPuri,
+    );
+    return raw;
+  }
+
+  it("deactivates an active token when the provider has other active tokens", async () => {
+    const raw = mockKnex([
+      { rows: [{ provider: "anthropic" }] },
+      { rows: [{ count: "3" }] },
+      { rowCount: 1 },
+    ]);
+
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(true);
+    expect(raw).toHaveBeenCalledTimes(3);
+    expect(raw.mock.calls[2]![0]).toContain("UPDATE tokens SET active = false");
+  });
+
+  it("returns false without updating when the token is already inactive", async () => {
+    const raw = mockKnex([{ rows: [] }]);
+
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
+    expect(raw).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to deactivate the provider's last active token", async () => {
+    const raw = mockKnex([{ rows: [{ provider: "anthropic" }] }, { rows: [{ count: "1" }] }]);
+
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
+    expect(raw).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns false when the conditional update loses the race", async () => {
+    mockKnex([
+      { rows: [{ provider: "openai" }] },
+      { rows: [{ count: "2" }] },
+      { rowCount: 0 },
+    ]);
+
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
+  });
+});

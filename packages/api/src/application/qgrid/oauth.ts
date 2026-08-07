@@ -117,6 +117,25 @@ export async function exchangeCodeForTokens(
   };
 }
 
+/**
+ * refresh 실패를 status 와 함께 전달한다. 호출부가 문자열 메시지를 파싱하지 않고
+ * 영구 실패(400/401)를 판별할 수 있어야 하기 때문이다.
+ */
+export class RefreshFailedError extends Error {
+  override readonly name = "RefreshFailedError";
+  constructor(
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(`Token refresh failed (${status}): ${body}`);
+  }
+
+  /** 재로그인 외 복구 불가한 인증 실패인지. 일시 오류(5xx·네트워크)는 제외된다. */
+  get isAuthDead(): boolean {
+    return this.status === 400 || this.status === 401;
+  }
+}
+
 export async function refreshAccessToken(refreshToken: string): Promise<OAuthTokens> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
@@ -130,7 +149,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Token refresh failed (${res.status}): ${text}`);
+    throw new RefreshFailedError(res.status, text);
   }
   const data = (await res.json()) as {
     access_token: string;

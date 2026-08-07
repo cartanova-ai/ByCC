@@ -24,6 +24,7 @@ import {
   fetchUsage,
   generatePKCE,
   refreshAccessToken,
+  RefreshFailedError,
 } from "./oauth";
 import {
   afterQuery,
@@ -45,6 +46,7 @@ import {
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
+import { deactivateAuthDeadToken, notifyTokenRecovered } from "./token-death";
 import { ToolSchemaCompositionError } from "./tool-emulation-schema";
 
 const pendingStreams = new Map<string, QueryInput>();
@@ -196,6 +198,9 @@ function createHttpDisconnectHandle(): {
 
 const logger = getLogger(["qgrid"]);
 const oauthLogger = getLogger(["qgrid", "oauth"]);
+
+// per-token refresh dedup — 회전 겹침으로 인한 사망 오판을 막는다.
+const inflightAnthropicRefresh = new Map<number, Promise<string>>();
 
 class QgridFrameClass extends BaseFrameClass {
   constructor() {
@@ -601,6 +606,7 @@ class QgridFrameClass extends BaseFrameClass {
       pending.redirectUri,
     );
 
+    let replacedInactive = false;
     if (tokens.accountUuid) {
       const oldEntries = await TokenModel.findByAccountIdentifier(
         "A",
@@ -608,8 +614,14 @@ class QgridFrameClass extends BaseFrameClass {
         tokens.accountUuid,
       );
       if (oldEntries.length > 0) {
+        replacedInactive = oldEntries.some((o) => !o.active);
         await TokenModel.del(oldEntries.map((o) => o.id));
       }
+    } else {
+      // 식별자가 없으면 dedup 이 통째로 스킵돼 죽은 row 가 남고 복구도 감지되지 않는다.
+      oauthLogger.warn(
+        `anthropic login without account identifier: dedup skipped for ${pending.name}`,
+      );
     }
 
     await TokenModel.save([
@@ -624,6 +636,8 @@ class QgridFrameClass extends BaseFrameClass {
         name: pending.name,
       },
     ]);
+
+    if (replacedInactive) notifyTokenRecovered(pending.name, "anthropic");
   }
 
   async handleOAuthCallback(code: string, state: string, reply: FastifyReply): Promise<void> {
@@ -651,6 +665,7 @@ class QgridFrameClass extends BaseFrameClass {
     QgridDispatcher.openaiDispatcher
       .completeBrowserLogin()
       .then(async (creds) => {
+        let replacedInactive = false;
         if (creds.accountId) {
           const oldEntries = await TokenModel.findByAccountIdentifier(
             "A",
@@ -658,8 +673,11 @@ class QgridFrameClass extends BaseFrameClass {
             creds.accountId,
           );
           if (oldEntries.length > 0) {
+            replacedInactive = oldEntries.some((o) => !o.active);
             await TokenModel.del(oldEntries.map((o) => o.id));
           }
+        } else {
+          oauthLogger.warn(`openai login without account identifier: dedup skipped for ${name}`);
         }
         await TokenModel.save([
           {
@@ -675,6 +693,7 @@ class QgridFrameClass extends BaseFrameClass {
           },
         ]);
         logger.info(`OpenAI token saved for ${name}`);
+        if (replacedInactive) notifyTokenRecovered(name, "openai");
       })
       .catch((e) => {
         logger.warn(`OpenAI browser login failed: ${(e as Error).message}`);
@@ -754,11 +773,36 @@ class QgridFrameClass extends BaseFrameClass {
     return convertAnthropicUsage(raw);
   }
 
+  // 동시 refresh 가 회전을 겹치면 뒤늦은 호출이 이미 폐기된 refresh token 을 쓰게 되어
+  // 멀쩡한 토큰이 사망으로 오판된다. openai-refresh.ts 와 같은 per-token dedup 을 둔다.
   async refreshToken(token: TokenSubsetA): Promise<string> {
+    const inflight = inflightAnthropicRefresh.get(token.id);
+    if (inflight) return inflight;
+
+    const promise = this.doRefreshToken(token);
+    inflightAnthropicRefresh.set(token.id, promise);
+    try {
+      return await promise;
+    } finally {
+      inflightAnthropicRefresh.delete(token.id);
+    }
+  }
+
+  private async doRefreshToken(token: TokenSubsetA): Promise<string> {
     const creds = token.credentials;
     const rt = getRefreshToken(creds);
     if (!rt) throw new Error("No refresh token");
-    const refreshed = await refreshAccessToken(rt);
+
+    let refreshed;
+    try {
+      refreshed = await refreshAccessToken(rt);
+    } catch (e) {
+      if (e instanceof RefreshFailedError && e.isAuthDead) {
+        await deactivateAuthDeadToken(token, rt, `anthropic:${e.status}`);
+      }
+      throw e;
+    }
+
     const updated = TokenCredentials.parse({
       ...creds,
       accessToken: refreshed.accessToken,

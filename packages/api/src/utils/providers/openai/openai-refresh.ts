@@ -15,6 +15,13 @@ const logger = getLogger(["qgrid", "openai-refresh"]);
 
 import { OPENAI_CLIENT_ID, OPENAI_TOKEN_URL } from "./openai-constants";
 
+// 재로그인 외 복구 불가한 refresh 실패 코드. 어느 것이든 토큰이 죽었다는 확정 신호다.
+const PERMANENT_FAILURE_CODES = new Set([
+  "refresh_token_expired",
+  "refresh_token_reused",
+  "refresh_token_invalidated",
+]);
+
 // per-token inflight promise dedup + minimum interval
 const inflightRefresh = new Map<number, Promise<RefreshResult>>();
 const lastRefreshTime = new Map<number, number>();
@@ -100,6 +107,16 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
       `OpenAI refresh FAILED token=${token.name}(id=${tokenId}) status=${resp.status} ` +
         `code=${errorCode ?? "?"} body=${body}`,
     );
+    // 영구 실패는 errorCode 로만 판정한다 — status 를 함께 요구하면 provider 가
+    // 상태코드를 바꿀 때 판정이 조용히 멎는다.
+    if (errorCode && PERMANENT_FAILURE_CODES.has(errorCode)) {
+      const { deactivateAuthDeadToken } = await import("../../../application/qgrid/token-death");
+      await deactivateAuthDeadToken(
+        { id: tokenId, name: token.name, provider: "openai" },
+        creds.refreshToken,
+        `openai:${errorCode}`,
+      );
+    }
     throw new Error(`OpenAI refresh failed: ${resp.status} ${body}`);
   }
 

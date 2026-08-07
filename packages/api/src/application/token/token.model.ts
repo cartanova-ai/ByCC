@@ -1,3 +1,4 @@
+import { getLogger } from "@logtape/logtape";
 import {
   api,
   asArray,
@@ -12,6 +13,8 @@ import { SD } from "../../i18n/sd.generated";
 import { type TokenSubsetKey, type TokenSubsetMapping } from "../sonamu.generated";
 import { tokenLoaderQueries, tokenSubsetQueries } from "../sonamu.generated.sso";
 import { type TokenListParams, type TokenSaveParams } from "./token.types";
+
+const logger = getLogger(["qgrid", "token"]);
 
 const DEFAULT_QUOTA_THRESHOLD = 80;
 const DEFAULT_WEIGHT = 1;
@@ -171,6 +174,50 @@ class TokenModelClass extends BaseModelClass<
   async updateFields(id: number, fields: TokenUpdateFields): Promise<number> {
     const wdb = this.getPuri("w");
     return wdb.transaction((trx) => trx.table("tokens").where("id", id).update(fields));
+  }
+
+  /**
+   * 세션 만료 토큰을 라우팅에서 제외한다. `active=true` 조건부 갱신이므로 공유 DB 를 쓰는
+   * 여러 인스턴스가 동시에 같은 만료를 감지해도 true 를 받는 프로세스는 하나뿐이다
+   * (호출부의 알림 발송 게이트).
+   *
+   * 단, 대상이 해당 provider 의 마지막 활성 토큰이면 갱신하지 않고 false 를 반환한다.
+   * client_id 취소나 OAuth 계약 변경처럼 전 토큰이 동시에 실패하는 상황에서 풀이
+   * 통째로 비는 것을 막는 안전판이다.
+   */
+  async deactivateIfActive(id: number): Promise<boolean> {
+    const wdb = this.getPuri("w");
+    const knex = wdb.knex;
+
+    const target = (
+      await knex.raw<{ rows: { provider: string }[] }>(
+        "SELECT provider FROM tokens WHERE id = ? AND active = true",
+        [id],
+      )
+    ).rows[0];
+    if (!target) return false;
+
+    const remaining = Number(
+      (
+        await knex.raw<{ rows: { count: string }[] }>(
+          "SELECT count(*) AS count FROM tokens WHERE provider = ? AND active = true",
+          [target.provider],
+        )
+      ).rows[0]?.count ?? 0,
+    );
+    if (remaining <= 1) {
+      logger.error(
+        `refusing to auto-deactivate token ${id}: last active ${target.provider} token — ` +
+          `systemic refresh failure suspected, keeping the pool non-empty`,
+      );
+      return false;
+    }
+
+    const updated = await knex.raw<{ rowCount: number }>(
+      "UPDATE tokens SET active = false WHERE id = ? AND active = true",
+      [id],
+    );
+    return (updated.rowCount ?? 0) > 0;
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
