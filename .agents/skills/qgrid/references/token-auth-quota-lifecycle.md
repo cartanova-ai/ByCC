@@ -94,7 +94,7 @@ Anthropic OAuth is implemented directly in qgrid.
 6. Existing Anthropic tokens with the same `accountUuid` are deleted.
 7. qgrid saves a new `provider: "anthropic"` token.
 
-`QGRID_PUBLIC_BASE_URL` controls the public callback base. If unset, callback defaults to `http://localhost:${PORT}/callback`.
+The callback base is derived per request from the `Origin` header (falling back to `X-Forwarded-Host`/`Host`) — the address the dashboard is reached at is where the callback returns. Without an HTTP context it falls back to `http://localhost:${PORT}/callback`.
 
 Refresh:
 

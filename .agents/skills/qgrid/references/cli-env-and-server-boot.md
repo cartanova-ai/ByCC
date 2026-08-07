@@ -43,7 +43,6 @@ Sonamu's native `SONAMU_DB_HOST`, `SONAMU_DB_PORT`, `SONAMU_DB_USER`,
 | `NODE_ENV` | direct API: `development`; packaged CLI: `production` | Sonamu runtime profile. Use `staging` for remote non-production API deployments such as dev0. The profile does not create or rename the explicitly configured DB. |
 | `HOST` | `localhost` | Sonamu server listen host when running API directly. |
 | `PORT` | `44900` | Sonamu server listen port. In CLI mode this is derived from `--port`, not read as user input. |
-| `QGRID_PUBLIC_BASE_URL` | empty | Public base URL used to construct Anthropic OAuth callback URL. If unset, callback defaults to `http://localhost:${PORT}/callback`. |
 | `PROJECT_NAME` | `Qgrid` | Sonamu project name. Not the same as request log `projectName`. |
 
 Do not treat CLI bundle bootstrapping internals as user-facing qgrid configuration.
@@ -91,5 +90,5 @@ On shutdown, it stops provider dispatchers and the token subscriber.
 
 ## OAuth callbacks
 
-- Anthropic OAuth uses `/callback` on the qgrid server. The callback URL is based on `QGRID_PUBLIC_BASE_URL` when set, otherwise localhost and `PORT`.
+- Anthropic OAuth uses `/callback` on the qgrid server. The callback base URL is derived per request from the browser-sent `Origin` header (falling back to `X-Forwarded-Host`/`Host`), so no env configuration is needed; direct non-HTTP calls fall back to localhost and `PORT`.
 - OpenAI OAuth is handled by Codex app-server's own callback flow and completed through qgrid's OpenAI OAuth APIs.
