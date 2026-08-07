@@ -88,15 +88,17 @@ const COLUMNS: {
   { label: "Project", align: "left", width: "w-20" },
   { label: "Token", align: "left", width: "w-24" },
   { label: "Model", align: "left", width: "w-20" },
-  { label: "TTFT", align: "left", width: "w-16", sortKey: "ttft_ms" },
-  { label: "Duration", align: "left", width: "w-20", sortKey: "duration_ms" },
-  { label: "In", align: "left", width: "w-16", sortKey: "input_tokens" },
-  { label: "Out", align: "left", width: "w-20", sortKey: "output_tokens" },
-  { label: "C.Read", align: "left", width: "w-20", sortKey: "cache_read_tokens" },
-  { label: "C.Write", align: "left", width: "w-20", sortKey: "cache_creation_tokens" },
-  { label: "Hit", align: "left", width: "w-14" },
-  { label: "Tools", align: "left", width: "w-14" },
-  { label: "Cost", align: "left", width: "w-20", sortKey: "cost_usd" },
+  // 숫자는 오른쪽 정렬해야 자릿수가 세로로 맞는다 — 6,317 과 34,897 이 왼쪽 정렬이면
+  // 끝자리가 어긋나 열이 들쭉날쭉해 보인다.
+  { label: "TTFT", align: "right", width: "w-16", sortKey: "ttft_ms" },
+  { label: "Duration", align: "right", width: "w-20", sortKey: "duration_ms" },
+  { label: "In", align: "right", width: "w-16", sortKey: "input_tokens" },
+  { label: "Out", align: "right", width: "w-20", sortKey: "output_tokens" },
+  { label: "C.Read", align: "right", width: "w-20", sortKey: "cache_read_tokens" },
+  { label: "C.Write", align: "right", width: "w-20", sortKey: "cache_creation_tokens" },
+  { label: "Hit", align: "right", width: "w-14" },
+  { label: "Tools", align: "right", width: "w-14" },
+  { label: "Cost", align: "right", width: "w-20", sortKey: "cost_usd" },
 ];
 
 interface RequestLogTableProps {
@@ -227,7 +229,9 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                     return (
                       <th
                         key={col.label}
-                        className={`text-${col.align} ${col.width ?? ""} ${col.width ? "whitespace-nowrap" : ""} ${padX} py-1.5 text-[10px] uppercase font-medium ${active ? "text-sienna-600" : "text-sand-400"}`}
+                        // Tailwind 는 `text-${col.align}` 같은 동적 조합을 스캔하지 못한다.
+                        // 완성된 클래스명을 그대로 쓴다.
+                        className={`${col.align === "right" ? "text-right" : "text-left"} ${col.width ?? ""} ${col.width ? "whitespace-nowrap" : ""} ${padX} py-1.5 text-[10px] uppercase font-medium ${active ? "text-sienna-600" : "text-sand-400"}`}
                       >
                         {col.sortKey ? (
                           <button
@@ -239,11 +243,15 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                                 sort: `${col.sortKey}-${active && sortDirection === "desc" ? "asc" : "desc"}`,
                               })
                             }
-                            className="inline-flex items-center gap-0.5 uppercase hover:text-sienna-500 transition-colors duration-150"
+                            // button 은 폰트를 상속하지 않는다 — th 의 text-[10px] 을
+                            // 물려받지 못해 정렬 가능한 컬럼만 커 보인다.
+                            className={`inline-flex items-center gap-0.5 text-[10px] uppercase font-medium hover:text-sienna-500 transition-colors duration-150 ${col.align === "right" ? "justify-end w-full" : ""}`}
                           >
                             {col.label}
-                            <span className={active ? "" : "opacity-0"}>
-                              {sortDirection === "desc" ? "↓" : "↑"}
+                            {/* 비활성 컬럼도 화살표를 흐리게 남긴다 — 어디를 누를 수 있는지
+                                보이지 않으면 정렬 기능 자체가 발견되지 않는다. */}
+                            <span className={active ? "" : "text-sand-300"}>
+                              {active ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}
                             </span>
                           </button>
                         ) : (
@@ -297,31 +305,31 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                         fallbackCount={row.fallback_count}
                       />
                     </td>
-                    <td className="px-4 py-1.5 text-left tabular-nums text-sand-500 whitespace-nowrap">
+                    <td className="px-4 py-1.5 text-right tabular-nums text-sand-500 whitespace-nowrap">
                       {formatTtft(row.ttft_ms)}
                     </td>
-                    <td className="pl-5 pr-3 py-1.5 text-left tabular-nums text-sand-500 whitespace-nowrap">
+                    <td className="pl-5 pr-3 py-1.5 text-right tabular-nums text-sand-500 whitespace-nowrap">
                       {formatDuration(row.duration_ms)}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-700">
                       {formatNum(row.input_tokens)}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-700">
                       {formatNum(row.output_tokens)}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-700">
                       {formatNum(row.cache_read_tokens)}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-700">
                       {formatNum(row.cache_creation_tokens)}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-700">
                       {cacheHitRate(row)}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-500">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-500">
                       {row.tool_call_count > 0 ? row.tool_call_count : "—"}
                     </td>
-                    <td className="px-3 py-1.5 text-left tabular-nums text-sand-700">
+                    <td className="px-3 py-1.5 text-right tabular-nums text-sand-700">
                       {row.image_cost_usd !== null
                         ? formatMicroUsd((row.cost_usd ?? 0) + row.image_cost_usd)
                         : row.cost_usd !== null
