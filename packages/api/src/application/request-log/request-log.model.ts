@@ -705,6 +705,18 @@ class RequestLogModelClass extends BaseModelClass<
     return rows.map((r) => r.project_name!);
   }
 
+  async distinctModelNames(): Promise<string[]> {
+    const rows = await this.getPuri("r")
+      .from("request_logs")
+      .distinct("model_name")
+      .where("model_name", "!=", null)
+      .orderBy("model_name", "asc")
+      .select({
+        model_name: "model_name",
+      });
+    return rows.map((r) => r.model_name!);
+  }
+
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async del(ids: number[]): Promise<number> {
     const wdb = this.getPuri("w");

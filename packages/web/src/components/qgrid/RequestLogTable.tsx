@@ -101,12 +101,16 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
   const page = search.page ?? 1;
   const tokenFilter = search.token ?? "";
   const projectFilter = search.project ?? "";
+  const modelFilter = search.model ?? "";
 
   const { data: tokensData } = TokenService.useTokens("A");
   const tokenNames = (tokensData?.rows ?? []).map((t) => t.name).filter(Boolean);
 
   const { data: projectData } = QgridService.useProjectNames();
   const projectNames = projectData?.names ?? [];
+
+  const { data: modelData } = QgridService.useModelNames();
+  const modelNames = modelData?.names ?? [];
 
   const projectFilterParam = (() => {
     if (projectFilter === UNASSIGNED) return { project_name_is_null: true as const };
@@ -118,6 +122,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
   const listFilters = {
     ...(tokenFilter ? { token_name: tokenFilter } : {}),
     ...projectFilterParam,
+    ...(modelFilter ? { model_name: modelFilter } : {}),
   };
 
   const { data, isLoading } = RequestLogService.useRequestLogs("P", {
@@ -165,6 +170,20 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
             </option>
           ))}
         </select>
+        {modelNames.length > 0 && (
+          <select
+            value={modelFilter}
+            onChange={(e) => updateFilter({ model: e.target.value || undefined })}
+            className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300"
+          >
+            <option value="">All Models</option>
+            {modelNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="flex-1" />
         <span className="text-[11px] text-sand-400">{total} results</span>
         <span className="text-[11px] tabular-nums font-medium text-sienna-600">

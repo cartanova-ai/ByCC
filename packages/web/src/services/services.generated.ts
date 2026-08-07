@@ -716,6 +716,27 @@ export namespace QgridService {
       }),
     );
 
+  export async function modelNames(): Promise<{ names: string[] }> {
+    return fetch({
+      method: "GET",
+      url: `/api/qgrid/modelNames`,
+    });
+  }
+
+  export const modelNamesQueryOptions = () =>
+    queryOptions({
+      queryKey: ["Qgrid", "modelNames"],
+      queryFn: () => modelNames(),
+    });
+
+  export const useModelNames = (options?: { enabled?: boolean }) =>
+    useRefreshable(
+      useQuery({
+        ...modelNamesQueryOptions(),
+        ...options,
+      }),
+    );
+
   export async function addToken(
     provider: string,
     credentials: TokenCredentials,

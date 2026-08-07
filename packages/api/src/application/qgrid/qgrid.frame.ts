@@ -482,6 +482,11 @@ class QgridFrameClass extends BaseFrameClass {
     return { names: await RequestLogModel.distinctProjectNames() };
   }
 
+  @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
+  async modelNames(): Promise<{ names: string[] }> {
+    return { names: await RequestLogModel.distinctModelNames() };
+  }
+
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async addToken(
     provider: string,

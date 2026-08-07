@@ -457,6 +457,12 @@ Content-Type: application/json
 
 ###
 
+GET {{baseUrl}}/api/qgrid/modelNames
+	?
+Content-Type: application/json
+
+###
+
 POST {{baseUrl}}/api/qgrid/addToken
 Content-Type: application/json
 

@@ -133,6 +133,12 @@
       "name": "request_logs_project_name_cost_usd_index",
       "columns": [{ "name": "project_name" }, { "name": "cost_usd" }],
       "using": "btree"
+    },
+    {
+      "type": "index",
+      "name": "request_logs_model_name_index",
+      "columns": [{ "name": "model_name" }],
+      "using": "btree"
     }
   ],
   "subsets": {
