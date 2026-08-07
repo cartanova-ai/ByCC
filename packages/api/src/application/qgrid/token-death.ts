@@ -10,6 +10,7 @@ import { getLogger } from "@logtape/logtape";
 import { getRefreshToken } from "../../utils/providers/common/credentials";
 import { notifySlack, SLACK_COLOR } from "../../utils/slack-notify";
 import { TokenModel } from "../token/token.model";
+import { getSlackUserMap, mentionFor } from "./slack-user-map";
 
 const logger = getLogger(["qgrid", "token-death"]);
 
@@ -49,10 +50,15 @@ export async function deactivateAuthDeadToken(
   }
 
   logger.warn(`token deactivated (auth dead): ${token.name}(id=${token.id}) reason=${reasonCode}`);
+  // 만료 직후가 재로그인하기 가장 좋은 타이밍이다. 소유자를 멘션해 그 순간 당사자에게
+  // 꽂는다 — 다이제스트를 기다리면 다음 주기까지 토큰이 빠진 채로 남는다.
+  const mention = mentionFor(token.name, getSlackUserMap());
   void notifySlack({
     title: "세션 만료",
     subject: token.name,
-    context: `${token.provider} · ${reasonCode} · 재로그인이 필요합니다`,
+    context: [mention, token.provider, reasonCode, "재로그인이 필요합니다"]
+      .filter(Boolean)
+      .join(" · "),
     color: SLACK_COLOR.bad,
   });
   return true;
@@ -74,11 +80,13 @@ function notifyLastActiveTokenDying(token: DeadTokenRef, reasonCode: string): vo
   if (previous !== undefined && now - previous < LAST_ACTIVE_ALERT_COOLDOWN_MS) return;
   lastActiveAlertAt.set(token.provider, now);
 
+  const mention = mentionFor(token.name, getSlackUserMap());
   void notifySlack({
     title: "마지막 토큰 사망",
     subject: token.name,
     context:
-      `${token.provider} · ${reasonCode} · 풀이 비지 않도록 유지 중입니다. ` +
+      [mention, token.provider, reasonCode].filter(Boolean).join(" · ") +
+      ` · 풀이 비지 않도록 유지 중입니다. ` +
       `전 토큰이 동시에 실패했다면 client_id 취소나 OAuth 계약 변경을 의심하세요`,
     color: SLACK_COLOR.bad,
   });
@@ -87,10 +95,11 @@ function notifyLastActiveTokenDying(token: DeadTokenRef, reasonCode: string): vo
 /** 로그인이 완료돼 토큰이 저장됐을 때. 신규·재로그인을 가리지 않는다. */
 export function notifyTokenAdded(name: string, provider: string): void {
   logger.info(`token added: ${name} (${provider})`);
+  const mention = mentionFor(name, getSlackUserMap());
   void notifySlack({
     title: "토큰 추가",
     subject: name,
-    context: `${provider} · 요청 처리에 사용됩니다`,
+    context: [mention, provider, "요청 처리에 사용됩니다"].filter(Boolean).join(" · "),
     color: SLACK_COLOR.good,
   });
 }

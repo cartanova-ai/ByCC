@@ -11,35 +11,11 @@ import { getLogger } from "@logtape/logtape";
 
 import { notifySlack, SLACK_COLOR } from "../../utils/slack-notify";
 import { TokenModel } from "../token/token.model";
+import { getSlackUserMap, mentionFor } from "./slack-user-map";
 
 const logger = getLogger(["qgrid", "expired-digest"]);
 
 const MINUTE_MS = 60_000;
-
-/**
- * `토큰명:SlackUserId` 목록. 공용 계정(bysuco, dev-common 등)은 넣지 않는다 — 매핑이 없으면
- * 멘션 없이 이름만 나가고, 그게 맞는 동작이다.
- *
- * Slack 표시 이름과 토큰명이 자주 어긋나(haze→haze.lee, byeongjun→potados) 자동 매칭은
- * 조용히 실패한다. 멘션이 빠지면 알림의 목적 자체가 사라지므로 명시 매핑만 쓴다.
- */
-function parseUserMap(raw: string | undefined): Map<string, string> {
-  const map = new Map<string, string>();
-  if (!raw) return map;
-
-  for (const entry of raw.split(",")) {
-    const [name, userId] = entry.split(":").map((s) => s.trim());
-    if (name && userId) map.set(name, userId);
-  }
-  return map;
-}
-
-/** `anthropic/yds` → `yds`. provider prefix 없이 저장된 이름도 그대로 받는다. */
-function ownerOf(tokenName: string | null): string {
-  if (!tokenName) return "";
-  const slash = tokenName.indexOf("/");
-  return slash === -1 ? tokenName : tokenName.slice(slash + 1);
-}
 
 export function buildDigestContext(
   tokens: { name: string | null; provider: string }[],
@@ -47,10 +23,10 @@ export function buildDigestContext(
 ): string {
   return tokens
     .map((token) => {
-      const userId = userMap.get(ownerOf(token.name));
+      const mention = mentionFor(token.name, userMap);
       const label = token.name ?? "unnamed";
       // 멘션이 있으면 이름 대신 멘션을 쓴다 — 둘 다 쓰면 같은 말이 두 번 나온다.
-      return userId ? `<@${userId}> ${token.provider}` : `${label} (${token.provider})`;
+      return mention ? `${mention} ${token.provider}` : `${label} (${token.provider})`;
     })
     .join("\n");
 }
@@ -78,7 +54,7 @@ export function startExpiredTokenDigest(): void {
   const minutes = Number(process.env.SLACK_EXPIRY_DIGEST_INTERVAL_MINUTES ?? 0);
   if (!Number.isFinite(minutes) || minutes <= 0) return;
 
-  const userMap = parseUserMap(process.env.SLACK_USER_MAP);
+  const userMap = getSlackUserMap();
   logger.info(`expired token digest every ${minutes}m (${userMap.size} user mappings)`);
 
   timer = setInterval(() => {

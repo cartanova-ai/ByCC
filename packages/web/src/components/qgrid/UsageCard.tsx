@@ -19,6 +19,9 @@ import { QgridService, TokenService } from "@/services/services.generated";
 import { type TokenSubsetMapping } from "@/services/sonamu.generated";
 import { useUpdateTokenMutation } from "@/services/token/use-update-token-mutation";
 
+import { OAuthCodeEntry } from "./OAuthCodeEntry";
+import { type Provider, useOAuthLoginFlow } from "./use-oauth-login-flow";
+
 type Token = TokenSubsetMapping["A"];
 
 // Quota gate 가 구현된 provider 에서만 threshold 편집/표시를 연다(거짓 UI 방지).
@@ -501,6 +504,64 @@ function WeightControl({ token }: { token: Token }) {
   );
 }
 
+/**
+ * 비활성 토큰 카드의 재로그인 진입점.
+ *
+ * Tokens 페이지와 같은 OAuth 플로우(`useOAuthLoginFlow`)를 쓴다 — 원격 접속이면 코드 입력
+ * 단계로 이어지므로 모달까지 이 컴포넌트가 함께 들고 있다.
+ */
+function ReloginButton({ token }: { token: Token }) {
+  const oauth = useOAuthLoginFlow();
+
+  const submitCode = async (pastedCode: string) => {
+    if (await oauth.submitCode(pastedCode)) oauth.reset();
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        title="기존 이름으로 다시 로그인"
+        disabled={oauth.loadingProvider !== null}
+        onClick={() => void oauth.start(token.provider as Provider, token.name ?? "")}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium border border-sienna-300 text-sienna-600 hover:bg-sienna-50 disabled:opacity-50 transition-colors duration-150"
+      >
+        {oauth.loadingProvider === token.provider ? (
+          <>
+            <span className="size-2.5 border-2 border-sienna-400 border-t-transparent rounded-full animate-spin" />
+            로그인 대기
+          </>
+        ) : (
+          "재로그인"
+        )}
+      </button>
+
+      {oauth.codeEntry && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
+          <div
+            className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
+            onClick={oauth.reset}
+            onKeyDown={() => {}}
+          />
+          <div className="relative panel shadow-xl w-full max-w-md mx-4">
+            <div className="px-5 py-4 border-b border-sand-100/60">
+              <h3 className="text-base font-medium text-sand-900">재로그인</h3>
+            </div>
+            <div className="px-5 py-4">
+              <OAuthCodeEntry
+                isPending={oauth.completeMutation.isPending}
+                isError={oauth.completeMutation.isError}
+                onSubmit={(code) => void submitCode(code)}
+                onRestart={oauth.reset}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function SortableTokenCard({ token }: { token: Token }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: String(token.id),
@@ -575,7 +636,11 @@ function SortableTokenCard({ token }: { token: Token }) {
           )}
         </div>
         <TokenUsage token={token} theme={theme} />
-        <div className="mt-2 flex flex-wrap items-center justify-end gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {/* 만료를 확인하는 곳이 대시보드인데 조치는 Tokens 페이지에서만 되면 동선이
+              어긋난다. 조치가 필요한 카드에서 바로 재로그인한다. */}
+          {!token.active && <ReloginButton token={token} />}
+          <div className="flex-1" />
           <WeightControl token={token} />
           <ThresholdControl token={token} />
         </div>

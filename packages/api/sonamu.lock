@@ -61,7 +61,7 @@
   },
   {
     "path": "api/src/application/token/token.model.ts",
-    "checksum": "0edbc5c62608866cd819847a747377904dc718b3"
+    "checksum": "a4b52e91616abd85271144391c4557148dbedb52"
   },
   {
     "path": "api/src/application/token/token.types.ts",
@@ -81,7 +81,7 @@
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "737a870c60f35046da69a33c99647af430e94fc3"
+    "checksum": "0280bccfa8e8e4742bd8a1ba67692be838d62d4f"
   },
   {
     "path": "web/src/i18n/en.ts",
