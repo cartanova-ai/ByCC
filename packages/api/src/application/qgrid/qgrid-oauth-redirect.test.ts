@@ -43,14 +43,11 @@ vi.mock("../token/token.model", () => ({
       accountId: string | undefined,
       saveParams: unknown,
     ) => {
-      let isNew = false;
       if (accountId) {
         const olds = (await findByAccountMock()) as unknown as { id: number; active: boolean }[];
         if (olds.length > 0) await tokenDelMock();
-        else isNew = true;
       }
       await (tokenSaveMock as unknown as (rows: unknown[]) => Promise<number[]>)([saveParams]);
-      return { isNew };
     },
   },
 }));

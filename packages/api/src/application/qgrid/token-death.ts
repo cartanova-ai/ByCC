@@ -55,7 +55,7 @@ export async function deactivateAuthDeadToken(
   return true;
 }
 
-/** 처음 보는 계정이 등록됐을 때. 재로그인(기존 토큰 교체)은 알리지 않는다. */
+/** 로그인이 완료돼 토큰이 저장됐을 때. 신규·재로그인을 가리지 않는다. */
 export function notifyTokenAdded(name: string, provider: string): void {
   logger.info(`token added: ${name} (${provider})`);
   void notifySlack({

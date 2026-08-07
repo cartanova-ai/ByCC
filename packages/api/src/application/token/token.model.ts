@@ -188,26 +188,17 @@ class TokenModelClass extends BaseModelClass<
   /**
    * 같은 계정의 기존 토큰을 지우고 새로 저장한다(로그인·재로그인 공통 경로).
    *
-   * @returns 처음 들어온 계정인지 — 호출부의 신규 등록 알림 게이트. 재로그인은
-   *   기존 토큰을 대체하는 것이라 알릴 사건이 아니다.
-   *
-   *   provider 응답에 계정 식별자가 없으면 dedup 자체가 불가능하므로 경고만 남기고
-   *   중복 제거 없이 저장한다(죽은 row 가 남는다). 이때는 기존 토큰 유무를 알 수 없어
-   *   신규로 보지 않는다 — 재로그인을 신규로 잘못 알리는 편보다 조용한 편이 낫다.
+   * provider 응답에 계정 식별자가 없으면 dedup 자체가 불가능하므로 경고만 남기고
+   * 중복 제거 없이 저장한다(죽은 row 가 남는다).
    */
   async replaceByAccount(
     provider: string,
     accountId: string | undefined,
     saveParams: TokenSaveParams,
-  ): Promise<{ isNew: boolean }> {
-    let isNew = false;
+  ): Promise<void> {
     if (accountId) {
       const oldEntries = await this.findByAccountIdentifier("A", provider, accountId);
-      if (oldEntries.length > 0) {
-        await this.del(oldEntries.map((o) => o.id));
-      } else {
-        isNew = true;
-      }
+      if (oldEntries.length > 0) await this.del(oldEntries.map((o) => o.id));
     } else {
       logger.warn(
         `${provider} login without account identifier: dedup skipped for ${saveParams.name ?? "unnamed"}`,
@@ -215,7 +206,6 @@ class TokenModelClass extends BaseModelClass<
     }
 
     await this.save([saveParams]);
-    return { isNew };
   }
 
   async deactivateIfActive(id: number): Promise<boolean> {

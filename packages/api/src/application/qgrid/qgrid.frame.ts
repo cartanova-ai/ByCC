@@ -609,7 +609,7 @@ class QgridFrameClass extends BaseFrameClass {
       pending.redirectUri,
     );
 
-    const { isNew } = await TokenModel.replaceByAccount("anthropic", tokens.accountUuid, {
+    await TokenModel.replaceByAccount("anthropic", tokens.accountUuid, {
       provider: "anthropic",
       credentials: {
         accessToken: tokens.accessToken,
@@ -620,7 +620,7 @@ class QgridFrameClass extends BaseFrameClass {
       name: pending.name,
     });
 
-    if (isNew) notifyTokenAdded(pending.name, "anthropic");
+    notifyTokenAdded(pending.name, "anthropic");
   }
 
   async handleOAuthCallback(code: string, state: string, reply: FastifyReply): Promise<void> {
@@ -648,7 +648,7 @@ class QgridFrameClass extends BaseFrameClass {
     QgridDispatcher.openaiDispatcher
       .completeBrowserLogin()
       .then(async (creds) => {
-        const { isNew } = await TokenModel.replaceByAccount("openai", creds.accountId, {
+        await TokenModel.replaceByAccount("openai", creds.accountId, {
           provider: "openai",
           credentials: {
             accessToken: creds.accessToken,
@@ -660,7 +660,7 @@ class QgridFrameClass extends BaseFrameClass {
           name,
         });
         logger.info(`OpenAI token saved for ${name}`);
-        if (isNew) notifyTokenAdded(name, "openai");
+        notifyTokenAdded(name, "openai");
       })
       .catch((e) => {
         logger.warn(`OpenAI browser login failed: ${(e as Error).message}`);
