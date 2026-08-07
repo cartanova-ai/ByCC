@@ -62,9 +62,14 @@ export function startExpiredTokenReminder(): void {
   const userMap = getSlackUserMap();
   logger.info(`expired token reminder every ${minutes}m (${userMap.size} user mappings)`);
 
-  timer = setInterval(() => {
+  const run = () =>
     sendReminder(userMap).catch((e) => logger.warn(`reminder failed: ${(e as Error).message}`));
-  }, minutes * MINUTE_MS);
+
+  // 기동 직후에도 한 번 보낸다. 재기동은 배포나 장애 복구 때 일어나는데, 그 시점에 이미
+  // 만료된 토큰이 있으면 첫 주기가 돌 때까지 조용한 것이 이상하다.
+  void run();
+
+  timer = setInterval(run, minutes * MINUTE_MS);
 }
 
 export function stopExpiredTokenReminder(): void {
