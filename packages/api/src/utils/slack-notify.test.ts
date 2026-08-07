@@ -36,10 +36,10 @@ describe("notifySlack", () => {
     expect(url).toBe("https://slack.com/api/chat.postMessage");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       channel: "C123",
-      // blocks 만 보내면 푸시 알림이 빈칸으로 뜨므로 대체 텍스트가 함께 나가야 한다.
-      text: "토큰 추가 — anthropic/test-token",
       attachments: [
         {
+          // 최상위 text 가 아니라 attachment fallback 이어야 본문 제목과 겹치지 않는다.
+          fallback: "토큰 추가 — anthropic/test-token",
           color: SLACK_COLOR.good,
           blocks: [
             {
@@ -66,8 +66,10 @@ describe("notifySlack", () => {
 
     const body = JSON.parse(
       (fetchMock.mock.calls[0]![1] as RequestInit).body as string,
-    ) as { text: string; attachments: [{ color?: string; blocks: unknown[] }] };
-    expect(body.text).toBe("제목만");
+    ) as { text?: string; attachments: [{ fallback: string; color?: string; blocks: unknown[] }] };
+    // 최상위 text 를 보내지 않아야 blocks 렌더 화면에서 제목이 중복되지 않는다.
+    expect(body.text).toBeUndefined();
+    expect(body.attachments[0].fallback).toBe("제목만");
     expect(body.attachments[0].color).toBeUndefined();
     expect(body.attachments[0].blocks).toHaveLength(1);
   });

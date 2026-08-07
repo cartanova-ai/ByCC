@@ -55,9 +55,16 @@ export async function notifySlack(notification: SlackNotification): Promise<void
       },
       body: JSON.stringify({
         channel,
-        // 알림 미리보기·접근성용 대체 텍스트. blocks 만 보내면 푸시 알림이 빈칸으로 뜬다.
-        text: subject ? `${title} — ${subject}` : title,
-        attachments: [{ ...(color ? { color } : {}), blocks }],
+        // fallback 은 attachment 안에 둔다. 최상위 text 로 보내면 blocks 가 정상 렌더되는
+        // 화면에서도 함께 출력돼 제목이 두 번 보인다. attachment fallback 은 blocks 를
+        // 못 그리는 클라이언트와 푸시 알림에서만 쓰인다.
+        attachments: [
+          {
+            fallback: subject ? `${title} — ${subject}` : title,
+            ...(color ? { color } : {}),
+            blocks,
+          },
+        ],
       }),
       signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
     });
