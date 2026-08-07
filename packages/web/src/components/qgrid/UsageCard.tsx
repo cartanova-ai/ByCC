@@ -128,11 +128,13 @@ function UsageRow({
   const pct = utilization ?? 0;
   const hasThreshold = threshold !== undefined && threshold !== null;
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-xs text-sand-600 w-20 shrink-0">
+    // 고정 폭 합(w-20+w-10+w-24 = 216px)이 좁은 카드보다 커서 resets 가 밖으로 밀려났다.
+    // 라벨·수치는 내용에 맞게 줄이고, resets 는 폭이 확보되는 sm 이상에서만 보여준다.
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-sand-600 w-7 shrink-0">
         {formatWindowLabel(label, windowDurationMins)}
       </span>
-      <div className="relative flex-1 h-2 bg-sand-200 rounded-full overflow-hidden">
+      <div className="relative flex-1 min-w-0 h-2 bg-sand-200 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-300 ${barColor(pct, theme)}`}
           style={{ width: `${Math.min(pct, 100)}%` }}
@@ -145,8 +147,13 @@ function UsageRow({
           />
         )}
       </div>
-      <span className="text-xs tabular-nums text-sand-700 w-10 text-right">{pct}%</span>
-      <span className="text-[10px] text-sand-400 w-24 text-right">{formatResets(resetsAt)}</span>
+      <span className="text-xs tabular-nums text-sand-700 w-9 text-right shrink-0">{pct}%</span>
+      <span
+        className="hidden sm:inline text-[10px] text-sand-400 w-24 text-right shrink-0"
+        title={formatResets(resetsAt)}
+      >
+        {formatResets(resetsAt)}
+      </span>
     </div>
   );
 }
@@ -213,14 +220,8 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
   );
 }
 
-// 드래그 리스너로 전파 차단(아이콘/팝오버 클릭이 카드 드래그 시작으로 잡히지 않게).
-function stopDragPropagation(e: React.PointerEvent | React.MouseEvent): void {
-  e.stopPropagation();
-}
-
 // 카드 내 threshold 설정. 트리거는 카드 안 작은 버튼, 편집은 트리거 좌표 기준 fixed 박스로
 // 카드 위에 띄운다(카드 overflow-hidden + 그리드에 잘리지 않게 absolute 대신 fixed+좌표).
-// 트리거 버튼 영역은 pointerdown 을 stopPropagation 해 클릭이 카드 드래그로 잡히지 않게 한다.
 function ThresholdControl({ token }: { token: Token }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [value, setValue] = useState("");
@@ -294,7 +295,7 @@ function ThresholdControl({ token }: { token: Token }) {
   };
 
   return (
-    <div className="inline-flex" onPointerDown={stopDragPropagation} onClick={stopDragPropagation}>
+    <div className="inline-flex">
       <button
         ref={triggerRef}
         type="button"
@@ -430,7 +431,7 @@ function WeightControl({ token }: { token: Token }) {
   };
 
   return (
-    <div className="inline-flex" onPointerDown={stopDragPropagation} onClick={stopDragPropagation}>
+    <div className="inline-flex">
       <button
         ref={triggerRef}
         type="button"
@@ -522,50 +523,61 @@ function SortableTokenCard({ token }: { token: Token }) {
   };
 
   return (
+    // 드래그는 grip 핸들에만 건다. 카드 전체에 걸면 touch-none 이 터치 스크롤까지 삼켜
+    // 모바일에서 목록을 내릴 수 없고, 스크롤하려던 동작이 카드 재정렬로 잡힌다.
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
-      className="relative rounded-lg bg-white border border-sand-200/80 overflow-hidden select-none cursor-grab active:cursor-grabbing touch-none shadow-sm hover:shadow-md transition-shadow duration-200"
+      className="relative rounded-lg bg-white border border-sand-200/80 overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200"
     >
       <div className={`absolute inset-y-0 left-0 w-1 ${theme.stripe}`} />
-      <div className="pl-4 pr-4 py-3">
-        <div className="flex items-center gap-2 mb-2">
-          <GripVerticalIcon className="size-3.5 text-sand-300 shrink-0" />
-          <span className="text-[13px] font-medium text-sand-800 truncate">
-            {token.name ?? "Unnamed"}
-          </span>
+      {/* 배지를 absolute 로 띄우면 카드가 좁아질 때 토큰 이름 위에 겹친다. 전부 한 흐름에
+          두고 wrap 시켜, 폭이 줄면 아래로 접히게 한다. */}
+      <div className="pl-4 pr-3 py-3">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              type="button"
+              aria-label="순서 변경 핸들"
+              {...attributes}
+              {...listeners}
+              className="shrink-0 -m-1 p-1 text-sand-300 hover:text-sand-500 cursor-grab active:cursor-grabbing touch-none"
+            >
+              <GripVerticalIcon className="size-3.5" />
+            </button>
+            <span className="text-[13px] font-medium text-sand-800 truncate select-none">
+              {token.name ?? "Unnamed"}
+            </span>
+          </div>
           <span
-            className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 uppercase ${theme.badge}`}
+            className={`text-[11px] tabular-nums font-medium shrink-0 ${theme.cost}`}
+            title="이 토큰의 누적 비용"
           >
+            {formatUsd(costData?.usd ?? 0)}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1 mb-2">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full uppercase ${theme.badge}`}>
             {token.provider}
           </span>
           <span
-            className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${token.active ? "bg-sage-100 text-sage-600" : "bg-sand-200 text-sand-500"}`}
+            className={`text-[10px] px-1.5 py-0.5 rounded-full ${token.active ? "bg-sage-100 text-sage-600" : "bg-sand-200 text-sand-500"}`}
           >
             {token.active ? "Active" : "Inactive"}
           </span>
-        </div>
-        <TokenUsage token={token} theme={theme} />
-        <div className="mt-2 flex items-center justify-end gap-1.5">
-          <WeightControl token={token} />
-          <ThresholdControl token={token} />
-        </div>
-        <div className="absolute top-2.5 right-3 flex items-center gap-1.5">
           {QUOTA_THRESHOLD_PROVIDERS.has(token.provider) && token.quota_threshold !== null && (
             <span
-              className="px-1.5 py-0.5 rounded-md bg-sienna-50 text-[11px] tabular-nums font-medium border border-sienna-200 text-sienna-600"
+              className="px-1.5 py-0.5 rounded-full bg-sienna-50 text-[10px] tabular-nums font-medium text-sienna-600"
               title={`사용률 ${token.quota_threshold}% 이상이면 이 토큰 제외`}
             >
               ≤ {token.quota_threshold}%
             </span>
           )}
-          <span
-            className={`px-2 py-0.5 rounded-md bg-sand-50 text-[11px] tabular-nums font-medium border border-sand-200/80 ${theme.cost}`}
-          >
-            {formatUsd(costData?.usd ?? 0)}
-          </span>
+        </div>
+        <TokenUsage token={token} theme={theme} />
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-1.5">
+          <WeightControl token={token} />
+          <ThresholdControl token={token} />
         </div>
       </div>
     </div>
@@ -631,7 +643,7 @@ export function UsageCard() {
   if (isLoading) {
     return (
       <div className="panel p-5">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={`skel-${i}`} className="rounded-lg bg-sand-50 px-4 py-3 animate-pulse">
               <div className="h-3 w-16 bg-sand-200 rounded mb-3" />
@@ -683,7 +695,7 @@ export function UsageCard() {
             items={filteredTokens.map((t) => String(t.id))}
             strategy={rectSortingStrategy}
           >
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {filteredTokens.map((token) => (
                 <SortableTokenCard key={token.id} token={token} />
               ))}

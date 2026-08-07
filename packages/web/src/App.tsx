@@ -1,6 +1,7 @@
 import { useRouterState } from "@tanstack/react-router";
 import { type ReactNode, Suspense, useEffect } from "react";
 
+import { BottomNav } from "./components/BottomNav";
 import Sidebar from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
 import { SUPPORTED_LOCALES, setLocale } from "./i18n/sd.generated";
@@ -25,10 +26,10 @@ function App({ children }: AppProps) {
   return (
     <div className="flex h-screen w-full bg-sand-100 overflow-hidden font-sans">
       {showSidebar && <Sidebar />}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {showSidebar && <Toolbar />}
         <main className="flex-1 overflow-y-auto main-scroll content-inset">
-          <div className="px-6 py-5 md:px-8">
+          <div className="px-3 py-4 sm:px-6 sm:py-5 md:px-8">
             <Suspense
               fallback={<div className="text-sand-400 text-center py-8 text-sm">로딩 중...</div>}
             >
@@ -36,6 +37,7 @@ function App({ children }: AppProps) {
             </Suspense>
           </div>
         </main>
+        {showSidebar && <BottomNav />}
       </div>
     </div>
   );

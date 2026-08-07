@@ -255,9 +255,13 @@ function Section({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <dt className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">{label}</dt>
-      <dd className="text-[15px] font-semibold text-sand-800 tabular-nums mt-0.5">{value}</dd>
+    <div className="min-w-0">
+      <dt className="text-[10px] uppercase tracking-wider text-sand-400 font-medium truncate">
+        {label}
+      </dt>
+      <dd className="text-[15px] font-semibold text-sand-800 tabular-nums mt-0.5 truncate">
+        {value}
+      </dd>
     </div>
   );
 }
@@ -295,8 +299,9 @@ function HeaderBar({ data }: { data: RequestLog }) {
     !isRunning && data.requested_model_name !== null && data.model_name === null;
 
   return (
-    <div className="panel overflow-hidden px-5 py-3 flex items-center gap-2">
-      <span className="text-[15px] font-semibold text-sand-900">
+    // 모델명이 길어 한 줄에 안 들어가면 나머지 배지가 밖으로 밀린다. wrap 으로 접히게 한다.
+    <div className="panel overflow-hidden px-4 py-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 sm:px-5">
+      <span className="text-[15px] font-semibold text-sand-900 break-all">
         {isRunning
           ? "실행 중"
           : hasFallback
@@ -482,9 +487,14 @@ function formatTokensPerSec(
 
 function CompactMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wider text-sand-400 font-medium">{label}</div>
-      <div className="mt-0.5 text-[13px] font-semibold text-sand-800 tabular-nums">{value}</div>
+    // min-w-0 이 없으면 "Tokens/sec" 같은 긴 라벨이 그리드 셀을 밀어내 옆 칸 위로 겹친다.
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wider text-sand-400 font-medium truncate">
+        {label}
+      </div>
+      <div className="mt-0.5 text-[13px] font-semibold text-sand-800 tabular-nums truncate">
+        {value}
+      </div>
     </div>
   );
 }
@@ -738,7 +748,7 @@ function StepTreeItem({
       <div className="ml-4 mb-4 space-y-3">
         {generate && (
           <div className="rounded-md border border-sand-100 bg-sand-50/70 p-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8 gap-x-4 gap-y-3">
               <CompactMetric label="Duration" value={formatDurationMs(generate.durationMs)} />
               <CompactMetric label="TTFT" value={formatRunTtftMs(generate.ttftMs)} />
               <CompactMetric
@@ -1050,11 +1060,13 @@ function RequestDetail({ id }: { id: number }) {
       {hasTools && <ToolsSection tools={tools} />}
 
       {hasSteps ? (
-        <div className="flex gap-4 items-start">
-          <div className="flex-1 min-w-0">{promptSections}</div>
-          <div className="flex-1 min-w-0 space-y-4">
+        // 좁은 화면에서는 두 칼럼이 각각 절반으로 눌려 프롬프트도 지표도 못 읽는다.
+        // 세로로 쌓되 Steps 를 먼저 보여준다 — 프롬프트 전문보다 실행 결과를 먼저 확인한다.
+        <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-start">
+          <div className="order-1 lg:order-2 flex-1 min-w-0 space-y-4">
             <StepTreeSection steps={stepTree} tokensPerSecEnabled={tokensPerSecEnabled} />
           </div>
+          <div className="order-2 lg:order-1 flex-1 min-w-0">{promptSections}</div>
         </div>
       ) : (
         promptSections

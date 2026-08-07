@@ -1,29 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import type React from "react";
-import ActivityIcon from "~icons/lucide/file-text";
-import GaugeIcon from "~icons/lucide/home";
-import KeyRoundIcon from "~icons/lucide/key-round";
-import TerminalIcon from "~icons/lucide/terminal";
 
-interface MenuSection {
-  label: string;
-  items: { title: string; path: string; icon: React.FC<React.SVGProps<SVGSVGElement>> }[];
-}
-
-const sections: MenuSection[] = [
-  {
-    label: "Overview",
-    items: [{ title: "Dashboard", path: "/", icon: GaugeIcon }],
-  },
-  {
-    label: "Manage",
-    items: [
-      { title: "Tokens", path: "/tokens", icon: KeyRoundIcon },
-      { title: "Request Logs", path: "/logs", icon: ActivityIcon },
-      { title: "Server Logs", path: "/monit", icon: TerminalIcon },
-    ],
-  },
-];
+import { isNavItemActive, NAV_SECTIONS } from "./nav-items";
 
 const qgridVersion = __QGRID_CLI_VERSION__;
 
@@ -34,11 +11,6 @@ interface SidebarProps {
 export default function Sidebar({ className }: SidebarProps) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-  const isActive = (path: string) => {
-    if (path === "/") return pathname === "/" || pathname === "";
-    return pathname.startsWith(path);
-  };
-
   return (
     <aside
       className={`hidden md:flex w-[200px] bg-sand-50 flex-col shrink-0 border-r border-sand-200/40 ${className ?? ""}`}
@@ -48,7 +20,7 @@ export default function Sidebar({ className }: SidebarProps) {
       </div>
 
       <nav className="flex-1 px-2.5 py-3 space-y-4 overflow-y-auto">
-        {sections.map((section) => (
+        {NAV_SECTIONS.map((section) => (
           <div key={section.label}>
             <div className="px-2 pb-1.5">
               <span className="text-[10px] uppercase tracking-[0.08em] text-sand-400 font-medium">
@@ -57,7 +29,7 @@ export default function Sidebar({ className }: SidebarProps) {
             </div>
             <div className="space-y-0.5">
               {section.items.map((item) => {
-                const active = isActive(item.path);
+                const active = isNavItemActive(item.path, pathname);
                 return (
                   <Link
                     key={item.path}

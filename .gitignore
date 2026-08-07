@@ -77,3 +77,6 @@ data/
 # Claude
 .claude/skills/sonamu
 .claude/CLAUDE.md
+
+# Playwright MCP 세션 산출물(스냅샷·콘솔 로그)
+.playwright-mcp/

@@ -137,7 +137,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
 
   return (
     <div className="panel overflow-hidden">
-      <div className="panel-header flex items-center gap-3 px-5 py-2.5 flex-wrap">
+      <div className="panel-header flex items-center gap-2 px-3 py-2.5 flex-wrap sm:gap-3 sm:px-5">
         {tokenNames.length > 0 && (
           <select
             value={tokenFilter}
@@ -182,8 +182,10 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
         <div className="text-sand-400 text-center py-12 text-sm">No requests yet.</div>
       ) : (
         <>
-          <div className="overflow-x-auto px-5 py-3">
-            <table className="w-full text-[13px]">
+          <div className="overflow-x-auto px-3 py-3 sm:px-5">
+            {/* 컬럼이 14개라 좁은 화면에서 표가 뷰포트를 넘는다. min-w 로 표를 온전히
+                유지하고 이 래퍼만 가로 스크롤시킨다. */}
+            <table className="w-full min-w-[900px] text-[13px]">
               <thead>
                 <tr className="border-b border-sand-100/60">
                   {COLUMNS.map((col) => {

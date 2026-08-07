@@ -117,112 +117,116 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
   return (
     <>
       <div className="panel overflow-hidden">
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="panel-header">
-              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
-                Provider
-              </th>
-              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
-                Name
-              </th>
-              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
-                Token
-              </th>
-              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
-                Status
-              </th>
-              <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
-                Expires
-              </th>
-              <th className="w-20 px-3 py-2.5" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-sand-100/80">
-            {tokens.map((token) => {
-              const expiry = formatExpiry(getExpiresAt(token));
-              return (
-                <tr
-                  key={token.id}
-                  className={`transition-colors duration-150 hover:bg-sand-100/60 ${token.active ? "" : "opacity-50"}`}
-                >
-                  <td className="px-5 py-3">
-                    <span className="text-xs font-medium text-sand-500 uppercase">
-                      {token.provider}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3">
-                    {token.name ? (
-                      <span className="text-sm text-sand-700">{token.name}</span>
-                    ) : (
-                      <span className="text-[11px] text-sand-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3">
-                    <code className="text-[13px] font-mono text-sand-800">
-                      {maskAccessToken(token)}
-                    </code>
-                  </td>
-                  <td className="px-5 py-3">
-                    <button
-                      type="button"
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${token.active ? "bg-sage-400" : "bg-sand-300"}`}
-                      onClick={() => handleToggle(token)}
-                      disabled={toggleMutation.isPending}
-                    >
-                      <span
-                        className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform duration-200 ${token.active ? "translate-x-4.5" : "translate-x-0.5"}`}
-                      />
-                    </button>
-                  </td>
-                  <td className="px-5 py-3">
-                    {expiry.text && (
-                      <span className={`text-xs ${expiry.color}`}>{expiry.text}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-1">
-                      {!token.active && (
+        {/* 컬럼이 좁은 화면보다 넓다. 표를 줄이는 대신 표만 가로로 스크롤시켜
+            페이지 자체가 밀리지 않게 한다. */}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-[13px]">
+            <thead>
+              <tr className="panel-header">
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+                  Provider
+                </th>
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+                  Name
+                </th>
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+                  Token
+                </th>
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+                  Status
+                </th>
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-wider text-sand-400 font-medium">
+                  Expires
+                </th>
+                <th className="w-20 px-3 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-sand-100/80">
+              {tokens.map((token) => {
+                const expiry = formatExpiry(getExpiresAt(token));
+                return (
+                  <tr
+                    key={token.id}
+                    className={`transition-colors duration-150 hover:bg-sand-100/60 ${token.active ? "" : "opacity-50"}`}
+                  >
+                    <td className="px-5 py-3">
+                      <span className="text-xs font-medium text-sand-500 uppercase">
+                        {token.provider}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      {token.name ? (
+                        <span className="text-sm text-sand-700">{token.name}</span>
+                      ) : (
+                        <span className="text-[11px] text-sand-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
+                      <code className="text-[13px] font-mono text-sand-800">
+                        {maskAccessToken(token)}
+                      </code>
+                    </td>
+                    <td className="px-5 py-3">
+                      <button
+                        type="button"
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${token.active ? "bg-sage-400" : "bg-sand-300"}`}
+                        onClick={() => handleToggle(token)}
+                        disabled={toggleMutation.isPending}
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform duration-200 ${token.active ? "translate-x-4.5" : "translate-x-0.5"}`}
+                        />
+                      </button>
+                    </td>
+                    <td className="px-5 py-3">
+                      {expiry.text && (
+                        <span className={`text-xs ${expiry.color}`}>{expiry.text}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-1">
+                        {!token.active && (
+                          <button
+                            type="button"
+                            title="기존 이름으로 다시 로그인"
+                            className="px-2 py-0.5 mr-1 text-[11px] font-medium rounded-md border border-sand-300 text-sand-600 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150 inline-flex items-center gap-1"
+                            disabled={oauth.loadingProvider !== null}
+                            onClick={() =>
+                              void oauth.start(token.provider as Provider, token.name ?? "")
+                            }
+                          >
+                            {oauth.loadingProvider === token.provider ? (
+                              <>
+                                <span className="w-3 h-3 border-2 border-sand-400 border-t-transparent rounded-full animate-spin" />
+                                로그인 대기
+                              </>
+                            ) : (
+                              "재로그인"
+                            )}
+                          </button>
+                        )}
                         <button
                           type="button"
-                          title="기존 이름으로 다시 로그인"
-                          className="px-2 py-0.5 mr-1 text-[11px] font-medium rounded-md border border-sand-300 text-sand-600 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150 inline-flex items-center gap-1"
-                          disabled={oauth.loadingProvider !== null}
-                          onClick={() =>
-                            void oauth.start(token.provider as Provider, token.name ?? "")
-                          }
+                          className="p-1 rounded text-sand-400 hover:text-sienna-500 transition-colors duration-150"
+                          onClick={() => openEdit(token)}
                         >
-                          {oauth.loadingProvider === token.provider ? (
-                            <>
-                              <span className="w-3 h-3 border-2 border-sand-400 border-t-transparent rounded-full animate-spin" />
-                              로그인 대기
-                            </>
-                          ) : (
-                            "재로그인"
-                          )}
+                          <PencilIcon className="size-4" />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        className="p-1 rounded text-sand-400 hover:text-sienna-500 transition-colors duration-150"
-                        onClick={() => openEdit(token)}
-                      >
-                        <PencilIcon className="size-4" />
-                      </button>
-                      <button
-                        type="button"
-                        className="p-1 rounded text-sand-400 hover:text-red-500 transition-colors duration-150"
-                        onClick={() => setDeleteTarget(token)}
-                      >
-                        <TrashIcon className="size-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                        <button
+                          type="button"
+                          className="p-1 rounded text-sand-400 hover:text-red-500 transition-colors duration-150"
+                          onClick={() => setDeleteTarget(token)}
+                        >
+                          <TrashIcon className="size-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* 재로그인 코드 입력 (원격 접속 code 모드) */}
