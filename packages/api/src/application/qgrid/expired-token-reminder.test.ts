@@ -8,22 +8,22 @@ const userMap = new Map([
 ]);
 
 describe("buildReminderContext", () => {
-  it("매핑된 토큰은 멘션으로 개인에게 꽂는다", () => {
+  it("1건이면 제목에 있는 토큰명을 본문에서 반복하지 않는다", () => {
     const text = buildReminderContext([{ name: "anthropic/yds", provider: "anthropic" }], userMap);
 
-    expect(text).toBe("<@U09NAJUQSFQ> anthropic/yds");
+    expect(text).toBe("<@U09NAJUQSFQ>\n재로그인이 필요합니다");
   });
 
-  it("공용 계정처럼 매핑이 없으면 멘션 없이 이름만 남긴다", () => {
+  it("1건이고 매핑이 없으면 안내만 남는다", () => {
     const text = buildReminderContext(
       [{ name: "anthropic/dev-common", provider: "anthropic" }],
       userMap,
     );
 
-    expect(text).toBe("anthropic/dev-common");
+    expect(text).toBe("재로그인이 필요합니다");
   });
 
-  it("같은 사람의 provider 별 토큰을 각각 구분해 보여준다", () => {
+  it("여러 건이면 제목이 건수라 본문에 토큰명을 남긴다", () => {
     const text = buildReminderContext(
       [
         { name: "anthropic/yds", provider: "anthropic" },
@@ -32,22 +32,42 @@ describe("buildReminderContext", () => {
       userMap,
     );
 
-    // 멘션만 두 번 나오면 어느 토큰인지 알 수 없다 — 토큰명이 함께 있어야 한다.
     expect(text.split("\n")).toEqual([
       "<@U09NAJUQSFQ> anthropic/yds",
       "<@U09NAJUQSFQ> openai/yds",
+      "재로그인이 필요합니다",
     ]);
   });
 
-  it("provider prefix 없이 저장된 이름도 매핑한다", () => {
-    const text = buildReminderContext([{ name: "haze", provider: "anthropic" }], userMap);
+  it("여러 건 중 매핑 없는 공용 계정은 이름만 남긴다", () => {
+    const text = buildReminderContext(
+      [
+        { name: "anthropic/haze", provider: "anthropic" },
+        { name: "anthropic/dev-common", provider: "anthropic" },
+      ],
+      userMap,
+    );
 
-    expect(text).toBe("<@U09N96NHZB7> haze");
+    expect(text.split("\n")).toEqual([
+      "<@U09N96NHZB7> anthropic/haze",
+      "anthropic/dev-common",
+      "재로그인이 필요합니다",
+    ]);
   });
 
   it("이름이 없는 토큰도 줄을 잃지 않는다", () => {
-    const text = buildReminderContext([{ name: null, provider: "openai" }], userMap);
+    const text = buildReminderContext(
+      [
+        { name: null, provider: "openai" },
+        { name: "anthropic/haze", provider: "anthropic" },
+      ],
+      userMap,
+    );
 
-    expect(text).toBe("unnamed");
+    expect(text.split("\n")).toEqual([
+      "unnamed",
+      "<@U09N96NHZB7> anthropic/haze",
+      "재로그인이 필요합니다",
+    ]);
   });
 });

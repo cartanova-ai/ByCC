@@ -20,18 +20,22 @@ const logger = getLogger(["qgrid", "expired-reminder"]);
 
 const MINUTE_MS = 60_000;
 
+/**
+ * 1건이면 제목(subject)에 토큰명이 이미 있으므로 본문에서는 뺀다 — 같은 이름을 두 번 쓰면
+ * 읽는 사람이 다른 정보인 줄 알고 한 번 더 본다. 여러 건이면 제목이 건수라 본문에 남긴다.
+ */
 export function buildReminderContext(
   tokens: { name: string | null; provider: string }[],
   userMap: Map<string, string>,
 ): string {
-  return tokens
-    .map((token) => {
-      const mention = mentionFor(token.name, userMap);
-      const label = token.name ?? "unnamed";
-      // 멘션이 있어도 어떤 토큰인지는 남긴다 — 한 사람이 provider 별로 여러 개를 가진다.
-      return mention ? `${mention} ${label}` : label;
-    })
-    .join("\n");
+  const showLabel = tokens.length > 1;
+  const lines = tokens.map((token) => {
+    const mention = mentionFor(token.name, userMap);
+    const label = token.name ?? "unnamed";
+    if (!showLabel) return mention;
+    return mention ? `${mention} ${label}` : label;
+  });
+  return [...lines, "재로그인이 필요합니다"].filter(Boolean).join("\n");
 }
 
 async function sendReminder(userMap: Map<string, string>): Promise<void> {
@@ -42,7 +46,7 @@ async function sendReminder(userMap: Map<string, string>): Promise<void> {
     // 만료 순간 알림과 같은 제목을 쓴다. 같은 사건이므로 다른 이름을 붙이면 별개 문제로 읽힌다.
     title: "세션 만료",
     subject: inactive.length > 1 ? `${inactive.length}건` : (inactive[0]!.name ?? "unnamed"),
-    context: `${buildReminderContext(inactive, userMap)}\n재로그인이 필요합니다`,
+    context: buildReminderContext(inactive, userMap),
     color: SLACK_COLOR.bad,
   });
 }
