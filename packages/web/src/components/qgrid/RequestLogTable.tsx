@@ -5,6 +5,7 @@ import ChevronRightIcon from "~icons/lucide/chevron-right";
 import { cacheHitRate, formatMicroUsd, formatUsd } from "@/lib/cost";
 import { type LogsSearch } from "@/routes/logs";
 import { QgridService, RequestLogService, TokenService } from "@/services/services.generated";
+import { type RequestLogOrderBy } from "@/services/sonamu.generated";
 
 const PAGE_SIZE = 50;
 const UNASSIGNED = "__unassigned__";
@@ -74,21 +75,28 @@ function formatTtft(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 
-const COLUMNS: { label: string; align: "left" | "right"; width?: string }[] = [
-  { label: "ID", align: "left", width: "w-12" },
-  { label: "Date", align: "left", width: "w-20" },
+// sortKey 가 있는 컬럼만 헤더 클릭으로 정렬된다. Project/Token/Model 은 필터가 그 역할을
+// 하고, Hit/Tools 는 저장 컬럼이 아닌 파생값이라 정렬 대상에서 뺀다.
+const COLUMNS: {
+  label: string;
+  align: "left" | "right";
+  width?: string;
+  sortKey?: string;
+}[] = [
+  { label: "ID", align: "left", width: "w-12", sortKey: "id" },
+  { label: "Date", align: "left", width: "w-20", sortKey: "created_at" },
   { label: "Project", align: "left", width: "w-20" },
   { label: "Token", align: "left", width: "w-24" },
   { label: "Model", align: "left", width: "w-20" },
-  { label: "TTFT", align: "left", width: "w-16" },
-  { label: "Duration", align: "left", width: "w-20" },
-  { label: "In", align: "left", width: "w-16" },
-  { label: "Out", align: "left", width: "w-20" },
-  { label: "C.Read", align: "left", width: "w-20" },
-  { label: "C.Write", align: "left", width: "w-20" },
+  { label: "TTFT", align: "left", width: "w-16", sortKey: "ttft_ms" },
+  { label: "Duration", align: "left", width: "w-20", sortKey: "duration_ms" },
+  { label: "In", align: "left", width: "w-16", sortKey: "input_tokens" },
+  { label: "Out", align: "left", width: "w-20", sortKey: "output_tokens" },
+  { label: "C.Read", align: "left", width: "w-20", sortKey: "cache_read_tokens" },
+  { label: "C.Write", align: "left", width: "w-20", sortKey: "cache_creation_tokens" },
   { label: "Hit", align: "left", width: "w-14" },
   { label: "Tools", align: "left", width: "w-14" },
-  { label: "Cost", align: "left", width: "w-20" },
+  { label: "Cost", align: "left", width: "w-20", sortKey: "cost_usd" },
 ];
 
 interface RequestLogTableProps {
@@ -125,10 +133,15 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
     ...(modelFilter ? { model_name: modelFilter } : {}),
   };
 
+  const sort = search.sort ?? "id-desc";
+  const separator = sort.lastIndexOf("-");
+  const sortColumn = sort.slice(0, separator);
+  const sortDirection = sort.slice(separator + 1) === "asc" ? "asc" : "desc";
+
   const { data, isLoading } = RequestLogService.useRequestLogs("P", {
     num: PAGE_SIZE,
     page,
-    orderBy: "id-desc" as const,
+    orderBy: sort as RequestLogOrderBy,
     ...listFilters,
   });
   const { data: costData } = QgridService.useTotalCost({ num: 0, page: 1, ...listFilters });
@@ -143,20 +156,21 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
   return (
     <div className="panel overflow-hidden">
       <div className="panel-header flex items-center gap-2 px-3 py-2.5 flex-wrap sm:gap-3 sm:px-5">
-        {tokenNames.length > 0 && (
-          <select
-            value={tokenFilter}
-            onChange={(e) => updateFilter({ token: e.target.value || undefined })}
-            className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300"
-          >
-            <option value="">All Tokens</option>
-            {tokenNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        )}
+        {/* 선택지가 없어도 셀렉트를 없애지 않는다 — 필터 줄이 통째로 사라지면 기능이
+            빠진 것처럼 보인다. 비활성 상태로 자리를 지킨다. */}
+        <select
+          value={tokenFilter}
+          onChange={(e) => updateFilter({ token: e.target.value || undefined })}
+          disabled={tokenNames.length === 0}
+          className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300 disabled:text-sand-300 disabled:cursor-not-allowed"
+        >
+          <option value="">{tokenNames.length > 0 ? "All Tokens" : "Tokens —"}</option>
+          {tokenNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
         <select
           value={projectFilter}
           onChange={(e) => updateFilter({ project: e.target.value || undefined })}
@@ -170,20 +184,19 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
             </option>
           ))}
         </select>
-        {modelNames.length > 0 && (
-          <select
-            value={modelFilter}
-            onChange={(e) => updateFilter({ model: e.target.value || undefined })}
-            className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300"
-          >
-            <option value="">All Models</option>
-            {modelNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        )}
+        <select
+          value={modelFilter}
+          onChange={(e) => updateFilter({ model: e.target.value || undefined })}
+          disabled={modelNames.length === 0}
+          className="border border-sand-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-sand-700 bg-sand-50/50 focus:outline-none focus:border-sienna-300 disabled:text-sand-300 disabled:cursor-not-allowed"
+        >
+          <option value="">{modelNames.length > 0 ? "All Models" : "Models —"}</option>
+          {modelNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
         <div className="flex-1" />
         <span className="text-[11px] text-sand-400">{total} results</span>
         <span className="text-[11px] tabular-nums font-medium text-sienna-600">
@@ -210,12 +223,32 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                   {COLUMNS.map((col) => {
                     const padX =
                       col.label === "Duration" ? "pl-5 pr-3" : col.width ? "px-4" : "px-3";
+                    const active = col.sortKey === sortColumn;
                     return (
                       <th
                         key={col.label}
-                        className={`text-${col.align} ${col.width ?? ""} ${col.width ? "whitespace-nowrap" : ""} ${padX} py-1.5 text-[10px] uppercase text-sand-400 font-medium`}
+                        className={`text-${col.align} ${col.width ?? ""} ${col.width ? "whitespace-nowrap" : ""} ${padX} py-1.5 text-[10px] uppercase font-medium ${active ? "text-sienna-600" : "text-sand-400"}`}
                       >
-                        {col.label}
+                        {col.sortKey ? (
+                          <button
+                            type="button"
+                            // 같은 컬럼을 다시 누르면 방향만 뒤집고, 다른 컬럼이면 desc 로 시작한다
+                            // — 지표는 큰 값부터 보는 쪽이 대개 궁금한 것이다.
+                            onClick={() =>
+                              updateFilter({
+                                sort: `${col.sortKey}-${active && sortDirection === "desc" ? "asc" : "desc"}`,
+                              })
+                            }
+                            className="inline-flex items-center gap-0.5 uppercase hover:text-sienna-500 transition-colors duration-150"
+                          >
+                            {col.label}
+                            <span className={active ? "" : "opacity-0"}>
+                              {sortDirection === "desc" ? "↓" : "↑"}
+                            </span>
+                          </button>
+                        ) : (
+                          col.label
+                        )}
                       </th>
                     );
                   })}

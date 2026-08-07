@@ -3,7 +3,6 @@ import {
   asArray,
   BadRequestException,
   BaseModelClass,
-  exhaustive,
   type ListResult,
   NotFoundException,
   Puri,
@@ -152,6 +151,43 @@ function normalizeLegacyAnthropicRow<T extends RequestLogUsageRow>(row: T): T {
   return normalized;
 }
 
+/**
+ * `orderBy` enum 값(`컬럼-방향`)을 정렬 절로 옮긴다.
+ *
+ * enum 이 18 종이라 케이스를 일일이 적는 대신 파싱하되, 컬럼은 아래 목록으로 한정한다 —
+ * 문자열을 그대로 컬럼명에 넘기면 enum 이 바뀔 때 검증 없는 식별자가 SQL 로 흘러든다.
+ * 목록에 없는 값은 기본 정렬(id desc)로 떨어진다.
+ */
+const ORDERABLE_COLUMNS = {
+  id: "request_logs.id",
+  created_at: "request_logs.created_at",
+  ttft_ms: "request_logs.ttft_ms",
+  duration_ms: "request_logs.duration_ms",
+  input_tokens: "request_logs.input_tokens",
+  output_tokens: "request_logs.output_tokens",
+  cache_read_tokens: "request_logs.cache_read_tokens",
+  cache_creation_tokens: "request_logs.cache_creation_tokens",
+  cost_usd: "request_logs.cost_usd",
+} as const;
+
+function applyOrderBy(
+  qb: ReturnType<RequestLogModelClass["getSubsetQueries"]>["qb"],
+  orderBy: string,
+): void {
+  const separator = orderBy.lastIndexOf("-");
+  const key = orderBy.slice(0, separator) as keyof typeof ORDERABLE_COLUMNS;
+  const direction = orderBy.slice(separator + 1) === "asc" ? "asc" : "desc";
+  const column = ORDERABLE_COLUMNS[key];
+
+  if (!column) {
+    qb.orderBy("request_logs.id", "desc");
+    return;
+  }
+  qb.orderBy(column, direction);
+  // 동점 행의 순서가 페이지마다 흔들리지 않게 고유 컬럼으로 tie-break 한다.
+  if (key !== "id") qb.orderBy("request_logs.id", "desc");
+}
+
 /*
   RequestLog Model
 */
@@ -254,15 +290,7 @@ class RequestLogModelClass extends BaseModelClass<
 
     this.applyListFilters(qb, params);
 
-    // orderBy
-    if (params.orderBy) {
-      // default orderBy
-      if (params.orderBy === "id-desc") {
-        qb.orderBy("request_logs.id", "desc");
-      } else {
-        exhaustive(params.orderBy);
-      }
-    }
+    if (params.orderBy) applyOrderBy(qb, params.orderBy);
 
     const enhancers = this.createEnhancers({
       A: (row) => normalizeLegacyAnthropicRow(row),

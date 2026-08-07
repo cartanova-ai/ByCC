@@ -54,9 +54,49 @@ const ToolDefinitions = z.array(
 type ToolDefinitions = z.infer<typeof ToolDefinitions>;
 
 // Enums: RequestLog
-export const RequestLogOrderBy = z.enum(["id-desc"]).describe("RequestLogOrderBy");
+export const RequestLogOrderBy = z
+  .enum([
+    "id-desc",
+    "id-asc",
+    "created_at-desc",
+    "created_at-asc",
+    "ttft_ms-desc",
+    "ttft_ms-asc",
+    "duration_ms-desc",
+    "duration_ms-asc",
+    "input_tokens-desc",
+    "input_tokens-asc",
+    "output_tokens-desc",
+    "output_tokens-asc",
+    "cache_read_tokens-desc",
+    "cache_read_tokens-asc",
+    "cache_creation_tokens-desc",
+    "cache_creation_tokens-asc",
+    "cost_usd-desc",
+    "cost_usd-asc",
+  ])
+  .describe("RequestLogOrderBy");
 export type RequestLogOrderBy = z.infer<typeof RequestLogOrderBy>;
-export const RequestLogOrderByLabel = { "id-desc": "ID최신순" };
+export const RequestLogOrderByLabel = {
+  "id-desc": "ID최신순",
+  "id-asc": "ID오래된순",
+  "created_at-desc": "등록일시최신순",
+  "created_at-asc": "등록일시오래된순",
+  "ttft_ms-desc": "TTFT긴순",
+  "ttft_ms-asc": "TTFT짧은순",
+  "duration_ms-desc": "소요시간긴순",
+  "duration_ms-asc": "소요시간짧은순",
+  "input_tokens-desc": "입력토큰많은순",
+  "input_tokens-asc": "입력토큰적은순",
+  "output_tokens-desc": "출력토큰많은순",
+  "output_tokens-asc": "출력토큰적은순",
+  "cache_read_tokens-desc": "캐시읽기많은순",
+  "cache_read_tokens-asc": "캐시읽기적은순",
+  "cache_creation_tokens-desc": "캐시생성많은순",
+  "cache_creation_tokens-asc": "캐시생성적은순",
+  "cost_usd-desc": "비용높은순",
+  "cost_usd-asc": "비용낮은순",
+};
 export const RequestLogSearchField = z
   .enum(["id", "token_name", "user_prompt"])
   .describe("RequestLogSearchField");
