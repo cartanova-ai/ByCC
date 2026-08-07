@@ -7,6 +7,10 @@ import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
 
 import { monitLogSink } from "./application/monit/log-buffer";
+import {
+  startExpiredTokenDigest,
+  stopExpiredTokenDigest,
+} from "./application/qgrid/expired-token-digest";
 import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
@@ -201,6 +205,8 @@ export default defineConfig({
           log.warn(`anthropic dispatcher failed: ${(e as Error).message}`);
         }
 
+        startExpiredTokenDigest();
+
         const anthropicCount = QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0;
         const openaiReady = QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0;
         const openaiTotal = QgridDispatcher.openaiDispatcher?.workerCount ?? 0;
@@ -214,6 +220,7 @@ export default defineConfig({
       },
       onShutdown: async () => {
         const log = getLogger(["qgrid", "startup"]);
+        stopExpiredTokenDigest();
         if (QgridDispatcher.openaiDispatcher) {
           await QgridDispatcher.openaiDispatcher.stop();
         }

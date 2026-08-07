@@ -309,6 +309,8 @@ All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec i
 | `QGRID_DB_NAME` | Database name (CLI) | `qgrid` |
 | `SLACK_BOT_TOKEN` | Slack bot token for token-expiry notifications. Unset disables notifications | — |
 | `SLACK_CHANNEL_ID` | Slack channel that receives those notifications | — |
+| `SLACK_EXPIRY_DIGEST_INTERVAL_MINUTES` | Minutes between reminders about inactive tokens. Unset or 0 disables | — |
+| `SLACK_USER_MAP` | `tokenName:SlackUserId` pairs; mapped tokens are mentioned by owner | — |
 
 > Qgrid does not add a separate authentication guard to dashboard APIs. Keep `HOST` on loopback unless access is protected by a trusted network or reverse proxy. A public bind exposes every admin endpoint, including the Monit tab's server log feed.
 >
