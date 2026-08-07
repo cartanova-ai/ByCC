@@ -93,7 +93,7 @@ Without the `--db` flag, DB connection info is read from:
 | `QGRID_DB_NAME` | `qgrid` |
 | `SLACK_BOT_TOKEN` | — (unset disables token-expiry notifications) |
 | `SLACK_CHANNEL_ID` | — |
-| `SLACK_EXPIRY_DIGEST_INTERVAL_MINUTES` | — (unset disables inactive-token reminders) |
+| `SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES` | — (unset disables session-expiry repeats) |
 | `SLACK_USER_MAP` | — (`tokenName:SlackUserId` pairs) |
 
 Server behavior variables:

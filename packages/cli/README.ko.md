@@ -92,7 +92,7 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 | `QGRID_DB_NAME` | `qgrid` |
 | `SLACK_BOT_TOKEN` | — (미설정 시 토큰 만료 알림 비활성) |
 | `SLACK_CHANNEL_ID` | — |
-| `SLACK_EXPIRY_DIGEST_INTERVAL_MINUTES` | — (미설정 시 비활성 토큰 재알림 끔) |
+| `SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES` | — (미설정 시 만료 알림 반복 끔) |
 | `SLACK_USER_MAP` | — (`토큰명:SlackUserId` 목록) |
 
 서버 동작 관련 환경변수:
