@@ -37,6 +37,12 @@ The server-side map from a conversation's next-turn fingerprint to the thread co
 ### 1M context entitlement
 Whether a pooled token's backing account is permitted to run a given model's 1M-token context window. It is not uniform across the pool: the same model can be allowed on one token and refused on another, because the entitlement is evaluated per account at request time. For some models the 1M window is included in the subscription; for others it is gated behind separately-enabled usage credits, so an active token is not by itself proof that a 1M request will succeed. A token-selection policy that treats all tokens as interchangeable for 1M requests fails intermittently whenever it routes to a token whose account lacks the entitlement.
 
+### Auth-dead token
+A pooled token whose provider refresh has failed with a determinate permanent code (OpenAI `refresh_token_expired`/`refresh_token_reused`/`refresh_token_invalidated`, Anthropic refresh 400/401), meaning re-login is the only recovery. qgrid treats this determination as the single anchor event: the token flips to inactive (removed from routing pool-wide via token sync), and the flip — which happens at most once per death — is what drives the Slack death notification. Transient failures (network, 5xx) and one-off in-turn 401s are not auth-death signals. Deliberately not distinguished from manual deactivation in the schema or dashboard; the reason lives only in the notification.
+
+### Token recovery
+Re-login with the same provider account (matched by account identifier), which replaces the dead token row with a fresh active one under the existing dedup rule. This is the event that fires the Slack recovery notification; manually toggling a token back to active is not a recovery — the session may still be expired.
+
 ### Workspace-scoped prompt cache
 On the Anthropic path, the boundary within which a prompt cache is shared: tokens whose backing accounts belong to the same Anthropic workspace read each other's cache, and tokens outside it never do — even for a byte-identical prefix. The sharing boundary is the workspace, not the individual account and not the product as a whole, so two different accounts in one workspace share a cache box while the same account split across workspaces would not. This makes cross-token cache reuse a property of how the pool is composed: a pool drawn from one workspace keeps the cache warm as it round-robins across tokens; mixing in a token from another workspace silently triggers cache re-creation whenever a request routes to it.
 

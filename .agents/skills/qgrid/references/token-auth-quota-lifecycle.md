@@ -201,6 +201,17 @@ OpenAI token changes can create, update, deactivate, or kill persistent Codex wo
 
 Anthropic token changes only affect the in-memory token pool because every request fresh-spawns Claude Code.
 
+## Auth-Dead Detection And Recovery
+
+When a refresh fails in a way that only re-login can fix, qgrid removes the token from routing instead of letting every subsequent request 401.
+
+- Detection lives at the existing refresh failure points, not a background scanner. OpenAI classifies on the error code (`refresh_token_expired`, `refresh_token_reused`, `refresh_token_invalidated`) regardless of HTTP status; Anthropic treats refresh 400/401 as auth-dead.
+- Before deactivating, qgrid re-reads the token and confirms the refresh token used by the failed attempt still matches the stored one. Anthropic refresh tokens rotate, so a late retry carrying an already-rotated token is a normal race, not a death — those are logged and skipped. `QgridFrame.refreshToken` also dedups concurrent refreshes per token.
+- Deactivation is one conditional `active=true → false` update. The process whose update affects a row is the only one that sends the Slack death notification, so a shared database produces exactly one alert per event.
+- The provider's last active token is never auto-deactivated. A systemic failure (client_id revocation, OAuth contract change) would otherwise empty the pool; qgrid logs an error and keeps the token instead.
+- Recovery is re-login that replaces an inactive row through the existing account dedup. Manually toggling a token back to active is not recovery and sends nothing. When the provider response carries no account identifier, dedup is skipped entirely — qgrid warns so the unreplaced inactive row is diagnosable.
+- Notifications are fail-open: unset `SLACK_BOT_TOKEN`/`SLACK_CHANNEL_ID` is a silent no-op, and send failures (including HTTP 200 with `ok:false`) only warn. Payloads carry an internal reason code such as `anthropic:400`, never the raw provider response body.
+
 ## Quota Threshold Semantics
 
 `quota_threshold` is a routing gate, not a hard external-provider guarantee.

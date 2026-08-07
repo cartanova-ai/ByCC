@@ -91,6 +91,8 @@ Without the `--db` flag, DB connection info is read from:
 | `QGRID_DB_USER` | `postgres` |
 | `QGRID_DB_PASSWORD` | `postgres` |
 | `QGRID_DB_NAME` | `qgrid` |
+| `SLACK_BOT_TOKEN` | — (unset disables token-expiry notifications) |
+| `SLACK_CHANNEL_ID` | — |
 
 Server behavior variables:
 

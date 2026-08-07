@@ -90,6 +90,8 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 | `QGRID_DB_USER` | `postgres` |
 | `QGRID_DB_PASSWORD` | `postgres` |
 | `QGRID_DB_NAME` | `qgrid` |
+| `SLACK_BOT_TOKEN` | — (미설정 시 토큰 만료 알림 비활성) |
+| `SLACK_CHANNEL_ID` | — |
 
 서버 동작 관련 환경변수:
 

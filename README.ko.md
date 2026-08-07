@@ -296,6 +296,8 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 | `QGRID_DB_USER` | PostgreSQL 사용자 (CLI) | `postgres` |
 | `QGRID_DB_PASSWORD` | PostgreSQL 비밀번호 (CLI) | `postgres` |
 | `QGRID_DB_NAME` | 데이터베이스 이름 (CLI) | `qgrid` |
+| `SLACK_BOT_TOKEN` | 토큰 만료 알림용 Slack bot token. 미설정 시 알림 비활성 | — |
+| `SLACK_CHANNEL_ID` | 알림을 받을 Slack 채널 | — |
 
 > qgrid는 대시보드 API에 별도 인증을 두지 않습니다. 신뢰할 수 있는 네트워크나 reverse proxy 뒤가 아니라면 `HOST`를 loopback으로 유지하세요. 공개 바인드는 Monit 탭의 서버 로그 피드를 포함한 모든 관리 엔드포인트를 노출합니다.
 >
