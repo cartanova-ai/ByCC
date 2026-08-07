@@ -786,6 +786,21 @@ export namespace QgridService {
       mutationFn: (params: { name: string }) => oauthStart(params.name),
     });
 
+  export async function oauthComplete(
+    pastedCode: string,
+  ): Promise<{ added: boolean; name: string }> {
+    return fetch({
+      method: "POST",
+      url: `/api/qgrid/oauthComplete`,
+      data: { pastedCode },
+    });
+  }
+
+  export const useOauthCompleteMutation = () =>
+    useMutation({
+      mutationFn: (params: { pastedCode: string }) => oauthComplete(params.pastedCode),
+    });
+
   export async function oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
     return fetch({
       method: "POST",

@@ -94,7 +94,11 @@ Anthropic OAuth is implemented directly in qgrid.
 6. Existing Anthropic tokens with the same `accountUuid` are deleted.
 7. qgrid saves a new `provider: "anthropic"` token.
 
-The callback base is derived per request from the `Origin` header (falling back to `X-Forwarded-Host`/`Host`) — the address the dashboard is reached at is where the callback returns. Without an HTTP context it falls back to `http://localhost:${PORT}/callback`.
+The Anthropic OAuth client enforces a redirect-URI allowlist: loopback (`http://localhost:*/callback`) and the console callback (`https://console.anthropic.com/oauth/code/callback`) only — arbitrary public URLs cannot be registered. qgrid therefore picks the flow per request from the `Origin` header (falling back to `X-Forwarded-Host`/`Host`):
+
+- Loopback origin: redirect flow — the callback returns to the request-derived base URL (`mode: "redirect"`).
+- Remote origin: code flow — `redirect_uri` is the console callback; after login the console page shows `code#state`, which the user pastes into the dashboard and `oauthComplete` exchanges (`mode: "code"`, same flow as Claude Code CLI).
+- No HTTP context (direct calls/tests): falls back to `http://localhost:${PORT}/callback`.
 
 Refresh:
 

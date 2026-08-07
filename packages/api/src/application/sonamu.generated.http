@@ -500,6 +500,15 @@ Content-Type: application/json
 
 ###
 
+POST {{baseUrl}}/api/qgrid/oauthComplete
+Content-Type: application/json
+
+{
+  "pastedCode": "PASTEDCODE"
+}
+
+###
+
 POST {{baseUrl}}/api/qgrid/oauthStartOpenAI
 Content-Type: application/json
 

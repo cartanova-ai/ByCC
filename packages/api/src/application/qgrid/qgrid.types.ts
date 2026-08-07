@@ -274,6 +274,9 @@ export type TokenStats = z.infer<typeof TokenStats>;
 
 export const OAuthStartResult = z.object({
   authUrl: z.string(),
+  // redirect: 브라우저 자동 복귀(루프백 접속). code: 콘솔 콜백 + 코드 붙여넣기(원격 접속).
+  // OpenAI 경로는 codex 가 콜백을 처리하므로 항상 redirect 를 반환한다.
+  mode: z.enum(["redirect", "code"]),
 });
 export type OAuthStartResult = z.infer<typeof OAuthStartResult>;
 

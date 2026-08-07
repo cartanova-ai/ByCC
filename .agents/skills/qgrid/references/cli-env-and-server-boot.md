@@ -90,5 +90,5 @@ On shutdown, it stops provider dispatchers and the token subscriber.
 
 ## OAuth callbacks
 
-- Anthropic OAuth uses `/callback` on the qgrid server. The callback base URL is derived per request from the browser-sent `Origin` header (falling back to `X-Forwarded-Host`/`Host`), so no env configuration is needed; direct non-HTTP calls fall back to localhost and `PORT`.
+- Anthropic OAuth: loopback dashboards use `/callback` on the qgrid server (base derived per request from `Origin`, falling back to `X-Forwarded-Host`/`Host`). Remote dashboards cannot use a public callback (client redirect-URI allowlist), so `oauthStart` returns `mode: "code"` with the console callback and the user pastes the shown `code#state` into the dashboard (`oauthComplete`). No env configuration either way; direct non-HTTP calls fall back to localhost and `PORT`.
 - OpenAI OAuth is handled by Codex app-server's own callback flow and completed through qgrid's OpenAI OAuth APIs.

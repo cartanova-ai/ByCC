@@ -19,6 +19,7 @@ import { TokenCredentials } from "../token/token.types";
 import {
   type AnthropicUsageRaw,
   buildAuthUrl,
+  CONSOLE_CALLBACK_URL,
   exchangeCodeForTokens,
   fetchUsage,
   generatePKCE,
@@ -80,15 +81,14 @@ async function deleteOAuthState(state: string): Promise<void> {
   await cache.delete({ key: `${OAUTH_STATE_PREFIX}${state}` });
 }
 
-// OAuth callback 은 대시보드가 접속한 qgrid 주소로 돌아온다. 브라우저가 보낸
-// Origin(우선) 또는 Host 헤더에서 base URL 을 파생하므로 별도 env 설정이 필요 없다.
-// HTTP context 가 없는 직접 호출(테스트 등)만 localhost 로 폴백한다.
-function getOAuthRedirectUri(): string {
+// OAuth 접속 주소는 브라우저가 보낸 Origin(우선) 또는 Host 헤더에서 파생한다.
+// HTTP context 가 없는 직접 호출(테스트 등)은 null 을 반환한다.
+function deriveRequestBaseUrl(): string | null {
   try {
     const { headers, request } = Sonamu.getContext();
     const origin = headers.origin;
     if (typeof origin === "string" && /^https?:\/\//.test(origin)) {
-      return `${origin.replace(/\/+$/, "")}/callback`;
+      return origin.replace(/\/+$/, "");
     }
     const forwardedHost = headers["x-forwarded-host"];
     const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) ?? headers.host;
@@ -97,12 +97,34 @@ function getOAuthRedirectUri(): string {
       const proto =
         (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto)?.split(",")[0] ??
         request.protocol;
-      return `${proto}://${host}/callback`;
+      return `${proto}://${host}`;
     }
   } catch {
     // direct frame call — HTTP context 없음
   }
-  return `http://localhost:${process.env.PORT ?? "44900"}/callback`;
+  return null;
+}
+
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+function isLoopbackBase(base: string): boolean {
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(base).hostname);
+  } catch {
+    return false;
+  }
+}
+
+// Anthropic OAuth client 는 redirect_uri 허용 목록을 강제한다: 루프백(localhost)과
+// 콘솔 콜백만 허용된다. 따라서 루프백 접속은 자동 리다이렉트 플로우를,
+// 원격 접속은 콘솔 콜백 + 코드 붙여넣기 플로우(Claude Code CLI 와 동일)를 쓴다.
+function resolveOAuthRedirect(): { redirectUri: string; mode: "redirect" | "code" } {
+  const base = deriveRequestBaseUrl();
+  if (base && !isLoopbackBase(base)) {
+    return { redirectUri: CONSOLE_CALLBACK_URL, mode: "code" };
+  }
+  const loopbackBase = base ?? `http://localhost:${process.env.PORT ?? "44900"}`;
+  return { redirectUri: `${loopbackBase}/callback`, mode: "redirect" };
 }
 
 function rejectImageGenerationStream(args: QueryInput): void {
@@ -533,12 +555,75 @@ class QgridFrameClass extends BaseFrameClass {
   async oauthStart(name: string): Promise<OAuthStartResult> {
     const { codeVerifier, codeChallenge, state } = generatePKCE();
 
-    const redirectUri = getOAuthRedirectUri();
+    const { redirectUri, mode } = resolveOAuthRedirect();
     const authUrl = buildAuthUrl(codeChallenge, state, redirectUri);
 
     await setOAuthState(state, { codeVerifier, name, redirectUri });
 
-    return { authUrl };
+    return { authUrl, mode };
+  }
+
+  // 코드 붙여넣기 플로우(원격 접속): 콘솔 콜백이 표시한 `code#state` 를 받아 교환한다.
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async oauthComplete(pastedCode: string): Promise<{ added: boolean; name: string }> {
+    const trimmed = pastedCode.trim();
+    const separatorAt = trimmed.indexOf("#");
+    const code = separatorAt > 0 ? trimmed.slice(0, separatorAt) : "";
+    const state = separatorAt > 0 ? trimmed.slice(separatorAt + 1) : "";
+    if (!code || !state) {
+      throw new BadRequestException(
+        "expected the code shown after login, in code#state form" as LocalizedString,
+      );
+    }
+
+    const pending = await getOAuthState(state);
+    if (!pending) {
+      throw new BadRequestException(
+        "login session not found or expired — start the login again" as LocalizedString,
+      );
+    }
+    await deleteOAuthState(state);
+
+    await this.completeAnthropicLogin(code, state, pending);
+    return { added: true, name: pending.name };
+  }
+
+  // 교환 + 계정 중복 제거 + 저장 — redirect 콜백과 코드 붙여넣기 플로우가 공유한다.
+  private async completeAnthropicLogin(
+    code: string,
+    state: string,
+    pending: PendingOAuth,
+  ): Promise<void> {
+    const tokens = await exchangeCodeForTokens(
+      code,
+      pending.codeVerifier,
+      state,
+      pending.redirectUri,
+    );
+
+    if (tokens.accountUuid) {
+      const oldEntries = await TokenModel.findByAccountIdentifier(
+        "A",
+        "anthropic",
+        tokens.accountUuid,
+      );
+      if (oldEntries.length > 0) {
+        await TokenModel.del(oldEntries.map((o) => o.id));
+      }
+    }
+
+    await TokenModel.save([
+      {
+        provider: "anthropic",
+        credentials: {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt: tokens.expiresAt ?? 0,
+          accountUuid: tokens.accountUuid ?? "",
+        },
+        name: pending.name,
+      },
+    ]);
   }
 
   async handleOAuthCallback(code: string, state: string, reply: FastifyReply): Promise<void> {
@@ -550,37 +635,7 @@ class QgridFrameClass extends BaseFrameClass {
     await deleteOAuthState(state);
 
     try {
-      const tokens = await exchangeCodeForTokens(
-        code,
-        pending.codeVerifier,
-        state,
-        pending.redirectUri,
-      );
-
-      if (tokens.accountUuid) {
-        const oldEntries = await TokenModel.findByAccountIdentifier(
-          "A",
-          "anthropic",
-          tokens.accountUuid,
-        );
-        if (oldEntries.length > 0) {
-          await TokenModel.del(oldEntries.map((o) => o.id));
-        }
-      }
-
-      await TokenModel.save([
-        {
-          provider: "anthropic",
-          credentials: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: tokens.expiresAt ?? 0,
-            accountUuid: tokens.accountUuid ?? "",
-          },
-          name: pending.name,
-        },
-      ]);
-
+      await this.completeAnthropicLogin(code, state, pending);
       return reply.redirect(`/?oauth=success&name=${encodeURIComponent(pending.name)}`);
     } catch (e) {
       return reply.redirect(`/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`);
@@ -625,7 +680,7 @@ class QgridFrameClass extends BaseFrameClass {
         logger.warn(`OpenAI browser login failed: ${(e as Error).message}`);
       });
 
-    return { authUrl };
+    return { authUrl, mode: "redirect" };
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })

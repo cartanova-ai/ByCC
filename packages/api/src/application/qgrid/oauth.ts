@@ -20,6 +20,9 @@ const logger = getLogger(["qgrid", "oauth"]);
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+// client 허용 목록에 있는 콘솔 콜백. 인증 후 콘솔 페이지가 `code#state`를 표시하고
+// 사용자가 붙여넣는 코드 플로우(Claude Code CLI와 동일)에 사용한다.
+export const CONSOLE_CALLBACK_URL = "https://console.anthropic.com/oauth/code/callback";
 
 // login 시 사용 (authorize URL)
 const ALL_SCOPES = [
