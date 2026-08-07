@@ -8,7 +8,7 @@
 import { getLogger } from "@logtape/logtape";
 
 import { getRefreshToken } from "../../utils/providers/common/credentials";
-import { notifySlack } from "../../utils/slack-notify";
+import { notifySlack, SLACK_COLOR } from "../../utils/slack-notify";
 import { TokenModel } from "../token/token.model";
 
 const logger = getLogger(["qgrid", "token-death"]);
@@ -46,17 +46,22 @@ export async function deactivateAuthDeadToken(
   if (!deactivated) return false;
 
   logger.warn(`token deactivated (auth dead): ${token.name}(id=${token.id}) reason=${reasonCode}`);
-  void notifySlack(
-    `:no_entry: qgrid 토큰 세션 만료 — *${token.name}* (${token.provider})\n` +
-      `사유: \`${reasonCode}\` · 라우팅에서 제외했습니다. 대시보드에서 재로그인하세요.`,
-  );
+  void notifySlack({
+    title: "세션 만료",
+    subject: token.name,
+    context: `${token.provider} · ${reasonCode} · 재로그인이 필요합니다`,
+    color: SLACK_COLOR.bad,
+  });
   return true;
 }
 
 /** 처음 보는 계정이 등록됐을 때. 재로그인(기존 토큰 교체)은 알리지 않는다. */
 export function notifyTokenAdded(name: string, provider: string): void {
   logger.info(`token added: ${name} (${provider})`);
-  void notifySlack(
-    `:heavy_plus_sign: qgrid 토큰 추가 — *${name}* (${provider})\n라우팅에 투입되었습니다.`,
-  );
+  void notifySlack({
+    title: "토큰 추가",
+    subject: name,
+    context: `${provider} · 요청 처리에 사용됩니다`,
+    color: SLACK_COLOR.good,
+  });
 }

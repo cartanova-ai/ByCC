@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SLACK_COLOR } from "../../utils/slack-notify";
 import { deactivateAuthDeadToken, notifyTokenAdded } from "./token-death";
 
 const { findOneMock, deactivateMock, notifySlackMock } = vi.hoisted(() => ({
@@ -12,7 +13,11 @@ vi.mock("../token/token.model", () => ({
   TokenModel: { findOne: findOneMock, deactivateIfActive: deactivateMock },
 }));
 
-vi.mock("../../utils/slack-notify", () => ({ notifySlack: notifySlackMock }));
+// SLACK_COLOR 는 상수라 가릴 이유가 없다 — 전송 함수만 스텁한다.
+vi.mock("../../utils/slack-notify", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/slack-notify")>()),
+  notifySlack: notifySlackMock,
+}));
 
 const token = { id: 7, name: "anthropic/test-token", provider: "anthropic" };
 
@@ -41,9 +46,14 @@ describe("deactivateAuthDeadToken", () => {
 
     expect(deactivateMock).toHaveBeenCalledWith(7);
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
-    const message = notifySlackMock.mock.calls[0]![0] as string;
-    expect(message).toContain("anthropic/test-token");
-    expect(message).toContain("anthropic:400");
+    const notification = notifySlackMock.mock.calls[0]![0] as {
+      subject: string;
+      context: string;
+      color: string;
+    };
+    expect(notification.subject).toBe("anthropic/test-token");
+    expect(notification.context).toContain("anthropic:400");
+    expect(notification.color).toBe(SLACK_COLOR.bad);
   });
 
   it("skips deactivation when the refresh token rotated since the failed attempt", async () => {
@@ -82,9 +92,10 @@ describe("deactivateAuthDeadToken", () => {
 
     await deactivateAuthDeadToken(token, "rt-current", "anthropic:400");
 
-    const message = notifySlackMock.mock.calls[0]![0] as string;
-    expect(message).not.toContain("sk-ant");
-    expect(message).not.toContain("@");
+    // 필드가 늘어도 새는 곳이 생기지 않도록 페이로드 전체를 훑는다.
+    const payload = JSON.stringify(notifySlackMock.mock.calls[0]![0]);
+    expect(payload).not.toContain("sk-ant");
+    expect(payload).not.toContain("@");
   });
 });
 
@@ -97,8 +108,13 @@ describe("notifyTokenAdded", () => {
     notifyTokenAdded("anthropic/test-token", "anthropic");
 
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
-    const message = notifySlackMock.mock.calls[0]![0] as string;
-    expect(message).toContain("anthropic/test-token");
-    expect(message).toContain("anthropic");
+    const notification = notifySlackMock.mock.calls[0]![0] as {
+      subject: string;
+      context: string;
+      color: string;
+    };
+    expect(notification.subject).toBe("anthropic/test-token");
+    expect(notification.context).toContain("anthropic");
+    expect(notification.color).toBe(SLACK_COLOR.good);
   });
 });
