@@ -53,10 +53,10 @@ export async function deactivateAuthDeadToken(
   return true;
 }
 
-/** 재로그인으로 비활성 토큰이 교체됐을 때. */
-export function notifyTokenRecovered(name: string, provider: string): void {
-  logger.info(`token recovered: ${name} (${provider})`);
+/** 처음 보는 계정이 등록됐을 때. 재로그인(기존 토큰 교체)은 알리지 않는다. */
+export function notifyTokenAdded(name: string, provider: string): void {
+  logger.info(`token added: ${name} (${provider})`);
   void notifySlack(
-    `:white_check_mark: qgrid 토큰 복구 — *${name}* (${provider})\n재로그인으로 라우팅에 복귀했습니다.`,
+    `:heavy_plus_sign: qgrid 토큰 추가 — *${name}* (${provider})\n라우팅에 투입되었습니다.`,
   );
 }

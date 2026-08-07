@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { deactivateAuthDeadToken, notifyTokenRecovered } from "./token-death";
+import { deactivateAuthDeadToken, notifyTokenAdded } from "./token-death";
 
 const { findOneMock, deactivateMock, notifySlackMock } = vi.hoisted(() => ({
   findOneMock: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock("../token/token.model", () => ({
 
 vi.mock("../../utils/slack-notify", () => ({ notifySlack: notifySlackMock }));
 
-const token = { id: 7, name: "anthropic/haze", provider: "anthropic" };
+const token = { id: 7, name: "anthropic/test-token", provider: "anthropic" };
 
 function storedRefreshToken(refreshToken: string) {
   return {
@@ -42,7 +42,7 @@ describe("deactivateAuthDeadToken", () => {
     expect(deactivateMock).toHaveBeenCalledWith(7);
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
     const message = notifySlackMock.mock.calls[0]![0] as string;
-    expect(message).toContain("anthropic/haze");
+    expect(message).toContain("anthropic/test-token");
     expect(message).toContain("anthropic:400");
   });
 
@@ -88,17 +88,17 @@ describe("deactivateAuthDeadToken", () => {
   });
 });
 
-describe("notifyTokenRecovered", () => {
+describe("notifyTokenAdded", () => {
   afterEach(() => {
     notifySlackMock.mockReset();
   });
 
-  it("sends one recovery notification naming the token and provider", () => {
-    notifyTokenRecovered("anthropic/haze", "anthropic");
+  it("sends one added notification naming the token and provider", () => {
+    notifyTokenAdded("anthropic/test-token", "anthropic");
 
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
     const message = notifySlackMock.mock.calls[0]![0] as string;
-    expect(message).toContain("anthropic/haze");
+    expect(message).toContain("anthropic/test-token");
     expect(message).toContain("anthropic");
   });
 });

@@ -38,17 +38,19 @@ vi.mock("../token/token.model", () => ({
     del: tokenDelMock,
     findByAccountIdentifier: findByAccountMock,
     // 실제 구현과 같은 순서(dedup → save)로 동작시켜 저장 payload 검증이 유지되게 한다.
-    replaceByAccount: async (_provider: string, accountId: string | undefined, saveParams: unknown) => {
-      let replacedInactive = false;
+    replaceByAccount: async (
+      _provider: string,
+      accountId: string | undefined,
+      saveParams: unknown,
+    ) => {
+      let isNew = false;
       if (accountId) {
         const olds = (await findByAccountMock()) as unknown as { id: number; active: boolean }[];
-        if (olds.length > 0) {
-          replacedInactive = olds.some((o) => !o.active);
-          await tokenDelMock();
-        }
+        if (olds.length > 0) await tokenDelMock();
+        else isNew = true;
       }
       await (tokenSaveMock as unknown as (rows: unknown[]) => Promise<number[]>)([saveParams]);
-      return { replacedInactive };
+      return { isNew };
     },
   },
 }));
@@ -119,7 +121,7 @@ describe("QgridFrame.oauthComplete code flow", () => {
 
   it("exchanges a pasted code#state against the stored pending state and saves the token", async () => {
     mockHttpContext({ origin: "https://qgrid.example.com" });
-    const { authUrl } = await QgridFrame.oauthStart("haze-2");
+    const { authUrl } = await QgridFrame.oauthStart("test-token-2");
     const state = authUrlParam(authUrl, "state")!;
 
     exchangeMock.mockResolvedValueOnce({
@@ -132,7 +134,7 @@ describe("QgridFrame.oauthComplete code flow", () => {
 
     await expect(QgridFrame.oauthComplete(`  the-code#${state} `)).resolves.toEqual({
       added: true,
-      name: "haze-2",
+      name: "test-token-2",
     });
 
     expect(exchangeMock).toHaveBeenCalledWith(
@@ -144,7 +146,7 @@ describe("QgridFrame.oauthComplete code flow", () => {
     expect(tokenSaveMock).toHaveBeenCalledWith([
       expect.objectContaining({
         provider: "anthropic",
-        name: "haze-2",
+        name: "test-token-2",
         credentials: expect.objectContaining({ accessToken: "at", accountUuid: "acc-1" }),
       }),
     ]);

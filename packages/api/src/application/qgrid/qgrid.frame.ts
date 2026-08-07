@@ -47,7 +47,7 @@ import {
   type TokenStats,
   type UsageResponse,
 } from "./qgrid.types";
-import { deactivateAuthDeadToken, notifyTokenRecovered } from "./token-death";
+import { deactivateAuthDeadToken, notifyTokenAdded } from "./token-death";
 import { ToolSchemaCompositionError } from "./tool-emulation-schema";
 
 const pendingStreams = new Map<string, QueryInput>();
@@ -609,22 +609,18 @@ class QgridFrameClass extends BaseFrameClass {
       pending.redirectUri,
     );
 
-    const { replacedInactive } = await TokenModel.replaceByAccount(
-      "anthropic",
-      tokens.accountUuid,
-      {
-        provider: "anthropic",
-        credentials: {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt ?? 0,
-          accountUuid: tokens.accountUuid ?? "",
-        },
-        name: pending.name,
+    const { isNew } = await TokenModel.replaceByAccount("anthropic", tokens.accountUuid, {
+      provider: "anthropic",
+      credentials: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt ?? 0,
+        accountUuid: tokens.accountUuid ?? "",
       },
-    );
+      name: pending.name,
+    });
 
-    if (replacedInactive) notifyTokenRecovered(pending.name, "anthropic");
+    if (isNew) notifyTokenAdded(pending.name, "anthropic");
   }
 
   async handleOAuthCallback(code: string, state: string, reply: FastifyReply): Promise<void> {
@@ -652,7 +648,7 @@ class QgridFrameClass extends BaseFrameClass {
     QgridDispatcher.openaiDispatcher
       .completeBrowserLogin()
       .then(async (creds) => {
-        const { replacedInactive } = await TokenModel.replaceByAccount("openai", creds.accountId, {
+        const { isNew } = await TokenModel.replaceByAccount("openai", creds.accountId, {
           provider: "openai",
           credentials: {
             accessToken: creds.accessToken,
@@ -664,7 +660,7 @@ class QgridFrameClass extends BaseFrameClass {
           name,
         });
         logger.info(`OpenAI token saved for ${name}`);
-        if (replacedInactive) notifyTokenRecovered(name, "openai");
+        if (isNew) notifyTokenAdded(name, "openai");
       })
       .catch((e) => {
         logger.warn(`OpenAI browser login failed: ${(e as Error).message}`);
