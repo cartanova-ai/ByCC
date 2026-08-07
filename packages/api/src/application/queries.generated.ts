@@ -80,8 +80,8 @@ export namespace QgridService {
   export const stats = (): SSRQuery =>
     createSSRQuery("QgridFrame", "stats", [], ["Qgrid", "stats"]);
 
-  export const totalCost = (tokenName?: string): SSRQuery =>
-    createSSRQuery("QgridFrame", "totalCost", [tokenName], ["Qgrid", "totalCost"]);
+  export const totalCost = (params?: RequestLogListParams): SSRQuery =>
+    createSSRQuery("QgridFrame", "totalCost", [params], ["Qgrid", "totalCost"]);
 
   export const projectNames = (): SSRQuery =>
     createSSRQuery("QgridFrame", "projectNames", [], ["Qgrid", "projectNames"]);

@@ -195,21 +195,15 @@ class RequestLogModelClass extends BaseModelClass<
     return rows[0] ?? null;
   }
 
-  @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"], resourceName: "RequestLogs" })
-  async findMany<T extends RequestLogSubsetKey, LP extends RequestLogListParams>(
-    subset: T,
-    rawParams?: LP,
-  ): Promise<ListResult<LP, RequestLogSubsetMapping[T]>> {
-    const params = {
-      num: 24,
-      page: 1,
-      search: "id" as const,
-      orderBy: "id-desc" as const,
-      ...rawParams,
-    } satisfies RequestLogListParams;
-
-    const { qb, onSubset: _ } = this.getSubsetQueries(subset);
-
+  /**
+   * 목록 필터의 단일 정의. findMany 와 totalCost 가 같은 조건을 보도록 공유한다 —
+   * 화면에서 필터를 걸면 행 수와 비용이 함께 좁혀져야 하는데, 두 쿼리가 각자 필터를
+   * 구현하면 한쪽에 축을 추가할 때 조용히 어긋난다.
+   */
+  private applyListFilters(
+    qb: ReturnType<RequestLogModelClass["getSubsetQueries"]>["qb"],
+    params: RequestLogListParams,
+  ): void {
     if (params.id) {
       qb.whereIn("request_logs.id", asArray(params.id));
     }
@@ -241,6 +235,24 @@ class RequestLogModelClass extends BaseModelClass<
         throw new BadRequestException(SD("error.unknownSearchField")(params.search));
       }
     }
+  }
+
+  @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"], resourceName: "RequestLogs" })
+  async findMany<T extends RequestLogSubsetKey, LP extends RequestLogListParams>(
+    subset: T,
+    rawParams?: LP,
+  ): Promise<ListResult<LP, RequestLogSubsetMapping[T]>> {
+    const params = {
+      num: 24,
+      page: 1,
+      search: "id" as const,
+      orderBy: "id-desc" as const,
+      ...rawParams,
+    } satisfies RequestLogListParams;
+
+    const { qb, onSubset: _ } = this.getSubsetQueries(subset);
+
+    this.applyListFilters(qb, params);
 
     // orderBy
     if (params.orderBy) {
@@ -254,6 +266,7 @@ class RequestLogModelClass extends BaseModelClass<
 
     const enhancers = this.createEnhancers({
       A: (row) => normalizeLegacyAnthropicRow(row),
+      C: (row) => normalizeLegacyAnthropicRow(row),
     });
 
     return this.executeSubsetQuery({
@@ -606,31 +619,60 @@ class RequestLogModelClass extends BaseModelClass<
     return (row?.max_step ?? -1) + 1;
   }
 
-  // Sonamu findMany는 subset 전체 컬럼(text 포함)을 페치하므로 비용 계산에 필요한 컬럼만 조회한다.
-  async totalCost(params: { token_name?: string } = {}): Promise<number> {
-    // 기존 cost_usd 에는 과거 Anthropic cache 계산 버그로 음수가 저장된 row 가 있을 수 있다.
-    // 화면 집계는 저장값 sum 이 아니라 현재 계산식으로 usage 를 재계산해 과거 로그도 즉시 보정한다.
-    const rows = await this.getPuri("r")
-      .from("request_logs")
-      .where(params.token_name ? { token_name: params.token_name } : {})
+  /**
+   * 화면 표시용 총 비용. 목록과 같은 필터를 적용한다.
+   *
+   * 저장값 sum 이 아닌 이유: 과거 Anthropic cache 계산 버그로 음수 `cost_usd` 가 저장된
+   * row 가 있어, `cost_source` 가 없는 legacy row 는 현재 계산식으로 재계산해 보정한다.
+   *
+   * 필터 조건을 여기서 다시 구현하지 않고 `findMany` 를 경유하는 것이 핵심이다 — 두
+   * 쿼리가 각자 필터를 가지면 화면에서 필터를 걸었을 때 행 수와 비용이 조용히 어긋난다.
+   */
+  async totalCost(rawParams: RequestLogListParams = { num: 0, page: 1 }): Promise<number> {
+    const params = {
+      num: 0,
+      page: 1,
+      search: "id" as const,
+      ...rawParams,
+    } satisfies RequestLogListParams;
+
+    // 필터 정의는 findMany 가 소유한다(applyListFilters 공유) — 조건을 여기서 다시 쓰면
+    // 목록과 비용의 모수가 갈라진다.
+    const { qb: confirmedQb } = this.getSubsetQueries("C");
+    this.applyListFilters(confirmedQb, params);
+    // subset qb 는 컬럼 목록이 이미 SELECT 에 박혀 있어 집계를 얹으면 GROUP BY 에러가 난다.
+    // executeCountQuery 와 같은 방식으로 select 를 비우고 집계만 남긴다.
+    const confirmed = await confirmedQb
+      .whereRaw("request_logs.cost_source IS NOT NULL AND request_logs.cost_usd IS NOT NULL")
+      .clear("select")
+      // 음수 저장값(과거 버그)은 0 으로 눌러서 더한다 — JS 쪽 Math.max 와 같은 규칙.
       .select({
-        model_name: "model_name",
-        input_tokens: "input_tokens",
-        output_tokens: "output_tokens",
-        cache_read_tokens: "cache_read_tokens",
-        cache_creation_tokens: "cache_creation_tokens",
-        cache_creation_5m_tokens: "cache_creation_5m_tokens",
-        cache_creation_1h_tokens: "cache_creation_1h_tokens",
-        cost_usd: "cost_usd",
-        cost_source: "cost_source",
+        total: Puri.rawNumber("COALESCE(SUM(GREATEST(request_logs.cost_usd, 0)), 0)"),
+      })
+      .first();
+
+    // legacy row 만 앱으로 가져와 현재 가격표로 재계산한다. 신규 row 는 모두 cost_source 를
+    // 가지므로, 테이블이 커져도 이 집합은 늘지 않는다.
+    const { qb: legacyQb } = this.getSubsetQueries("C");
+    this.applyListFilters(legacyQb, params);
+    const legacyRows = await legacyQb
+      .whereRaw("request_logs.cost_source IS NULL OR request_logs.cost_usd IS NULL")
+      .clear("select")
+      .select({
+        token_name: "request_logs.token_name",
+        model_name: "request_logs.model_name",
+        input_tokens: "request_logs.input_tokens",
+        output_tokens: "request_logs.output_tokens",
+        cache_read_tokens: "request_logs.cache_read_tokens",
+        cache_creation_tokens: "request_logs.cache_creation_tokens",
+        cache_creation_5m_tokens: "request_logs.cache_creation_5m_tokens",
+        cache_creation_1h_tokens: "request_logs.cache_creation_1h_tokens",
+        cost_usd: "request_logs.cost_usd",
       });
 
-    return rows.reduce((sum, row) => {
-      // cost_source 가 있으면 새 계약으로 확정 저장된 값이다. 프로모션/가격 변경 이후에도
-      // 당시 비용을 유지한다. NULL인 legacy row 만 현재 가격표로 보정한다.
-      if (row.cost_source && row.cost_usd !== null) {
-        return sum + Math.max(row.cost_usd, 0) / MICRO_USD;
-      }
+    const confirmedTotal = Number(confirmed?.total ?? 0) / MICRO_USD;
+
+    return legacyRows.reduce((sum, row) => {
       const usage = normalizedUsageForCost(row);
       if (!usage.model) return sum + Math.max(row.cost_usd ?? 0, 0) / MICRO_USD;
       return (
@@ -644,7 +686,7 @@ class RequestLogModelClass extends BaseModelClass<
           cacheCreationInputTokens1h: usage.cacheCreationInputTokens1h,
         })
       );
-    }, 0);
+    }, confirmedTotal);
   }
 
   async distinctProjectNames(): Promise<string[]> {

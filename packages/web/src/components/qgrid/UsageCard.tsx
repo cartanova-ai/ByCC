@@ -508,9 +508,10 @@ function SortableTokenCard({ token }: { token: Token }) {
       easing: "ease",
     },
   });
-  const { data: costData } = QgridService.useTotalCost(token.name, {
-    enabled: !!token.name,
-  });
+  const { data: costData } = QgridService.useTotalCost(
+    { num: 0, page: 1, ...(token.name ? { token_name: token.name } : {}) },
+    { enabled: !!token.name },
+  );
   const theme = getProviderTheme(token.provider);
 
   const style = {

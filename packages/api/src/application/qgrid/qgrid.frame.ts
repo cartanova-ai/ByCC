@@ -13,6 +13,7 @@ import {
 } from "../../utils/providers/common/credentials";
 import { CallerSchemaValidationError } from "../../utils/providers/common/schema-validation";
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
+import { type RequestLogListParams } from "../request-log/request-log.types";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { TokenModel, type TokenUpdateFields } from "../token/token.model";
 import { TokenCredentials } from "../token/token.types";
@@ -469,9 +470,11 @@ class QgridFrameClass extends BaseFrameClass {
     return QgridDispatcher.getStats();
   }
 
+  // 화면의 목록 필터를 그대로 받아 같은 조건의 합계를 돌려준다 — 목록과 비용이
+  // 서로 다른 모수를 보면 사용자에게는 숫자가 어긋난 것으로 읽힌다.
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
-  async totalCost(tokenName?: string): Promise<{ usd: number }> {
-    return { usd: await RequestLogModel.totalCost({ token_name: tokenName }) };
+  async totalCost(params?: RequestLogListParams): Promise<{ usd: number }> {
+    return { usd: await RequestLogModel.totalCost(params) };
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })

@@ -434,7 +434,19 @@ Content-Type: application/json
 ###
 
 GET {{baseUrl}}/api/qgrid/totalCost
-	?tokenName=TOKENNAME
+	?params[num]=24
+	&params[page]=1
+	&params[search]=id
+	&params[keyword]=KEYWORD
+	&params[orderBy]=id-desc
+	&params[queryMode]=both
+	&params[id]=0
+	&params[sonamuFilter]=unknown-custom
+	&params[token_name]=
+	&params[project_name]=
+	&params[model_name]=
+	&params[project_name_is_null]=false
+	&params[project_name_is_not_null]=false
 Content-Type: application/json
 
 ###

@@ -114,14 +114,19 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
     return {};
   })();
 
+  // 목록과 비용이 같은 필터를 보도록 한 객체를 공유한다.
+  const listFilters = {
+    ...(tokenFilter ? { token_name: tokenFilter } : {}),
+    ...projectFilterParam,
+  };
+
   const { data, isLoading } = RequestLogService.useRequestLogs("P", {
     num: PAGE_SIZE,
     page,
     orderBy: "id-desc" as const,
-    ...(tokenFilter ? { token_name: tokenFilter } : {}),
-    ...projectFilterParam,
+    ...listFilters,
   });
-  const { data: costData } = QgridService.useTotalCost(tokenFilter || undefined);
+  const { data: costData } = QgridService.useTotalCost({ num: 0, page: 1, ...listFilters });
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);

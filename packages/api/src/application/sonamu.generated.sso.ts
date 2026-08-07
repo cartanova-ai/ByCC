@@ -76,12 +76,28 @@ export const requestLogSubsetQueries = {
       is_image_generation: "request_logs.is_image_generation",
     });
   },
+  C: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
+    return qbWrapper.from("request_logs").select({
+      id: "request_logs.id",
+      token_name: "request_logs.token_name",
+      model_name: "request_logs.model_name",
+      input_tokens: "request_logs.input_tokens",
+      output_tokens: "request_logs.output_tokens",
+      cache_read_tokens: "request_logs.cache_read_tokens",
+      cache_creation_tokens: "request_logs.cache_creation_tokens",
+      cache_creation_5m_tokens: "request_logs.cache_creation_5m_tokens",
+      cache_creation_1h_tokens: "request_logs.cache_creation_1h_tokens",
+      cost_usd: "request_logs.cost_usd",
+      cost_source: "request_logs.cost_source",
+    });
+  },
 };
 
 // LoaderQuery: RequestLog
 export const requestLogLoaderQueries = {
   A: [],
   P: [],
+  C: [],
 } as const satisfies PuriLoaderQueries<RequestLogSubsetKey>;
 
 // SubsetQuery: RequestLogStep

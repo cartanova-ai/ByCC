@@ -674,23 +674,23 @@ export namespace QgridService {
       }),
     );
 
-  export async function totalCost(tokenName?: string): Promise<{ usd: number }> {
+  export async function totalCost(params?: RequestLogListParams): Promise<{ usd: number }> {
     return fetch({
       method: "GET",
-      url: `/api/qgrid/totalCost?${qs.stringify({ tokenName })}`,
+      url: `/api/qgrid/totalCost?${qs.stringify({ params })}`,
     });
   }
 
-  export const totalCostQueryOptions = (tokenName?: string) =>
+  export const totalCostQueryOptions = (params?: RequestLogListParams) =>
     queryOptions({
-      queryKey: ["Qgrid", "totalCost", tokenName],
-      queryFn: () => totalCost(tokenName),
+      queryKey: ["Qgrid", "totalCost", params],
+      queryFn: () => totalCost(params),
     });
 
-  export const useTotalCost = (tokenName?: string, options?: { enabled?: boolean }) =>
+  export const useTotalCost = (params?: RequestLogListParams, options?: { enabled?: boolean }) =>
     useRefreshable(
       useQuery({
-        ...totalCostQueryOptions(tokenName),
+        ...totalCostQueryOptions(params),
         ...options,
       }),
     );

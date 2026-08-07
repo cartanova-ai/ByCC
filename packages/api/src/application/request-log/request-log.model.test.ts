@@ -366,58 +366,132 @@ describe("RequestLogModel cost provenance", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses exact stored cost for rows with a cost source", async () => {
-    const chain = {
+  /**
+   * totalCost 는 확정 비용(SQL SUM)과 legacy 재계산(JS) 두 쿼리로 나뉜다.
+   * @param confirmedTotal SUM 쿼리가 돌려줄 micro-USD 합계
+   * @param legacyRows 재계산 대상 row 들
+   */
+  function mockTotalCostQueries(confirmedTotal: number, legacyRows: unknown[]) {
+    // subset qb 는 SELECT 를 비우고(clear) 집계/축소된 컬럼만 다시 얹는다 — 구현과 같은 체인.
+    const sumChain = {
       where: vi.fn(),
-      select: vi.fn(async () => [
-        {
-          model_name: "claude-opus-4-8",
-          input_tokens: 1_000_000,
-          output_tokens: 1_000_000,
-          cache_read_tokens: 0,
-          cache_creation_tokens: 0,
-          cache_creation_5m_tokens: null,
-          cache_creation_1h_tokens: null,
-          cost_usd: 3_000,
-          cost_source: "provider",
-        },
-      ]),
+      whereIn: vi.fn(),
+      whereRaw: vi.fn(),
+      clear: vi.fn(),
+      select: vi.fn(),
+      first: vi.fn(async () => ({ total: confirmedTotal })),
     };
-    chain.where.mockReturnValue(chain);
-    const from = vi.fn(() => chain);
+    sumChain.where.mockReturnValue(sumChain);
+    sumChain.whereIn.mockReturnValue(sumChain);
+    sumChain.whereRaw.mockReturnValue(sumChain);
+    sumChain.clear.mockReturnValue(sumChain);
+    sumChain.select.mockReturnValue(sumChain);
+
+    const legacyChain = {
+      where: vi.fn(),
+      whereIn: vi.fn(),
+      whereRaw: vi.fn(),
+      clear: vi.fn(),
+      select: vi.fn(async () => legacyRows),
+    };
+    legacyChain.where.mockReturnValue(legacyChain);
+    legacyChain.whereIn.mockReturnValue(legacyChain);
+    legacyChain.whereRaw.mockReturnValue(legacyChain);
+    legacyChain.clear.mockReturnValue(legacyChain);
+
+    const getSubsetQueries = vi
+      .fn()
+      .mockReturnValueOnce({ qb: sumChain })
+      .mockReturnValueOnce({ qb: legacyChain });
     vi.spyOn(
-      RequestLogModel as unknown as { getPuri: () => { from: typeof from } },
-      "getPuri",
-    ).mockReturnValue({ from });
+      RequestLogModel as unknown as { getSubsetQueries: typeof getSubsetQueries },
+      "getSubsetQueries",
+    ).mockImplementation(getSubsetQueries);
+    return { sumChain, legacyChain };
+  }
+
+  it("uses exact stored cost for rows with a cost source", async () => {
+    mockTotalCostQueries(3_000, []);
 
     await expect(RequestLogModel.totalCost()).resolves.toBe(0.003);
   });
 
+  it("sums confirmed cost in SQL instead of fetching those rows", async () => {
+    const { sumChain, legacyChain } = mockTotalCostQueries(3_000, []);
+
+    await RequestLogModel.totalCost();
+
+    expect(sumChain.select).toHaveBeenCalledTimes(1);
+    expect(sumChain.whereRaw).toHaveBeenCalledWith(
+      "request_logs.cost_source IS NOT NULL AND request_logs.cost_usd IS NOT NULL",
+    );
+    expect(legacyChain.whereRaw).toHaveBeenCalledWith(
+      "request_logs.cost_source IS NULL OR request_logs.cost_usd IS NULL",
+    );
+  });
+
   it("keeps TTL-aware price-table recomputation for legacy rows", async () => {
-    const chain = {
-      where: vi.fn(),
-      select: vi.fn(async () => [
-        {
-          model_name: "claude-sonnet-4-6",
-          input_tokens: 100_000,
-          output_tokens: 0,
-          cache_read_tokens: 0,
-          cache_creation_tokens: 80_000,
-          cache_creation_5m_tokens: 30_000,
-          cache_creation_1h_tokens: 50_000,
-          cost_usd: null,
-          cost_source: null,
-        },
-      ]),
-    };
-    chain.where.mockReturnValue(chain);
-    const from = vi.fn(() => chain);
-    vi.spyOn(
-      RequestLogModel as unknown as { getPuri: () => { from: typeof from } },
-      "getPuri",
-    ).mockReturnValue({ from });
+    mockTotalCostQueries(0, [
+      {
+        model_name: "claude-sonnet-4-6",
+        input_tokens: 100_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 80_000,
+        cache_creation_5m_tokens: 30_000,
+        cache_creation_1h_tokens: 50_000,
+        cost_usd: null,
+        cost_source: null,
+      },
+    ]);
 
     await expect(RequestLogModel.totalCost()).resolves.toBeCloseTo(0.4725, 10);
+  });
+
+  it("applies list filters to both cost queries so totals match the filtered list", async () => {
+    const { sumChain, legacyChain } = mockTotalCostQueries(0, []);
+
+    await RequestLogModel.totalCost({
+      num: 0,
+      page: 1,
+      project_name: "deti",
+      token_name: "openai/yds",
+      model_name: "openai/gpt-5.5",
+    });
+
+    for (const chain of [sumChain, legacyChain]) {
+      expect(chain.where).toHaveBeenCalledWith("request_logs.project_name", "deti");
+      expect(chain.where).toHaveBeenCalledWith("request_logs.token_name", "openai/yds");
+      expect(chain.where).toHaveBeenCalledWith("request_logs.model_name", "openai/gpt-5.5");
+    }
+  });
+
+  it("applies the unassigned-project filter to both cost queries", async () => {
+    const { sumChain, legacyChain } = mockTotalCostQueries(0, []);
+
+    await RequestLogModel.totalCost({ num: 0, page: 1, project_name_is_null: true });
+
+    for (const chain of [sumChain, legacyChain]) {
+      expect(chain.where).toHaveBeenCalledWith("request_logs.project_name", null);
+    }
+  });
+
+  it("adds the SQL-summed confirmed total to the recomputed legacy total", async () => {
+    mockTotalCostQueries(3_000, [
+      {
+        model_name: "claude-sonnet-4-6",
+        input_tokens: 100_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 80_000,
+        cache_creation_5m_tokens: 30_000,
+        cache_creation_1h_tokens: 50_000,
+        cost_usd: null,
+        cost_source: null,
+      },
+    ]);
+
+    await expect(RequestLogModel.totalCost()).resolves.toBeCloseTo(0.4755, 10);
   });
 });
 

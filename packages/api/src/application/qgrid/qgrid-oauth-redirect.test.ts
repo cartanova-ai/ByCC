@@ -38,16 +38,16 @@ vi.mock("../token/token.model", () => ({
     del: tokenDelMock,
     findByAccountIdentifier: findByAccountMock,
     // 실제 구현과 같은 순서(dedup → save)로 동작시켜 저장 payload 검증이 유지되게 한다.
-    replaceByAccount: async (provider: string, accountId: string | undefined, saveParams: unknown) => {
+    replaceByAccount: async (_provider: string, accountId: string | undefined, saveParams: unknown) => {
       let replacedInactive = false;
       if (accountId) {
-        const olds = (await findByAccountMock()) as { id: number; active: boolean }[];
+        const olds = (await findByAccountMock()) as unknown as { id: number; active: boolean }[];
         if (olds.length > 0) {
           replacedInactive = olds.some((o) => !o.active);
           await tokenDelMock();
         }
       }
-      await tokenSaveMock([saveParams]);
+      await (tokenSaveMock as unknown as (rows: unknown[]) => Promise<number[]>)([saveParams]);
       return { replacedInactive };
     },
   },
