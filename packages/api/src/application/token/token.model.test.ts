@@ -128,7 +128,10 @@ describe("TokenModel.deactivateIfActive", () => {
   it("deactivates in one statement that carries the last-token guard", async () => {
     const raw = mockKnex([{ rowCount: 1 }]);
 
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(true);
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toEqual({
+      deactivated: true,
+      keptAsLastActive: false,
+    });
     expect(raw).toHaveBeenCalledTimes(1);
     const sql = raw.mock.calls[0]![0] as string;
     expect(sql).toContain("UPDATE tokens SET active = false");
@@ -138,14 +141,21 @@ describe("TokenModel.deactivateIfActive", () => {
   it("returns false without a diagnostic read when the token is already inactive", async () => {
     const raw = mockKnex([{ rowCount: 0 }, { rows: [] }]);
 
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toEqual({
+      deactivated: false,
+      keptAsLastActive: false,
+    });
     expect(raw).toHaveBeenCalledTimes(2);
   });
 
   it("refuses to deactivate the provider's last active token", async () => {
     const raw = mockKnex([{ rowCount: 0 }, { rows: [{ provider: "anthropic" }] }]);
 
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
+    // 마지막 활성 토큰은 살려두되, 호출부가 systemic 실패로 알릴 수 있게 구분해 알린다.
+    await expect(TokenModel.deactivateIfActive(7)).resolves.toEqual({
+      deactivated: false,
+      keptAsLastActive: true,
+    });
     expect(raw).toHaveBeenCalledTimes(2);
   });
 });

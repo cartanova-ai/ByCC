@@ -61,7 +61,7 @@
   },
   {
     "path": "api/src/application/token/token.model.ts",
-    "checksum": "d9fd8c738b41e08ed163b7750008d2ae6792baee"
+    "checksum": "0edbc5c62608866cd819847a747377904dc718b3"
   },
   {
     "path": "api/src/application/token/token.types.ts",

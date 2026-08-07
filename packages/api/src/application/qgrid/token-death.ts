@@ -42,8 +42,11 @@ export async function deactivateAuthDeadToken(
     return false;
   }
 
-  const deactivated = await TokenModel.deactivateIfActive(token.id);
-  if (!deactivated) return false;
+  const { deactivated, keptAsLastActive } = await TokenModel.deactivateIfActive(token.id);
+  if (!deactivated) {
+    if (keptAsLastActive) notifyLastActiveTokenDying(token, reasonCode);
+    return false;
+  }
 
   logger.warn(`token deactivated (auth dead): ${token.name}(id=${token.id}) reason=${reasonCode}`);
   void notifySlack({
@@ -53,6 +56,32 @@ export async function deactivateAuthDeadToken(
     color: SLACK_COLOR.bad,
   });
   return true;
+}
+
+/**
+ * 마지막 활성 토큰이 죽었을 때의 알림 쿨다운.
+ *
+ * 이 경우 토큰은 비활성화되지 않고 살아남으므로, 뒤따르는 요청마다 같은 실패를 반복해
+ * 알림이 폭주한다. 비활성화 성공 경로가 조건부 UPDATE 로 중복을 막는 것과 달리 여기엔
+ * 상태 변화가 없어 DB 로 억제할 수 없다 — provider 단위로 시간 창을 둔다.
+ */
+const LAST_ACTIVE_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+const lastActiveAlertAt = new Map<string, number>();
+
+function notifyLastActiveTokenDying(token: DeadTokenRef, reasonCode: string): void {
+  const now = Date.now();
+  const previous = lastActiveAlertAt.get(token.provider);
+  if (previous !== undefined && now - previous < LAST_ACTIVE_ALERT_COOLDOWN_MS) return;
+  lastActiveAlertAt.set(token.provider, now);
+
+  void notifySlack({
+    title: "마지막 토큰 사망",
+    subject: token.name,
+    context:
+      `${token.provider} · ${reasonCode} · 풀이 비지 않도록 유지 중입니다. ` +
+      `전 토큰이 동시에 실패했다면 client_id 취소나 OAuth 계약 변경을 의심하세요`,
+    color: SLACK_COLOR.bad,
+  });
 }
 
 /** 로그인이 완료돼 토큰이 저장됐을 때. 신규·재로그인을 가리지 않는다. */

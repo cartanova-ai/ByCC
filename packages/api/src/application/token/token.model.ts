@@ -208,7 +208,14 @@ class TokenModelClass extends BaseModelClass<
     await this.save([saveParams]);
   }
 
-  async deactivateIfActive(id: number): Promise<boolean> {
+  /**
+   * @returns `deactivated` 는 이 호출이 실제로 비활성화를 수행했는지 — 호출부의 알림
+   *   게이트다. `keptAsLastActive` 는 마지막 활성 토큰이라 거부한 경우로, 사망 자체는
+   *   사실이지만 풀을 비우지 않으려고 살려둔 상태다(systemic 실패 신호).
+   */
+  async deactivateIfActive(
+    id: number,
+  ): Promise<{ deactivated: boolean; keptAsLastActive: boolean }> {
     const wdb = this.getPuri("w");
 
     // 활성 여부와 "마지막 남은 토큰인가"를 한 statement 안에서 판정한다. 두 조건을
@@ -221,7 +228,7 @@ class TokenModelClass extends BaseModelClass<
               WHERE peer.provider = tokens.provider AND peer.active) > 1`,
       [id],
     );
-    if ((updated.rowCount ?? 0) > 0) return true;
+    if ((updated.rowCount ?? 0) > 0) return { deactivated: true, keptAsLastActive: false };
 
     // 갱신되지 않은 이유는 둘 중 하나다: 이미 비활성이거나(정상 경쟁 결과), 마지막
     // 활성 토큰이거나. 후자는 systemic 실패 신호라 남겨야 하므로 이때만 한 번 더 읽는다.
@@ -236,8 +243,9 @@ class TokenModelClass extends BaseModelClass<
         `refusing to auto-deactivate token ${id}: last active ${survivor.provider} token — ` +
           `systemic refresh failure suspected, keeping the pool non-empty`,
       );
+      return { deactivated: false, keptAsLastActive: true };
     }
-    return false;
+    return { deactivated: false, keptAsLastActive: false };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
