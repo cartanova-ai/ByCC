@@ -4,9 +4,13 @@
  * - 메모리 캐시 (Map<id, TokenSubsetA>) 는 TokenSubscriber 가 pg LISTEN/NOTIFY 로 갱신
  * - OpenAI/Anthropic 요청은 각 provider dispatcher 로만 실행
  * - QuotaError 는 그대로 상위 전파
+ * - dispatcher 미준비는 기동 중(503)/초기화 실패(500)로 구분해 던진다
  */
 
+import { InternalServerErrorException, ServiceUnavailableException } from "sonamu";
+
 import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
+import { SD } from "../../i18n/sd.generated";
 import { type AnthropicDispatcher } from "../../utils/providers/anthropic/anthropic-dispatcher";
 import { getAccessToken } from "../../utils/providers/common/credentials";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
@@ -22,8 +26,14 @@ import { strictify } from "../../utils/providers/common/strictifier";
 import { type OpenAIDispatcher } from "../../utils/providers/openai/openai-dispatcher";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { decideConvRouting, issueConvContext } from "./conv-routing";
-import { type QueryInput, type QueryOutput, type TokenStats } from "./qgrid.types";
-import { maskToken, ProcessError, QuotaError } from "./qgrid.types";
+import {
+  maskToken,
+  ProcessError,
+  type ProviderStartupState,
+  type QueryInput,
+  type QueryOutput,
+  type TokenStats,
+} from "./qgrid.types";
 import { type TokenSubscriber } from "./token-subscriber";
 import { applyToolCallEmulation } from "./tool-emulation";
 import { buildToolCallSchema } from "./tool-emulation-schema";
@@ -38,6 +48,34 @@ export class QgridDispatcherClass {
   subscriber: TokenSubscriber | null = null;
   openaiDispatcher: OpenAIDispatcher | null = null;
   anthropicDispatcher: AnthropicDispatcher | null = null;
+
+  /**
+   * provider 별 기동 상태. dispatcher 가 없는 이유를 구분하기 위해 필요하다 —
+   * HTTP 리스닝은 dispatcher 준비보다 먼저 열리므로(sonamu.config onStart),
+   * 그 사이 들어온 요청은 "잠시 후 되는" 상태와 "재시도해도 안 되는" 상태가 다르다.
+   *
+   * - `starting`: 워커 spawn 중. dev0 기준 25 워커 × 500ms 간격이라 1~2분 걸린다 → 재시도 가능
+   * - `ready`: 정상
+   * - `failed`: start() 가 예외로 끝남 → 재시도해도 같은 결과
+   */
+  startupState: Record<"openai" | "anthropic", ProviderStartupState> = {
+    openai: "starting",
+    anthropic: "starting",
+  };
+
+  /**
+   * dispatcher 가 준비되지 않았을 때 던질 예외를 만든다.
+   *
+   * 기동 중이면 503(+Retry-After) 으로 재시도 가능함을 알리고, 초기화가 실패로 끝났으면
+   * 500 으로 재시도가 무의미함을 알린다. 이전에는 둘 다 QuotaError 였는데, 쿼터 소진이
+   * 아닌 상태를 그렇게 표현하면 호출자가 토큰 문제로 오해하고 재시도 판단도 못 한다.
+   */
+  private notReadyError(provider: "openai" | "anthropic"): Error {
+    const label = provider === "openai" ? "OpenAI" : "Anthropic";
+    return this.startupState[provider] === "failed"
+      ? new InternalServerErrorException(SD("qgrid.dispatcherFailed")(label))
+      : new ServiceUnavailableException(SD("qgrid.dispatcherStarting")(label));
+  }
 
   countOf(name: string): number {
     return this.requestCounts.get(name) ?? 0;
@@ -73,7 +111,7 @@ export class QgridDispatcherClass {
 
     // provider prefix routing: 'openai/gpt-5.4' → OpenAIDispatcher
     if (route.provider === "openai") {
-      if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+      if (!this.openaiDispatcher) throw this.notReadyError("openai");
 
       const decision = decideConvRouting(input);
       const result = await this.openaiDispatcher.generate({
@@ -105,7 +143,7 @@ export class QgridDispatcherClass {
         answerKind,
       });
     } else if (route.provider === "anthropic") {
-      if (!this.anthropicDispatcher) throw new QuotaError("Anthropic dispatcher not initialized");
+      if (!this.anthropicDispatcher) throw this.notReadyError("anthropic");
 
       const decision = decideConvRouting(input);
       const result = await this.anthropicDispatcher.generate({
@@ -142,7 +180,7 @@ export class QgridDispatcherClass {
     const answerKind = input.jsonSchema ? ("json" as const) : ("text" as const);
 
     if (route.provider === "openai") {
-      if (!this.openaiDispatcher) throw new QuotaError("OpenAI dispatcher not initialized");
+      if (!this.openaiDispatcher) throw this.notReadyError("openai");
 
       const decision = decideConvRouting(input);
       await this.openaiDispatcher.generateStream(
@@ -180,7 +218,7 @@ export class QgridDispatcherClass {
       );
       return;
     } else if (route.provider === "anthropic") {
-      if (!this.anthropicDispatcher) throw new QuotaError("Anthropic dispatcher not initialized");
+      if (!this.anthropicDispatcher) throw this.notReadyError("anthropic");
 
       const decision = decideConvRouting(input);
       await this.anthropicDispatcher.generateStream(

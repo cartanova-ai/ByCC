@@ -9,11 +9,11 @@
   },
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
-    "checksum": "5c7a95b2496ad86f6ba42fdd5d2f7068ba26bbb7"
+    "checksum": "e00440d823b10c1649a4a8f3c71f877589201b81"
   },
   {
     "path": "api/src/application/qgrid/qgrid.types.ts",
-    "checksum": "73c86a2120ab9822b6a16d66f23707a8ad13234e"
+    "checksum": "eb9b8f294d8afc98e7c9447d2d7c21cad4156b81"
   },
   {
     "path": "api/src/application/queries.generated.ts",
@@ -69,11 +69,11 @@
   },
   {
     "path": "api/src/i18n/en.ts",
-    "checksum": "c7186e9419c6faf1f6190989d23ab2fed37cd4fd"
+    "checksum": "a0b392d0b402d042dae36746424128e40dc1f544"
   },
   {
     "path": "api/src/i18n/ko.ts",
-    "checksum": "7b87d1068a03b994946867f9e16b7281eaad8685"
+    "checksum": "e4cacd469eb9eccdf475741cdff17ff84912ddfb"
   },
   {
     "path": "api/src/i18n/sd.generated.ts",
@@ -81,15 +81,15 @@
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "ce82a60c0cb534eb4b0eda70cb359ddbb74df5f6"
+    "checksum": "737a870c60f35046da69a33c99647af430e94fc3"
   },
   {
     "path": "web/src/i18n/en.ts",
-    "checksum": "d291375447c4cd0b65de3be38216f919effb1254"
+    "checksum": "a988e4e77582144f084ccf5b7796baaf0b755458"
   },
   {
     "path": "web/src/i18n/ko.ts",
-    "checksum": "4b83f7579cac76325953156d405f319ece5fe7dd"
+    "checksum": "18f7bd4afc35607a7b6404a607b1ef2d1c1cc475"
   },
   {
     "path": "web/src/i18n/sd.generated.ts",
@@ -101,7 +101,7 @@
   },
   {
     "path": "web/src/services/qgrid/qgrid.types.ts",
-    "checksum": "0ffd57481c72c363cc39821a5176247781872721"
+    "checksum": "56734fee5e108540634031e0ae0b0f60491f2466"
   },
   {
     "path": "web/src/services/request-log-step/request-log-step.types.ts",

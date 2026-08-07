@@ -56,7 +56,7 @@ describe("QgridDispatcherClass", () => {
 
     await expect(
       dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" }),
-    ).rejects.toThrow(/Anthropic dispatcher not initialized/);
+    ).rejects.toMatchObject({ statusCode: 503 });
   });
 
   it("AnthropicDispatcher 미초기화 시 queryStream 은 delta 없는 query 폴백 없이 실패한다", async () => {
@@ -71,7 +71,35 @@ describe("QgridDispatcherClass", () => {
           onError: vi.fn(),
         },
       ),
-    ).rejects.toThrow(/Anthropic dispatcher not initialized/);
+    ).rejects.toMatchObject({ statusCode: 503 });
+  });
+
+  // 기동 중과 초기화 실패는 클라이언트의 재시도 판단이 갈리는 지점이라 상태코드로 구분한다.
+  it("기동 중 미준비는 503 으로 재시도 가능함을 알린다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+
+    await expect(
+      dispatcher.query({ prompt: "hi", model: "openai/gpt-5.4" }),
+    ).rejects.toMatchObject({ statusCode: 503 });
+  });
+
+  it("초기화가 실패로 끝났으면 500 으로 재시도가 무의미함을 알린다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    dispatcher.startupState.openai = "failed";
+
+    await expect(
+      dispatcher.query({ prompt: "hi", model: "openai/gpt-5.4" }),
+    ).rejects.toMatchObject({ statusCode: 500 });
+  });
+
+  it("provider 별로 기동 상태를 따로 본다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    dispatcher.startupState.openai = "failed";
+
+    // openai 가 실패해도 anthropic 은 여전히 기동 중(재시도 가능)이다.
+    await expect(
+      dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" }),
+    ).rejects.toMatchObject({ statusCode: 503 });
   });
 
   it("provider prefix 없는 모델은 AnthropicDispatcher 로 암묵 라우팅하지 않는다", async () => {

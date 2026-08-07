@@ -794,10 +794,14 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async health(): Promise<HealthResponse> {
+    const providers = { ...QgridDispatcher.startupState };
     return {
       status: "ok",
       activeTokens: QgridDispatcher.tokens.size,
       subscriber: QgridDispatcher.subscriber?.status() ?? null,
+      // provider 별 라우팅이라 하나만 준비돼도 그 provider 요청은 처리된다.
+      ready: Object.values(providers).includes("ready"),
+      providers,
     };
   }
 }

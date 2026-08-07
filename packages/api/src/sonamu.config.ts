@@ -179,11 +179,15 @@ export default defineConfig({
 
         const started = await subscriber.start();
 
+        // 기동 상태를 남긴다 — HTTP 는 이미 열려 있어서, 준비 전 요청이 "잠시 후 되는지"
+        // "재시도해도 안 되는지"를 구분해 응답해야 한다(503 vs 500).
         try {
           const openaiDispatcher = new OpenAIDispatcher();
           await openaiDispatcher.start();
           QgridDispatcher.openaiDispatcher = openaiDispatcher;
+          QgridDispatcher.startupState.openai = "ready";
         } catch (e) {
+          QgridDispatcher.startupState.openai = "failed";
           log.warn(`openai dispatcher failed: ${(e as Error).message}`);
         }
 
@@ -191,7 +195,9 @@ export default defineConfig({
           const anthropicDispatcher = new AnthropicDispatcher();
           await anthropicDispatcher.start();
           QgridDispatcher.anthropicDispatcher = anthropicDispatcher;
+          QgridDispatcher.startupState.anthropic = "ready";
         } catch (e) {
+          QgridDispatcher.startupState.anthropic = "failed";
           log.warn(`anthropic dispatcher failed: ${(e as Error).message}`);
         }
 

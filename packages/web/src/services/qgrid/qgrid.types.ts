@@ -311,10 +311,20 @@ export const SubscriberStatus = z.object({
 });
 export type SubscriberStatus = z.infer<typeof SubscriberStatus>;
 
+export const ProviderStartupState = z.enum(["starting", "ready", "failed"]);
+export type ProviderStartupState = z.infer<typeof ProviderStartupState>;
+
 export const HealthResponse = z.object({
   status: z.string(),
   activeTokens: z.number(),
   subscriber: SubscriberStatus.nullable(),
+  // HTTP 리스닝은 dispatcher 기동보다 먼저 열린다. 200 응답만으로는 요청을 처리할 수
+  // 있는지 알 수 없어 provider 별 준비 상태를 함께 노출한다.
+  ready: z.boolean(),
+  providers: z.object({
+    openai: ProviderStartupState,
+    anthropic: ProviderStartupState,
+  }),
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 

@@ -51,6 +51,9 @@ export default {
   "error.internalServerError": "서버 오류가 발생했습니다",
   "error.notFound": "찾을 수 없습니다",
   "error.serviceUnavailable": "서비스를 사용할 수 없습니다",
+  "qgrid.dispatcherFailed": (provider: string) => `${provider} dispatcher 초기화에 실패했습니다`,
+  "qgrid.dispatcherStarting": (provider: string) =>
+    `${provider} dispatcher 기동 중입니다. 잠시 후 다시 시도해주세요`,
   "error.unauthorized": "인증이 필요합니다",
   "error.unknownSearchField": (field: string) => `구현되지 않은 검색 필드 ${field}`,
   notFound: (name: string, id: number) => `존재하지 않는 ${name} ID ${id}`,

@@ -88,6 +88,14 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 On shutdown, it stops provider dispatchers and the token subscriber.
 
+### Readiness during startup
+
+HTTP listening opens before the dispatchers finish starting, so requests can arrive while a provider is still unavailable. On dev0 that window is 1–2 minutes: 25 OpenAI workers spawn at `SPAWN_INTERVAL_MS` apart, plus codex process init.
+
+- `QgridDispatcher.startupState` tracks each provider as `starting` → `ready` or `failed`. A request for an unready provider throws `ServiceUnavailableException` (503, with a `Retry-After` header) while starting, and `InternalServerErrorException` (500) once initialization has failed — retrying helps in the first case and never in the second. Both used to be `QuotaError`, which told callers their tokens were exhausted and gave them nothing to act on.
+- `GET /api/qgrid/health` reports `ready` plus per-provider state. A 200 alone does not mean requests will succeed; read `providers` for that.
+- `handleServerError` trusts `statusCode` only on `instanceof SoException`. Sonamu's own `isSoException` is a `statusCode !== undefined` duck-type check, which would pass upstream fetch errors straight through and echo an upstream 401 as if the caller were unauthorized.
+
 ## OAuth callbacks
 
 - Anthropic OAuth: loopback dashboards use `/callback` on the qgrid server (base derived per request from `Origin`, falling back to `X-Forwarded-Host`/`Host`). Remote dashboards cannot use a public callback (client redirect-URI allowlist), so `oauthStart` returns `mode: "code"` with the console callback and the user pastes the shown `code#state` into the dashboard (`oauthComplete`). No env configuration either way; direct non-HTTP calls fall back to localhost and `PORT`.

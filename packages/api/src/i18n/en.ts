@@ -47,6 +47,9 @@ export default {
   "error.internalServerError": "Internal server error",
   "error.notFound": "Not found",
   "error.serviceUnavailable": "Service unavailable",
+  "qgrid.dispatcherFailed": (provider: string) => `${provider} dispatcher failed to initialize`,
+  "qgrid.dispatcherStarting": (provider: string) =>
+    `${provider} dispatcher is starting up. Please retry shortly`,
   "error.unauthorized": "Unauthorized",
   notFound: (name: string, id: number) => `${name} ID ${id} not found`,
   "validation.email": "Invalid email format",
