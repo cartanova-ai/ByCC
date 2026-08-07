@@ -4,7 +4,7 @@ import KeyIcon from "~icons/lucide/key-round";
 import PlusIcon from "~icons/lucide/plus";
 
 import { OAuthCodeEntry } from "./OAuthCodeEntry";
-import { type Provider, useOAuthLoginFlow } from "./use-oauth-login-flow";
+import { useOAuthLoginFlow } from "./use-oauth-login-flow";
 
 export function AddTokenModal() {
   const [open, setOpen] = useState(false);
@@ -16,8 +16,6 @@ export function AddTokenModal() {
     setName("");
     oauth.reset();
   };
-
-  const handleOAuthLogin = (provider: Provider) => void oauth.start(provider, name);
 
   const submitPastedCode = async (pastedCode: string) => {
     if (await oauth.submitCode(pastedCode)) close();
@@ -78,7 +76,7 @@ export function AddTokenModal() {
                     type="button"
                     className="w-full py-2.5 text-sm font-medium rounded-md bg-sand-900 text-white hover:bg-sand-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-2"
                     disabled={!name.trim() || oauth.loadingProvider !== null}
-                    onClick={() => handleOAuthLogin("openai")}
+                    onClick={() => void oauth.start("openai", name)}
                   >
                     {oauth.loadingProvider === "openai" ? (
                       <span className="flex items-center gap-1.5">
@@ -103,7 +101,7 @@ export function AddTokenModal() {
                     type="button"
                     className="w-full py-2.5 text-sm font-medium rounded-md border border-sand-300 text-sand-700 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-2"
                     disabled={!name.trim() || oauth.loadingProvider !== null}
-                    onClick={() => handleOAuthLogin("anthropic")}
+                    onClick={() => void oauth.start("anthropic", name)}
                   >
                     {oauth.loadingProvider === "anthropic" ? (
                       <span className="flex items-center gap-1.5">

@@ -8,6 +8,7 @@
  */
 import { getLogger } from "@logtape/logtape";
 
+import { deactivateAuthDeadToken } from "../../../application/qgrid/token-death";
 import { TokenModel } from "../../../application/token/token.model";
 import { type OpenAICredentials } from "../../../application/token/token.types";
 
@@ -110,7 +111,6 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
     // 영구 실패는 errorCode 로만 판정한다 — status 를 함께 요구하면 provider 가
     // 상태코드를 바꿀 때 판정이 조용히 멎는다.
     if (errorCode && PERMANENT_FAILURE_CODES.has(errorCode)) {
-      const { deactivateAuthDeadToken } = await import("../../../application/qgrid/token-death");
       await deactivateAuthDeadToken(
         { id: tokenId, name: token.name, provider: "openai" },
         creds.refreshToken,

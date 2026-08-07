@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { QgridService } from "@/services/services.generated";
 
@@ -7,6 +7,16 @@ export type Provider = "anthropic" | "openai";
 
 const OPENAI_POLL_INTERVAL_MS = 3000;
 const OPENAI_POLL_TIMEOUT_MS = 300_000;
+
+/** 캐시에 적재된 토큰 행 수. 폴링 조기 종료 판정에만 쓰는 근사치다. */
+function countTokens(queryClient: ReturnType<typeof useQueryClient>): number {
+  let total = 0;
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: ["Token"] })) {
+    const rows = (query.state.data as { rows?: unknown[] } | undefined)?.rows;
+    if (Array.isArray(rows)) total = Math.max(total, rows.length);
+  }
+  return total;
+}
 
 /**
  * provider별 OAuth 로그인 시작과 코드 제출을 한 곳에 모은다.
@@ -23,6 +33,16 @@ export function useOAuthLoginFlow() {
   const oauthStartMutation = QgridService.useOauthStartMutation();
   const oauthStartOpenAIMutation = QgridService.useOauthStartOpenAIMutation();
   const oauthCompleteMutation = QgridService.useOauthCompleteMutation();
+
+  // 폴링 타이머는 언마운트 시 반드시 정리한다 — 안 하면 모달을 닫거나 페이지를 떠나도
+  // 최대 5분간 계속 refetch 가 돈다.
+  const pollTimers = useRef<{ interval?: number; timeout?: number }>({});
+  const stopPolling = () => {
+    if (pollTimers.current.interval !== undefined) clearInterval(pollTimers.current.interval);
+    if (pollTimers.current.timeout !== undefined) clearTimeout(pollTimers.current.timeout);
+    pollTimers.current = {};
+  };
+  useEffect(() => stopPolling, []);
 
   const invalidateTokens = () =>
     Promise.all([
@@ -44,10 +64,20 @@ export function useOAuthLoginFlow() {
         if (popup) popup.location.href = authUrl;
         else window.open(authUrl, "_blank");
 
-        // codex 가 콜백을 처리하므로 토큰 목록이 바뀔 때까지 폴링한다.
-        const poll = setInterval(() => void invalidateTokens(), OPENAI_POLL_INTERVAL_MS);
-        setTimeout(() => {
-          clearInterval(poll);
+        // codex 가 콜백을 처리하므로 토큰이 늘어날 때까지 폴링한다. 로그인이 끝나면
+        // 바로 멈춰서, 성공한 뒤에도 남은 타임아웃 동안 계속 refetch 하지 않는다.
+        const before = countTokens(queryClient);
+        stopPolling();
+        pollTimers.current.interval = window.setInterval(() => {
+          void invalidateTokens().then(() => {
+            if (countTokens(queryClient) > before) {
+              stopPolling();
+              setLoadingProvider(null);
+            }
+          });
+        }, OPENAI_POLL_INTERVAL_MS);
+        pollTimers.current.timeout = window.setTimeout(() => {
+          stopPolling();
           setLoadingProvider(null);
         }, OPENAI_POLL_TIMEOUT_MS);
         return;
@@ -86,6 +116,7 @@ export function useOAuthLoginFlow() {
   };
 
   const reset = () => {
+    stopPolling();
     setLoadingProvider(null);
     setCodeEntry(false);
     oauthCompleteMutation.reset();
@@ -94,7 +125,6 @@ export function useOAuthLoginFlow() {
   return {
     loadingProvider,
     codeEntry,
-    setCodeEntry,
     start,
     submitCode,
     reset,

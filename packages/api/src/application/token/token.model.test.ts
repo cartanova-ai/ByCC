@@ -125,39 +125,27 @@ describe("TokenModel.deactivateIfActive", () => {
     return raw;
   }
 
-  it("deactivates an active token when the provider has other active tokens", async () => {
-    const raw = mockKnex([
-      { rows: [{ provider: "anthropic" }] },
-      { rows: [{ count: "3" }] },
-      { rowCount: 1 },
-    ]);
+  it("deactivates in one statement that carries the last-token guard", async () => {
+    const raw = mockKnex([{ rowCount: 1 }]);
 
     await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(true);
-    expect(raw).toHaveBeenCalledTimes(3);
-    expect(raw.mock.calls[2]![0]).toContain("UPDATE tokens SET active = false");
-  });
-
-  it("returns false without updating when the token is already inactive", async () => {
-    const raw = mockKnex([{ rows: [] }]);
-
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
     expect(raw).toHaveBeenCalledTimes(1);
+    const sql = raw.mock.calls[0]![0] as string;
+    expect(sql).toContain("UPDATE tokens SET active = false");
+    expect(sql).toContain("count(*)");
   });
 
-  it("refuses to deactivate the provider's last active token", async () => {
-    const raw = mockKnex([{ rows: [{ provider: "anthropic" }] }, { rows: [{ count: "1" }] }]);
+  it("returns false without a diagnostic read when the token is already inactive", async () => {
+    const raw = mockKnex([{ rowCount: 0 }, { rows: [] }]);
 
     await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
     expect(raw).toHaveBeenCalledTimes(2);
   });
 
-  it("returns false when the conditional update loses the race", async () => {
-    mockKnex([
-      { rows: [{ provider: "openai" }] },
-      { rows: [{ count: "2" }] },
-      { rowCount: 0 },
-    ]);
+  it("refuses to deactivate the provider's last active token", async () => {
+    const raw = mockKnex([{ rowCount: 0 }, { rows: [{ provider: "anthropic" }] }]);
 
     await expect(TokenModel.deactivateIfActive(7)).resolves.toBe(false);
+    expect(raw).toHaveBeenCalledTimes(2);
   });
 });

@@ -73,6 +73,10 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
     setDeleteTarget(null);
   };
 
+  const submitReloginCode = async (pastedCode: string) => {
+    if (await oauth.submitCode(pastedCode)) oauth.reset();
+  };
+
   const openEdit = (token: Token) => {
     setEditTarget(token);
     setEditName(token.name ?? "");
@@ -237,11 +241,7 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
               <OAuthCodeEntry
                 isPending={oauth.completeMutation.isPending}
                 isError={oauth.completeMutation.isError}
-                onSubmit={(code) =>
-                  void oauth.submitCode(code).then((ok) => {
-                    if (ok) oauth.reset();
-                  })
-                }
+                onSubmit={(code) => void submitReloginCode(code)}
                 onRestart={oauth.reset}
               />
             </div>

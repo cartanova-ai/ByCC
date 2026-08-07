@@ -185,39 +185,65 @@ class TokenModelClass extends BaseModelClass<
    * client_id 취소나 OAuth 계약 변경처럼 전 토큰이 동시에 실패하는 상황에서 풀이
    * 통째로 비는 것을 막는 안전판이다.
    */
+  /**
+   * 같은 계정의 기존 토큰을 지우고 새로 저장한다(로그인·재로그인 공통 경로).
+   *
+   * @returns 대체된 기존 토큰 중 비활성이 있었는지 — 호출부의 복구 알림 게이트.
+   *   provider 응답에 계정 식별자가 없으면 dedup 자체가 불가능하므로 경고만 남기고
+   *   중복 제거 없이 저장한다(죽은 row 가 남는다).
+   */
+  async replaceByAccount(
+    provider: string,
+    accountId: string | undefined,
+    saveParams: TokenSaveParams,
+  ): Promise<{ replacedInactive: boolean }> {
+    let replacedInactive = false;
+    if (accountId) {
+      const oldEntries = await this.findByAccountIdentifier("A", provider, accountId);
+      if (oldEntries.length > 0) {
+        replacedInactive = oldEntries.some((o) => !o.active);
+        await this.del(oldEntries.map((o) => o.id));
+      }
+    } else {
+      logger.warn(
+        `${provider} login without account identifier: dedup skipped for ${saveParams.name ?? "unnamed"}`,
+      );
+    }
+
+    await this.save([saveParams]);
+    return { replacedInactive };
+  }
+
   async deactivateIfActive(id: number): Promise<boolean> {
     const wdb = this.getPuri("w");
-    const knex = wdb.knex;
 
-    const target = (
-      await knex.raw<{ rows: { provider: string }[] }>(
+    // 활성 여부와 "마지막 남은 토큰인가"를 한 statement 안에서 판정한다. 두 조건을
+    // 따로 읽고 나중에 갱신하면 그 사이에 다른 인스턴스가 같은 provider 의 토큰을
+    // 비활성화해 풀이 통째로 빌 수 있다.
+    const updated = await wdb.knex.raw<{ rowCount: number }>(
+      `UPDATE tokens SET active = false
+       WHERE id = ? AND active = true
+         AND (SELECT count(*) FROM tokens peer
+              WHERE peer.provider = tokens.provider AND peer.active) > 1`,
+      [id],
+    );
+    if ((updated.rowCount ?? 0) > 0) return true;
+
+    // 갱신되지 않은 이유는 둘 중 하나다: 이미 비활성이거나(정상 경쟁 결과), 마지막
+    // 활성 토큰이거나. 후자는 systemic 실패 신호라 남겨야 하므로 이때만 한 번 더 읽는다.
+    const survivor = (
+      await wdb.knex.raw<{ rows: { provider: string }[] }>(
         "SELECT provider FROM tokens WHERE id = ? AND active = true",
         [id],
       )
     ).rows[0];
-    if (!target) return false;
-
-    const remaining = Number(
-      (
-        await knex.raw<{ rows: { count: string }[] }>(
-          "SELECT count(*) AS count FROM tokens WHERE provider = ? AND active = true",
-          [target.provider],
-        )
-      ).rows[0]?.count ?? 0,
-    );
-    if (remaining <= 1) {
+    if (survivor) {
       logger.error(
-        `refusing to auto-deactivate token ${id}: last active ${target.provider} token — ` +
+        `refusing to auto-deactivate token ${id}: last active ${survivor.provider} token — ` +
           `systemic refresh failure suspected, keeping the pool non-empty`,
       );
-      return false;
     }
-
-    const updated = await knex.raw<{ rowCount: number }>(
-      "UPDATE tokens SET active = false WHERE id = ? AND active = true",
-      [id],
-    );
-    return (updated.rowCount ?? 0) > 0;
+    return false;
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })

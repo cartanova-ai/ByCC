@@ -606,25 +606,9 @@ class QgridFrameClass extends BaseFrameClass {
       pending.redirectUri,
     );
 
-    let replacedInactive = false;
-    if (tokens.accountUuid) {
-      const oldEntries = await TokenModel.findByAccountIdentifier(
-        "A",
-        "anthropic",
-        tokens.accountUuid,
-      );
-      if (oldEntries.length > 0) {
-        replacedInactive = oldEntries.some((o) => !o.active);
-        await TokenModel.del(oldEntries.map((o) => o.id));
-      }
-    } else {
-      // 식별자가 없으면 dedup 이 통째로 스킵돼 죽은 row 가 남고 복구도 감지되지 않는다.
-      oauthLogger.warn(
-        `anthropic login without account identifier: dedup skipped for ${pending.name}`,
-      );
-    }
-
-    await TokenModel.save([
+    const { replacedInactive } = await TokenModel.replaceByAccount(
+      "anthropic",
+      tokens.accountUuid,
       {
         provider: "anthropic",
         credentials: {
@@ -635,7 +619,7 @@ class QgridFrameClass extends BaseFrameClass {
         },
         name: pending.name,
       },
-    ]);
+    );
 
     if (replacedInactive) notifyTokenRecovered(pending.name, "anthropic");
   }
@@ -665,33 +649,17 @@ class QgridFrameClass extends BaseFrameClass {
     QgridDispatcher.openaiDispatcher
       .completeBrowserLogin()
       .then(async (creds) => {
-        let replacedInactive = false;
-        if (creds.accountId) {
-          const oldEntries = await TokenModel.findByAccountIdentifier(
-            "A",
-            "openai",
-            creds.accountId,
-          );
-          if (oldEntries.length > 0) {
-            replacedInactive = oldEntries.some((o) => !o.active);
-            await TokenModel.del(oldEntries.map((o) => o.id));
-          }
-        } else {
-          oauthLogger.warn(`openai login without account identifier: dedup skipped for ${name}`);
-        }
-        await TokenModel.save([
-          {
-            provider: "openai",
-            credentials: {
-              accessToken: creds.accessToken,
-              refreshToken: creds.refreshToken,
-              idToken: creds.idToken,
-              accessTokenExpiresAt: Date.now() + 10 * 24 * 3600 * 1000,
-              accountId: creds.accountId,
-            },
-            name,
+        const { replacedInactive } = await TokenModel.replaceByAccount("openai", creds.accountId, {
+          provider: "openai",
+          credentials: {
+            accessToken: creds.accessToken,
+            refreshToken: creds.refreshToken,
+            idToken: creds.idToken,
+            accessTokenExpiresAt: Date.now() + 10 * 24 * 3600 * 1000,
+            accountId: creds.accountId,
           },
-        ]);
+          name,
+        });
         logger.info(`OpenAI token saved for ${name}`);
         if (replacedInactive) notifyTokenRecovered(name, "openai");
       })
