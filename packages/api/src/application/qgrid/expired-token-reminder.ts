@@ -21,6 +21,20 @@ const logger = getLogger(["qgrid", "expired-reminder"]);
 
 const MINUTE_MS = 60_000;
 
+export type ExpiredTokenReminderDeps = {
+  findInactive: () => Promise<{ name: string | null; provider: string }[]>;
+  getSlackUserMap: () => Map<string, string>;
+  readSetting: typeof getSetting;
+  sendSlack: typeof notifySlack;
+};
+
+const defaultDeps: ExpiredTokenReminderDeps = {
+  findInactive: () => TokenModel.findInactive("A"),
+  getSlackUserMap,
+  readSetting: getSetting,
+  sendSlack: notifySlack,
+};
+
 /**
  * 1건이면 제목(subject)에 토큰명이 이미 있으므로 본문에서는 뺀다 — 같은 이름을 두 번 쓰면
  * 읽는 사람이 다른 정보인 줄 알고 한 번 더 본다. 여러 건이면 제목이 건수라 본문에 남긴다.
@@ -39,11 +53,13 @@ export function buildReminderContext(
   return [...lines, "재로그인이 필요합니다"].filter(Boolean).join("\n");
 }
 
-async function sendReminder(userMap: Map<string, string>): Promise<void> {
-  const inactive = await TokenModel.findInactive("A");
+async function sendReminder(deps: ExpiredTokenReminderDeps): Promise<void> {
+  const inactive = await deps.findInactive();
   if (inactive.length === 0) return;
 
-  await notifySlack({
+  const userMap = deps.getSlackUserMap();
+
+  await deps.sendSlack({
     // 만료 순간 알림과 같은 제목을 쓴다. 같은 사건이므로 다른 이름을 붙이면 별개 문제로 읽힌다.
     title: "세션 만료",
     subject: inactive.length > 1 ? `${inactive.length}건` : (inactive[0]!.name ?? "unnamed"),
@@ -54,29 +70,40 @@ async function sendReminder(userMap: Map<string, string>): Promise<void> {
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
+function scheduleExpiredTokenReminder(runNow: boolean, deps: ExpiredTokenReminderDeps): void {
+  stopExpiredTokenReminder();
+
+  const minutes = Number(
+    deps.readSetting("slack.expiryReminderMinutes", "SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES") ?? 0,
+  );
+  if (!Number.isFinite(minutes) || minutes <= 0) return;
+
+  logger.info(
+    `expired token reminder every ${minutes}m (${deps.getSlackUserMap().size} user mappings)`,
+  );
+
+  const run = () =>
+    sendReminder(deps).catch((e) => logger.warn(`reminder failed: ${(e as Error).message}`));
+
+  if (runNow) void run();
+  timer = setInterval(run, minutes * MINUTE_MS);
+}
+
 /**
  * `SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES` 가 양수일 때만 켜진다. 미설정·0 이면 비활성.
  *
  * 인스턴스가 여러 개면 각자 보낸다. 만료 순간 알림과 달리 상태 변화가 없어 DB 로 억제할 수
  * 없고, 하루 몇 건 수준이라 중복을 감수하는 편이 잠금 장치를 두는 것보다 낫다.
  */
-export function startExpiredTokenReminder(): void {
-  const minutes = Number(
-    getSetting("slack.expiryReminderMinutes", "SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES") ?? 0,
-  );
-  if (!Number.isFinite(minutes) || minutes <= 0) return;
-
-  const userMap = getSlackUserMap();
-  logger.info(`expired token reminder every ${minutes}m (${userMap.size} user mappings)`);
-
-  const run = () =>
-    sendReminder(userMap).catch((e) => logger.warn(`reminder failed: ${(e as Error).message}`));
-
+export function startExpiredTokenReminder(deps: ExpiredTokenReminderDeps = defaultDeps): void {
   // 기동 직후에도 한 번 보낸다. 재기동은 배포나 장애 복구 때 일어나는데, 그 시점에 이미
   // 만료된 토큰이 있으면 첫 주기가 돌 때까지 조용한 것이 이상하다.
-  void run();
+  scheduleExpiredTokenReminder(true, deps);
+}
 
-  timer = setInterval(run, minutes * MINUTE_MS);
+/** 설정 변경 시 기존 타이머만 새 주기로 교체한다. 저장 자체가 알림을 보내지는 않는다. */
+export function rescheduleExpiredTokenReminder(deps: ExpiredTokenReminderDeps = defaultDeps): void {
+  scheduleExpiredTokenReminder(false, deps);
 }
 
 export function stopExpiredTokenReminder(): void {

@@ -69,8 +69,8 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 | `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `3` when autoscaling | Maximum workers per active OpenAI token. It cannot be lower than the resolved minimum and is hard-capped at 20. When autoscaling is disabled, the maximum equals the minimum. |
 | `QGRID_OPENAI_SCALE_INTERVAL_MS` | `5000` | OpenAI pool health, idle-thread cleanup, and demand autoscaling evaluation interval. Clamped to 250..300000 ms. |
 | `QGRID_OPENAI_SCALE_DOWN_IDLE_MS` | `600000` | Idle time before an excess worker becomes eligible for scale-down. Clamped to 1000 ms..24 hours. |
-| `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Refuse scale-up when estimated qgrid worker RSS would exceed this value. Estimate: `0.71 + 0.157 * totalWorkerCount` GiB. |
-| `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Refuse scale-up when current host available memory is below this value. |
+| `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Refuse scale-up when estimated qgrid worker RSS would exceed this value. Estimate: `0.71 + 0.157 * totalWorkerCount` GiB. Clamped to 1..32 GiB; the upper bound is an operator-typo guard, not an OOM-safety guarantee. |
+| `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Refuse scale-up when current host available memory is below this value. Clamped to 0..64 GiB. |
 | `QGRID_OPENAI_THREAD_REUSE` | enabled | Set to `"false"` to disable OpenAI thread reuse and force cold thread behavior. |
 | `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic streaming calls | Claude Code structured-output retry count for streaming only, clamped to at least 1 by qgrid. Non-streaming `generate` leaves the variable unset and uses Claude Code's default retry budget. |
 
@@ -95,6 +95,10 @@ Some env values are editable at runtime through the dashboard's Settings page, b
 - Editable: OpenAI autoscale and min/max workers per token, the worker memory guards, the Slack expiry-reminder interval, and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.schema.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart.
 - Not editable: anything needed before the server can read its own database (`QGRID_DB_*`, `HOST`, `PORT`, `NODE_ENV`). These are exposed read-only on the same page so an operator can confirm which environment they are looking at; the DB password is masked.
 - Worker settings are marked `restart` because `resolveOpenAIWorkerPoolConfig` is called once in the dispatcher constructor. Changing them writes to the DB but does not resize a running pool.
+- Slack channel, bot-token, and user-map changes are read on the next notification. Changing the expiry-reminder interval replaces the current timer immediately without sending a notification merely because the setting changed; process boot still performs the intended immediate reminder run.
+- `immediate` means the API process that handled the update. The in-memory settings cache is not propagated to sibling processes; multi-instance deployments need a separate settings-change transport before treating the label as cluster-wide.
+- The public settings API exposes the curated list/set/reset methods only. Keep generic Sonamu `save`/`del` methods internal so callers cannot bypass key validation, cache updates, or runtime change hooks.
+- The settings response returns the Slack bot token in full so the authenticated dashboard can support its reveal toggle. Treat that endpoint as an operator-only surface at the deployment boundary; dev0 relies on Caddy authentication for the dashboard. The database password remains masked and is never returned in full.
 
 ### Readiness during startup
 

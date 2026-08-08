@@ -27,7 +27,7 @@ export const SettingItem = z.object({
   label: z.string(),
   kind: SettingKind,
   applies: SettingApplies,
-  /** 현재 적용 중인 값. secret 은 마스킹된 상태로 내려간다. */
+  /** 현재 적용 중인 값. 눈 토글을 지원하기 위해 secret 도 원본으로 내려간다. */
   value: z.string(),
   /** 이 값이 어디서 왔는지. 화면에서 출처를 보여줘야 "왜 안 바뀌지"가 없다. */
   source: SettingSource,

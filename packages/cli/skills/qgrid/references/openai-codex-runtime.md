@@ -34,7 +34,7 @@ Autoscaling is enabled unless `QGRID_OPENAI_AUTOSCALE` is `"false"` or `"0"`. It
 - estimated qgrid worker RSS: `0.71 + 0.157 * totalWorkerCount` GiB, limited to 16 GiB by default;
 - current host available memory at scale-up evaluation time, required to be at least 20 GiB by default.
 
-All sizing and memory limits can be overridden with the environment variables listed in `cli-env-and-server-boot.md`.
+All sizing and memory limits can be configured within the bounds listed in `cli-env-and-server-boot.md`.
 
 Pool health maintenance is separate from demand autoscaling:
 

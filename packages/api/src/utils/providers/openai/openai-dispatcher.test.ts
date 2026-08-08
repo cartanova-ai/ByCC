@@ -251,6 +251,18 @@ describe("OpenAIDispatcher worker capacity", () => {
     expect(estimateOpenAIWorkerRssGiB(50)).toBeCloseTo(8.56, 2);
     expect(estimateOpenAIWorkerRssGiB(60)).toBeCloseTo(10.13, 2);
   });
+
+  it("clamps memory guard inputs to the 64 GiB host policy", () => {
+    expect(
+      resolveOpenAIWorkerPoolConfig({
+        QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB: "999",
+        QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB: "999",
+      }),
+    ).toMatchObject({
+      maxEstimatedRssGiB: 32,
+      minHostAvailableGiB: 64,
+    });
+  });
 });
 
 describe("OpenAIDispatcher monit stats", () => {

@@ -38,9 +38,12 @@ export type SlackNotification = {
   now?: Date;
 };
 
-export async function notifySlack(notification: SlackNotification): Promise<void> {
-  const botToken = getSetting("slack.botToken", "SLACK_BOT_TOKEN");
-  const channel = getSetting("slack.channelId", "SLACK_CHANNEL_ID");
+export async function notifySlack(
+  notification: SlackNotification,
+  readSetting: typeof getSetting = getSetting,
+): Promise<void> {
+  const botToken = readSetting("slack.botToken", "SLACK_BOT_TOKEN");
+  const channel = readSetting("slack.channelId", "SLACK_CHANNEL_ID");
   const { title, subject, context, color, urgent, now } = notification;
   if (!botToken || !channel) {
     logger.debug(`slack not configured, skipping notification: ${title} ${subject ?? ""}`);

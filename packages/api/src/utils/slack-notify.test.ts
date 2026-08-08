@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isQuietHours } from "./quiet-hours";
-import { notifySlack, SLACK_COLOR } from "./slack-notify";
+import { notifySlack, SLACK_COLOR, type SlackNotification } from "./slack-notify";
 
-// 설정 저장소는 모듈 수준 캐시를 들고 있어 다른 테스트 파일과 상태가 섞인다. 조회 결과만
-// 고정해 이 파일이 프로세스 상태에 기대지 않게 한다.
-const { settingMock } = vi.hoisted(() => ({ settingMock: vi.fn() }));
-vi.mock("../application/setting/setting.store", () => ({ getSetting: settingMock }));
+const settingMock = vi.fn();
+
+const notify = (notification: SlackNotification) => notifySlack(notification, settingMock);
 
 /** 한국 시간을 UTC 로 표현한다 — dev0 가 UTC 라 이 변환이 실제 운영 조건이다. */
 function seoul(iso: string): Date {
@@ -33,7 +32,7 @@ describe("notifySlack", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-    await notifySlack({
+    await notify({
       title: "토큰 추가",
       subject: "anthropic/test-token",
       context: "anthropic · 요청 처리에 사용됩니다",
@@ -72,7 +71,7 @@ describe("notifySlack", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-    await notifySlack({ title: "제목만", now: WORKING_HOURS });
+    await notify({ title: "제목만", now: WORKING_HOURS });
 
     const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string) as {
       text?: string;
@@ -89,7 +88,7 @@ describe("notifySlack", () => {
     settingMock.mockReturnValue(undefined);
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    await expect(notifySlack({ title: "hello", now: WORKING_HOURS })).resolves.toBeUndefined();
+    await expect(notify({ title: "hello", now: WORKING_HOURS })).resolves.toBeUndefined();
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -99,19 +98,19 @@ describe("notifySlack", () => {
       new Response(JSON.stringify({ ok: false, error: "not_in_channel" })),
     );
 
-    await expect(notifySlack({ title: "hello", now: WORKING_HOURS })).resolves.toBeUndefined();
+    await expect(notify({ title: "hello", now: WORKING_HOURS })).resolves.toBeUndefined();
   });
 
   it("swallows network and timeout failures", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("timed out"));
 
-    await expect(notifySlack({ title: "hello", now: WORKING_HOURS })).resolves.toBeUndefined();
+    await expect(notify({ title: "hello", now: WORKING_HOURS })).resolves.toBeUndefined();
   });
 
   it("조용 시간에는 보통 알림을 보내지 않는다", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    await notifySlack({ title: "세션 만료", now: seoul("2026-08-05T22:00:00") });
+    await notify({ title: "세션 만료", now: seoul("2026-08-05T22:00:00") });
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -122,7 +121,7 @@ describe("notifySlack", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
-    await notifySlack({
+    await notify({
       title: "마지막 토큰 사망",
       urgent: true,
       now: seoul("2026-08-05T22:00:00"),
@@ -141,6 +140,7 @@ describe("isQuietHours", () => {
 
   it("평일 20시부터 다음날 8시까지 조용하다", () => {
     expect(isQuietHours(seoul("2026-08-05T20:00:00"))).toBe(true);
+    expect(isQuietHours(seoul("2026-08-06T00:00:00"))).toBe(true);
     expect(isQuietHours(seoul("2026-08-06T07:59:00"))).toBe(true);
     expect(isQuietHours(seoul("2026-08-06T08:00:00"))).toBe(false);
   });

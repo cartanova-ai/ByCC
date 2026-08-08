@@ -20,6 +20,8 @@ qgrid dashboard work is usually a Sonamu API/model/generated-client/web change, 
 - i18n generated files may change when entity labels or static data change.
 - Web components under `packages/web/src/components/qgrid` consume generated API shapes.
 - The main dashboard sidebar version should stay synced to `packages/cli/package.json`. `packages/web/vite.config.ts` reads that package version and exposes it as `__QGRID_CLI_VERSION__`; `Sidebar.tsx` displays it.
+- Runtime settings use the curated `listSettings`, `setSetting`, and `resetSetting` API methods. Do not expose the model's generic `save` or `del` methods: they bypass the settings schema validation, process-local cache update, and runtime change handler.
+- The Slack bot token is returned to the authenticated settings dashboard for its reveal toggle. Preserve the deployment authentication boundary when changing this response; do not describe the value as masked unless the API contract is changed to match.
 
 ## Migration workflow
 

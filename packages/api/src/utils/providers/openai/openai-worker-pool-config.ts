@@ -1,4 +1,8 @@
-import { SETTING_DEFS } from "../../../application/setting/setting.schema";
+import {
+  MAX_OPENAI_ESTIMATED_RSS_GIB,
+  MAX_OPENAI_MIN_HOST_AVAILABLE_GIB,
+  SETTING_DEFS,
+} from "../../../application/setting/setting.schema";
 import { getSetting } from "../../../application/setting/setting.store";
 
 export const MAX_OPENAI_WORKERS_PER_TOKEN = 20;
@@ -29,17 +33,23 @@ function boundedInteger(
   return Math.max(min, Math.min(Math.floor(parsed), max));
 }
 
-function boundedNumber(value: string | undefined, fallback: number, min: number): number {
+function boundedNumber(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, parsed);
+  return Math.max(min, Math.min(parsed, max));
 }
 
 /**
  * 설정 저장소(DB) 를 먼저 보고 없으면 env 로 떨어지는 조회 객체.
  *
  * 기존 파싱 로직이 `env[KEY]` 형태를 전제하므로, 소스만 바꿔 끼우고 검증·기본값 처리는
- * 그대로 둔다. 테스트는 `env` 인자에 순수한 맵을 넘겨 저장소를 우회한다.
+ * 그대로 둔다. `get` 접근만 지원하므로 `in`이나 `Object.keys()`로 조회하지 않는다. 테스트는
+ * `env` 인자에 순수한 맵을 넘겨 저장소를 우회한다.
  */
 function settingsBackedEnv(): Record<string, string | undefined> {
   return new Proxy({} as Record<string, string | undefined>, {
@@ -82,8 +92,18 @@ export function resolveOpenAIWorkerPoolConfig(
       1_000,
       24 * 60 * 60_000,
     ),
-    maxEstimatedRssGiB: boundedNumber(env.QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB, 16, 1),
-    minHostAvailableGiB: boundedNumber(env.QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB, 20, 0),
+    maxEstimatedRssGiB: boundedNumber(
+      env.QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB,
+      16,
+      1,
+      MAX_OPENAI_ESTIMATED_RSS_GIB,
+    ),
+    minHostAvailableGiB: boundedNumber(
+      env.QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB,
+      20,
+      0,
+      MAX_OPENAI_MIN_HOST_AVAILABLE_GIB,
+    ),
   };
 }
 

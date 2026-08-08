@@ -36,18 +36,6 @@ export function mentionFor(tokenName: string | null, userMap: Map<string, string
   return userId ? `<@${userId}>` : "";
 }
 
-/**
- * 환경변수는 프로세스 수명 동안 고정이라 매번 파싱할 이유가 없다. 사망 알림은 요청 경로에서
- * 호출되므로 캐시해 둔다.
- */
-let cached: Map<string, string> | null = null;
-
-export function getSlackUserMap(): Map<string, string> {
-  cached ??= parseSlackUserMap(getSetting("slack.userMap", "SLACK_USER_MAP"));
-  return cached;
-}
-
-/** 테스트에서 env 를 바꿔 끼울 때 쓴다. */
-export function resetSlackUserMapCache(): void {
-  cached = null;
+export function getSlackUserMap(readSetting: typeof getSetting = getSetting): Map<string, string> {
+  return parseSlackUserMap(readSetting("slack.userMap", "SLACK_USER_MAP"));
 }

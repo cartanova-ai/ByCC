@@ -34,12 +34,7 @@ import {
   RequestLogStepSaveParams,
 } from "./request-log-step/request-log-step.types";
 import { RequestLogListParams, RequestLogSaveParams } from "./request-log/request-log.types";
-import {
-  SettingListParams,
-  SettingSaveParams,
-  SettingsResponse,
-  SettingApplies,
-} from "./setting/setting.types";
+import { SettingListParams, SettingsResponse, SettingApplies } from "./setting/setting.types";
 import {
   TokenSubsetKey,
   TokenSubsetMapping,
@@ -292,32 +287,6 @@ export namespace SettingService {
         ...options,
       }),
     );
-
-  export async function save(spa: SettingSaveParams[]): Promise<number[]> {
-    return fetch({
-      method: "POST",
-      url: `/api/setting/save`,
-      data: { spa },
-    });
-  }
-
-  export const useSaveMutation = () =>
-    useMutation({
-      mutationFn: (params: { spa: SettingSaveParams[] }) => save(params.spa),
-    });
-
-  export async function del(ids: number[]): Promise<number> {
-    return fetch({
-      method: "POST",
-      url: `/api/setting/del`,
-      data: { ids },
-    });
-  }
-
-  export const useDelMutation = () =>
-    useMutation({
-      mutationFn: (params: { ids: number[] }) => del(params.ids),
-    });
 
   export async function getSettingList(): Promise<SettingsResponse> {
     return fetch({

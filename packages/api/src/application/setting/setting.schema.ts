@@ -28,6 +28,10 @@ export type SettingDef = {
   help?: string;
 };
 
+/** 64 GiB 운영 호스트에서 세 자리 오입력을 막는 설정 상한. 안전을 보장하는 값은 아니다. */
+export const MAX_OPENAI_ESTIMATED_RSS_GIB = 32;
+export const MAX_OPENAI_MIN_HOST_AVAILABLE_GIB = 64;
+
 export const SETTING_DEFS: SettingDef[] = [
   {
     key: "openai.autoscale",
@@ -71,7 +75,8 @@ export const SETTING_DEFS: SettingDef[] = [
     kind: "number",
     applies: "restart",
     min: 1,
-    help: "이 추정치를 넘기면 워커를 더 늘리지 않습니다",
+    max: MAX_OPENAI_ESTIMATED_RSS_GIB,
+    help: "이 추정치를 넘기면 워커를 더 늘리지 않습니다. 올릴수록 OOM 위험이 커지며 상한은 오입력 방지용입니다",
   },
   {
     key: "openai.minHostAvailableGiB",
@@ -82,6 +87,8 @@ export const SETTING_DEFS: SettingDef[] = [
     kind: "number",
     applies: "restart",
     min: 0,
+    max: MAX_OPENAI_MIN_HOST_AVAILABLE_GIB,
+    help: "호스트 여유가 이 값 아래면 스케일업을 멈춥니다. 확장을 끄려면 오토스케일을 끄세요",
   },
   {
     key: "slack.expiryReminderMinutes",
@@ -165,8 +172,3 @@ export function maskSecret(value: string): string {
   if (value.length <= 12) return "***";
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
-
-export const SETTING_GROUP_LABELS: Record<SettingGroup, string> = {
-  openai: "OpenAI 워커",
-  slack: "Slack 알림",
-};

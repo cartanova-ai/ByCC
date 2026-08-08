@@ -132,7 +132,6 @@ class SettingModelClass extends BaseModelClass<
     });
   }
 
-  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async save(spa: SettingSaveParams[]): Promise<number[]> {
     const wdb = this.getPuri("w");
 
@@ -149,7 +148,6 @@ class SettingModelClass extends BaseModelClass<
     });
   }
 
-  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"], guards: ["admin"] })
   async del(ids: number[]): Promise<number> {
     const wdb = this.getPuri("w");
 
@@ -209,8 +207,8 @@ class SettingModelClass extends BaseModelClass<
         label: def.label,
         kind: def.kind,
         applies: def.applies,
-        // secret 도 원본을 내려보낸다 — 화면에서 기본 마스킹하고 토글로 확인한다.
-        // 대시보드에 인증이 없으므로 이 응답은 접근 가능한 사람 모두가 볼 수 있다.
+        // 눈 토글을 위해 secret 도 원본을 내려보낸다. 이 엔드포인트는 배포 경계에서 인증해야
+        // 하며, dev0 는 Caddy 인증을 통과한 운영자만 접근할 수 있다.
         value: effective,
         source,
         min: def.min ?? null,

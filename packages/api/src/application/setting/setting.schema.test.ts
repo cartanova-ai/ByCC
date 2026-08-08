@@ -63,4 +63,18 @@ describe("SETTING_DEFS", () => {
   it("정의되지 않은 키는 찾지 못한다", () => {
     expect(findSettingDef("nope.bad")).toBeUndefined();
   });
+
+  it("64 GiB 호스트 기준 메모리 설정의 오입력 상한을 둔다", () => {
+    const rss = findSettingDef("openai.maxEstimatedRssGiB")!;
+    const available = findSettingDef("openai.minHostAvailableGiB")!;
+
+    expect(rss.max).toBe(32);
+    expect(available.max).toBe(64);
+    expect(validateSettingValue(rss, "32")).toMatchObject({ ok: true });
+    expect(validateSettingValue(rss, "32.5")).toMatchObject({ ok: false });
+    expect(validateSettingValue(available, "64")).toMatchObject({ ok: true });
+    expect(validateSettingValue(available, "64.5")).toMatchObject({ ok: false });
+    expect(rss.help).toContain("OOM");
+    expect(available.help).toContain("오토스케일");
+  });
 });

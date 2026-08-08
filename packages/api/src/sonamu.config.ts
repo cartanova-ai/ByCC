@@ -8,6 +8,7 @@ import { drivers as cacheDrivers, store } from "sonamu/cache";
 
 import { monitLogSink } from "./application/monit/log-buffer";
 import {
+  rescheduleExpiredTokenReminder,
   startExpiredTokenReminder,
   stopExpiredTokenReminder,
 } from "./application/qgrid/expired-token-reminder";
@@ -15,7 +16,7 @@ import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
 import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
-import { loadSettings } from "./application/setting/setting.store";
+import { loadSettings, setSettingChangeHandler } from "./application/setting/setting.store";
 import { handleServerError } from "./server-error-handler";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
@@ -173,6 +174,10 @@ export default defineConfig({
 
         // dispatcher 가 생성자에서 워커 설정을 읽으므로 그 전에 올려야 한다.
         await loadSettings();
+        // 런타임 설정 소비자를 상위 계층에서 연결해 setting 모듈이 qgrid 를 역참조하지 않게 한다.
+        setSettingChangeHandler((key) => {
+          if (key === "slack.expiryReminderMinutes") rescheduleExpiredTokenReminder();
+        });
 
         let triggerReady = true;
         try {
@@ -225,6 +230,7 @@ export default defineConfig({
       onShutdown: async () => {
         const log = getLogger(["qgrid", "startup"]);
         stopExpiredTokenReminder();
+        setSettingChangeHandler(null);
         if (QgridDispatcher.openaiDispatcher) {
           await QgridDispatcher.openaiDispatcher.stop();
         }
