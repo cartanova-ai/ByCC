@@ -53,9 +53,12 @@ export default {
   "error.serviceUnavailable": "서비스를 사용할 수 없습니다",
   "setting.invalidValue": (reason: string) => `설정 값이 올바르지 않습니다: ${reason}`,
   "setting.unknownKey": (key: string) => `알 수 없는 설정 키 ${key}`,
+  "setting.noSupervisor": () =>
+    "로컬 실행 환경에서는 재시작할 수 없습니다 — 종료하면 다시 켜줄 모니터링 도구가 없습니다",
   "qgrid.dispatcherFailed": (provider: string) => `${provider} dispatcher 초기화에 실패했습니다`,
   "qgrid.dispatcherStarting": (provider: string) =>
     `${provider} dispatcher 기동 중입니다. 잠시 후 다시 시도해주세요`,
+  "qgrid.restartPending": () => "서버 재시작 중입니다. 잠시 후 다시 시도해주세요",
   "error.unauthorized": "인증이 필요합니다",
   "error.unknownSearchField": (field: string) => `구현되지 않은 검색 필드 ${field}`,
   notFound: (name: string, id: number) => `존재하지 않는 ${name} ID ${id}`,

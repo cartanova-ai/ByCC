@@ -28,6 +28,7 @@ import {
   RefreshFailedError,
 } from "./oauth";
 import {
+  assertNativeRunAdmission,
   afterQuery,
   beforeQuery,
   finishRunAborted,
@@ -210,6 +211,7 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async query(args: QueryInput): Promise<QueryOutput> {
+    assertNativeRunAdmission();
     rejectInvalidCallerSchemas(args);
     const disconnect = createHttpDisconnectHandle();
     try {
@@ -259,6 +261,7 @@ class QgridFrameClass extends BaseFrameClass {
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async prepareStream(args: QueryInput): Promise<{ streamId: string }> {
+    assertNativeRunAdmission();
     rejectImageGenerationStream(args);
     rejectInvalidCallerSchemas(args);
     const streamId = crypto.randomUUID();
@@ -273,6 +276,7 @@ class QgridFrameClass extends BaseFrameClass {
     const args = pendingStreams.get(streamId);
     pendingStreams.delete(streamId);
     if (!args) throw new Error("invalid or expired streamId");
+    assertNativeRunAdmission();
     rejectImageGenerationStream(args);
 
     const ctx = Sonamu.getContext();

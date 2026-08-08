@@ -3,10 +3,17 @@ import {
   BadRequestException,
   InternalServerErrorException,
   ServiceUnavailableException,
+  SoException,
 } from "sonamu";
 import { describe, expect, it, vi } from "vitest";
 
 import { handleServerError } from "./server-error-handler";
+
+class ForbiddenException extends SoException {
+  constructor() {
+    super(403, "forbidden" as never);
+  }
+}
 
 function fakeReply() {
   const reply = {
@@ -25,6 +32,14 @@ describe("handleServerError", () => {
     handleServerError(new BadRequestException("bad" as never), reply);
 
     expect(reply.status).toHaveBeenCalledWith(400);
+  });
+
+  it("local Sonamu 403 예외도 예외 경계에서 보존한다", () => {
+    const reply = fakeReply();
+
+    handleServerError(new ForbiddenException(), reply);
+
+    expect(reply.status).toHaveBeenCalledWith(403);
   });
 
   it("Sonamu 예외가 아니면 statusCode 를 신뢰하지 않고 500 으로 내린다", () => {

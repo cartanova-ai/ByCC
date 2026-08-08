@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  beginServerRestart,
+  resetServerRestartForTests,
+} from "../../utils/server-restart";
+import {
   afterQuery,
   beforeQuery,
+  finishActiveNativeRunsForRestart,
   finishRunAborted,
   finishRunWithError,
+  resetNativeRunRegistryForTests,
 } from "./qgrid-run-lifecycle";
 import { type QueryOutput } from "./qgrid.types";
 
@@ -57,6 +63,11 @@ function queryOutput(overrides: Partial<QueryOutput> = {}): QueryOutput {
 }
 
 let lifecycleNow = Date.now();
+
+afterEach(() => {
+  resetServerRestartForTests();
+  resetNativeRunRegistryForTests();
+});
 
 describe("qgrid run lifecycle start", () => {
   beforeEach(() => {
@@ -187,6 +198,108 @@ describe("qgrid run lifecycle start", () => {
 
     expect(expireStaleToolWaitingRunsMock).toHaveBeenCalledTimes(1);
     expect(createRunMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects new native runs while a restart is pending", async () => {
+    beginServerRestart();
+
+    await expect(beforeQuery({ prompt: "hi" })).rejects.toMatchObject({ statusCode: 503 });
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it("finishes a run prepared during the restart race before rejecting provider execution", async () => {
+    let resolveCreate!: (requestLogId: number) => void;
+    createRunMock.mockReturnValueOnce(
+      new Promise<number>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+
+    const starting = beforeQuery({ prompt: "hi" });
+    await vi.waitFor(() => expect(createRunMock).toHaveBeenCalledOnce());
+    beginServerRestart();
+    resolveCreate(22);
+
+    await expect(starting).rejects.toMatchObject({ statusCode: 503 });
+    expect(finishRunMock).toHaveBeenCalledWith(
+      22,
+      expect.objectContaining({ status: "error", error_message: "server restarted" }),
+    );
+  });
+
+  it("marks only active native runs as restarted and prevents a late success overwrite", async () => {
+    const { requestLogId, stepIndex } = await beforeQuery({ prompt: "hi" });
+
+    await finishActiveNativeRunsForRestart();
+    expect(finishRunMock).toHaveBeenCalledWith(
+      requestLogId,
+      expect.objectContaining({ status: "error", error_message: "server restarted" }),
+    );
+
+    appendStepMock.mockClear();
+    finishRunMock.mockClear();
+    await expect(afterQuery(requestLogId, stepIndex, { prompt: "hi" }, queryOutput())).resolves.toEqual(
+      {},
+    );
+    expect(appendStepMock).not.toHaveBeenCalled();
+    expect(finishRunMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for an in-flight finalizer and writes the restart error last", async () => {
+    const { requestLogId, stepIndex } = await beforeQuery({ prompt: "hi" });
+    let releaseAppend!: () => void;
+    appendStepMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        releaseAppend = resolve;
+      }),
+    );
+
+    const finishing = afterQuery(requestLogId, stepIndex, { prompt: "hi" }, queryOutput());
+    await vi.waitFor(() => expect(appendStepMock).toHaveBeenCalledOnce());
+    const restarting = finishActiveNativeRunsForRestart();
+
+    await Promise.resolve();
+    expect(finishRunMock).not.toHaveBeenCalledWith(
+      requestLogId,
+      expect.objectContaining({ error_message: "server restarted" }),
+    );
+
+    releaseAppend();
+    await Promise.all([finishing, restarting]);
+
+    const terminalStatuses = finishRunMock.mock.calls
+      .filter(([id]) => id === requestLogId)
+      .map(([, payload]) => payload.status);
+    expect(terminalStatuses.at(-1)).toBe("error");
+    expect(finishRunMock).toHaveBeenLastCalledWith(
+      requestLogId,
+      expect.objectContaining({ status: "error", error_message: "server restarted" }),
+    );
+  });
+
+  it("leaves tool-wait runs alone after their provider turn has completed", async () => {
+    const { requestLogId, stepIndex } = await beforeQuery({ prompt: "use a tool" });
+    await afterQuery(
+      requestLogId,
+      stepIndex,
+      { prompt: "use a tool" },
+      queryOutput({
+        finishReason: "tool-calls",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            input: "{}",
+          },
+        ],
+      }),
+    );
+    finishRunMock.mockClear();
+
+    await finishActiveNativeRunsForRestart();
+
+    expect(finishRunMock).not.toHaveBeenCalled();
   });
 });
 

@@ -8,7 +8,7 @@ Use this reference for qgrid startup, configuration, and runtime-facing environm
 - `-p, --port <port>`: server port. Default `44900`. The CLI validates the port and refuses to start if it is already in use.
 - `--skip-update`: skip qgrid CLI self-update check.
 
-The self-update check is strict: when npm reports a newer `@cartanova/qgrid-cli`, including patch releases, the CLI installs that exact resolved version and restarts from the updated binary. Do not use a moving `@latest` install target for this path; exact versions avoid stale pnpm global project ranges.
+When npm reports a newer `@cartanova/qgrid-cli`, including patch releases, the CLI installs that exact resolved version and restarts from the updated binary. Do not use a moving `@latest` install target for this path; exact versions avoid stale pnpm global project ranges. The npm lookup and global install are best-effort: a registry/package-manager outage is logged prominently and boot continues on the current qgrid version. A successful install is still verified against the exact resolved version before restart.
 
 The CLI also ensures runtime CLIs are installed/current enough:
 
@@ -94,14 +94,45 @@ Some env values are editable at runtime through the dashboard's Settings page, b
 
 - Editable: OpenAI autoscale and min/max workers per token, the worker memory guards, Slack delivery control (master switch, reminder on/off, reminder interval, quiet-hours window, weekend behaviour), and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.constant.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart. The `settings` table itself (`setting.entity.json`) only stores `(key, value)` strings; everything the UI needs to render and validate a key lives in that constant, not in the schema.
 - Not editable: anything needed before the server can read its own database (`QGRID_DB_*`, `HOST`, `PORT`, `NODE_ENV`). These are exposed read-only on the same page so an operator can confirm which environment they are looking at; the DB password is masked.
-- Worker settings are marked `restart` because `resolveOpenAIWorkerPoolConfig` is called once in the dispatcher constructor. Changing them writes to the DB but does not resize a running pool.
+- Worker settings are marked `restart` because `resolveOpenAIWorkerPoolConfig` is called once in the dispatcher constructor. Changing them writes to the DB but does not resize a running pool. `POST /api/setting/restartServer` is how those land without an SSH session.
+
+### Restart from the dashboard
+
+The Settings page can restart the server. There is no `pm2 restart` call — the process exits and the supervisor respawns it, which is what "restart" means here.
+
+- `detectSupervisor` (`utils/process-supervisor.ts`) accepts only `pm_id` (pm2). `INVOCATION_ID` proves systemd launched a process but does not prove the unit has a restart policy, so it is not sufficient. Without pm2, `restartServer` returns 400 and the button is disabled: exiting with nothing to relaunch the process is a shutdown, not a restart. Presence is the signal, not the value — pm2 sets `pm_id=0` for the first process.
+- Browser requests must be same-host: when `Origin` is present and its host differs from `X-Forwarded-Host`/`Host`, `restartServer` returns 403. Origin-less operational clients such as `curl` remain supported. This is CSRF protection, not a substitute for authenticating the management API at Caddy.
+- The first restart request latches `restartPending`, blocks new native query/stream dispatch with 503, and marks only process-local active native request-log IDs as `error: server restarted`. Tool-result-waiting runs and externally owned logger runs are untouched. This is state reconciliation, not request draining.
+- Exit is process-wide and one-shot. It runs after the restart response emits `finish`; a response `close` or a five-second fallback covers disconnects. Concurrent restart calls do not schedule multiple exits.
+- The supervisor relaunches from `ecosystem.config.cjs`, not from the dying process's argv. That file carries no `--skip-update`, so each restart also runs the CLI self-update — a restart is a deploy. The confirmation dialog says so; dropping the update means adding `--skip-update` there.
+- In-flight provider responses are not drained. There is no SIGTERM handler, so a restart during traffic cuts active responses, and the OpenAI pool needs 1–2 minutes before requests succeed again (`QgridDispatcher.startupState` answers 503 in that window). The dashboard stays locked after confirmation, observes an unavailable/not-ready health state, then waits for a later `ready: true` before refreshing settings.
 - Slack channel, bot-token, and user-map changes are read on the next notification. Changing the expiry-reminder interval or toggling the reminder replaces the current timer immediately without sending a notification merely because the setting changed; process boot still performs the intended immediate reminder run.
 - `slack.enabled` is the holiday switch: an operator turns it off for periods no rule can express. It suppresses ordinary notifications but not `urgent` ones, so a provider losing its last token still reports during a long break. `slack.remindersEnabled` is narrower — it stops only the repeat timer and preserves the chosen interval so re-enabling restores it.
 - Quiet hours are `slack.quietFromHour`/`slack.quietUntilHour` (0–23, Asia/Seoul) plus `slack.notifyOnWeekends`. From > until reads as an overnight window (20→8); from < until reads as a same-day window, which night-shift teams may want. Equal values mean no quiet window at all. Out-of-range values fall back to 20/8 at runtime, since env can bypass the stored-value validation.
 - `POST /api/setting/triggerExpiryReminder` sends the reminder once on demand and returns `{ sent }` so the caller can distinguish "nothing to remind about" from a delivery. It is sent as `urgent`, bypassing quiet hours and the master switch, because a human pressed the button.
 - `immediate` means the API process that handled the update. The in-memory settings cache is not propagated to sibling processes; multi-instance deployments need a separate settings-change transport before treating the label as cluster-wide.
 - The public settings API exposes the curated list/set/reset methods only. Keep generic Sonamu `save`/`del` methods internal so callers cannot bypass key validation, cache updates, or runtime change hooks.
-- The settings response returns the Slack bot token in full so the authenticated dashboard can support its reveal toggle. Treat that endpoint as an operator-only surface at the deployment boundary; dev0 relies on Caddy authentication for the dashboard. The database password remains masked and is never returned in full.
+- The settings response returns the Slack bot token in full so the authenticated dashboard can support its reveal toggle. Treat that endpoint as an operator-only surface at the deployment boundary. The database password remains masked and is never returned in full.
+
+### Management API release gate
+
+The historical dev0 Caddy configuration excluded all `/api/*` paths from Basic Auth. That makes a release containing `listSettings` expose the Slack bot token and restart endpoint anonymously even though the dashboard HTML is gated. npm `2.6.10` is already published, so a pm2 crash/respawn can trigger the CLI updater and activate that exposure without a manual restart. Do not treat "nobody will restart it" as a mitigation.
+
+Before publishing any release that contains the settings/restart API, use this order:
+
+1. Commit the code without changing package versions or publishing.
+2. Have the user review the code and deployment draft.
+3. Apply the exact-method/exact-path Caddy allowlist, validate the Caddyfile, and reload Caddy.
+4. Verify unauthenticated settings/restart calls are blocked while every public SDK path still works.
+5. Rotate the Slack bot token.
+6. Align the `2.6.11` package version, bundled qgrid skills, and Notion release documentation.
+7. Publish npm packages.
+8. Restart qgrid.
+9. Verify readiness and confirm old worker/process PIDs are gone.
+
+Caddy must be fixed before npm publish, because publish—not the later manual restart—is the point where pm2 autorestart can pick up the vulnerable build. The public exception list is method plus exact path: POST `/api/qgrid/query`, `/api/qgrid/prepareStream`, `/api/qgrid/createRun`, `/api/qgrid/appendStep`, `/api/qgrid/finishRun`; GET `/api/qgrid/queryStream`, `/api/qgrid/health`, `/api/healthcheck`; and `/callback`. Recheck this list against `packages/ai-sdk/src/index.ts` and `packages/ai-sdk/src/utils.ts` whenever the SDK contract changes.
+
+This allowlist preserves anonymous inference and logger database writes for SDK compatibility. It protects management data but is not a complete API security boundary; adding an SDK/API key is a separate follow-up. A browser already authenticated to the dashboard's Basic Auth protection sends the same credentials on same-origin settings requests, so protecting `/api/setting/*` does not break the settings page or secret reveal control.
 
 ### Readiness during startup
 

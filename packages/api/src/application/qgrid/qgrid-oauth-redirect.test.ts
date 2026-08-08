@@ -52,6 +52,13 @@ vi.mock("../token/token.model", () => ({
   },
 }));
 
+// OAuth 리다이렉트 테스트는 token-death를 검증하지 않는다. 부분 TokenModel mock이
+// isolate:false 워커의 token-death 전용 테스트로 새지 않게 실제 모듈 로드를 막는다.
+vi.mock("./token-death", () => ({
+  deactivateAuthDeadToken: vi.fn(),
+  notifyTokenAdded: vi.fn(),
+}));
+
 function authUrlParam(authUrl: string, key: string): string | null {
   return new URL(authUrl).searchParams.get(key);
 }

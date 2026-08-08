@@ -18,6 +18,7 @@ const {
   dispatcherQueryStreamMock,
   beforeQueryMock,
   afterQueryMock,
+  assertNativeRunAdmissionMock,
   finishRunWithErrorMock,
   finishRunAbortedMock,
   getRateLimitsByTokenIdMock,
@@ -33,6 +34,7 @@ const {
   dispatcherQueryStreamMock: vi.fn(),
   beforeQueryMock: vi.fn(),
   afterQueryMock: vi.fn(),
+  assertNativeRunAdmissionMock: vi.fn(),
   finishRunWithErrorMock: vi.fn(),
   finishRunAbortedMock: vi.fn(),
   getRateLimitsByTokenIdMock: vi.fn(),
@@ -56,6 +58,13 @@ vi.mock("../token/token.model", () => ({
   },
 }));
 
+// QgridFrame의 token-death 연결은 이 스위트의 관심사가 아니다. isolate:false 워커에서
+// 부분 TokenModel mock으로 token-death 실제 모듈을 먼저 캐시하지 않도록 경계를 끊는다.
+vi.mock("./token-death", () => ({
+  deactivateAuthDeadToken: vi.fn(),
+  notifyTokenAdded: vi.fn(),
+}));
+
 vi.mock("./qgrid.dispatcher", async (importOriginal) => {
   const original = await importOriginal<typeof import("./qgrid.dispatcher")>();
   return {
@@ -71,6 +80,7 @@ vi.mock("./qgrid.dispatcher", async (importOriginal) => {
 });
 
 vi.mock("./qgrid-run-lifecycle", () => ({
+  assertNativeRunAdmission: assertNativeRunAdmissionMock,
   beforeQuery: beforeQueryMock,
   afterQuery: afterQueryMock,
   finishRunWithError: finishRunWithErrorMock,
@@ -161,6 +171,7 @@ describe("QgridFrame.query request logging", () => {
   beforeEach(() => {
     beforeQueryMock.mockReset().mockResolvedValue({ requestLogId: 41, stepIndex: 0 });
     afterQueryMock.mockReset().mockResolvedValue({});
+    assertNativeRunAdmissionMock.mockReset();
     finishRunWithErrorMock.mockReset();
     dispatcherQueryMock.mockReset();
   });
@@ -256,6 +267,18 @@ describe("QgridFrame.query request logging", () => {
     expect(beforeQueryMock).not.toHaveBeenCalled();
     expect(afterQueryMock).not.toHaveBeenCalled();
     expect(finishRunWithErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects logger-disabled native dispatch while restart admission is closed", async () => {
+    assertNativeRunAdmissionMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error("server restarting"), { statusCode: 503 });
+    });
+
+    await expect(
+      QgridFrame.query({ prompt: "hi", model: "openai/gpt-5-codex", logger: false }),
+    ).rejects.toMatchObject({ statusCode: 503 });
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    expect(beforeQueryMock).not.toHaveBeenCalled();
   });
 
   it("merges a tool run id with the provider thread coordinate", async () => {
@@ -843,6 +866,7 @@ describe("QgridFrame.queryStream request logging", () => {
   beforeEach(() => {
     beforeQueryMock.mockReset().mockResolvedValue({ requestLogId: 52, stepIndex: 0 });
     afterQueryMock.mockReset().mockResolvedValue({});
+    assertNativeRunAdmissionMock.mockReset();
     finishRunWithErrorMock.mockReset();
     finishRunAbortedMock.mockReset();
     dispatcherQueryStreamMock.mockReset();
@@ -875,6 +899,27 @@ describe("QgridFrame.queryStream request logging", () => {
       },
     };
   }
+
+  it("rejects stream preparation while restart admission is closed", async () => {
+    assertNativeRunAdmissionMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error("server restarting"), { statusCode: 503 });
+    });
+
+    await expect(QgridFrame.prepareStream({ prompt: "hi" })).rejects.toMatchObject({
+      statusCode: 503,
+    });
+    expect(dispatcherQueryStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("rechecks admission before dispatching a previously prepared stream", async () => {
+    const { streamId } = await QgridFrame.prepareStream({ prompt: "hi", logger: false });
+    assertNativeRunAdmissionMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error("server restarting"), { statusCode: 503 });
+    });
+
+    await expect(QgridFrame.queryStream(streamId)).rejects.toMatchObject({ statusCode: 503 });
+    expect(dispatcherQueryStreamMock).not.toHaveBeenCalled();
+  });
 
   function installSseContext() {
     let closeHandler: (() => void) | undefined;

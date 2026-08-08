@@ -49,9 +49,12 @@ export default {
   "error.serviceUnavailable": "Service unavailable",
   "setting.invalidValue": (reason: string) => `Invalid setting value: ${reason}`,
   "setting.unknownKey": (key: string) => `Unknown setting key ${key}`,
+  "setting.noSupervisor": () =>
+    "Restart is unavailable when running locally — nothing would bring the server back up",
   "qgrid.dispatcherFailed": (provider: string) => `${provider} dispatcher failed to initialize`,
   "qgrid.dispatcherStarting": (provider: string) =>
     `${provider} dispatcher is starting up. Please retry shortly`,
+  "qgrid.restartPending": () => "Server restart is in progress. Please retry shortly",
   "error.unauthorized": "Unauthorized",
   notFound: (name: string, id: number) => `${name} ID ${id} not found`,
   "validation.email": "Invalid email format",

@@ -1,14 +1,19 @@
+import { getLogger } from "@logtape/logtape";
 import {
   BaseModelClass,
   type ListResult,
   asArray,
   NotFoundException,
   BadRequestException,
+  SoException,
+  Sonamu,
   api,
   exhaustive,
 } from "sonamu";
 
 import { SD } from "../../i18n/sd.generated";
+import { detectSupervisor } from "../../utils/process-supervisor";
+import { armServerRestartExit, beginServerRestart } from "../../utils/server-restart";
 import { type SettingSubsetKey, type SettingSubsetMapping } from "../sonamu.generated";
 import { settingSubsetQueries, settingLoaderQueries } from "../sonamu.generated.sso";
 import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.constant";
@@ -25,7 +30,36 @@ import {
   type SettingListParams,
   type SettingSaveParams,
   type SettingsResponse,
+  type SupervisorKind,
 } from "./setting.types";
+
+const logger = getLogger(["qgrid", "setting"]);
+
+class ForbiddenException extends SoException {
+  constructor() {
+    super(403, SD("error.forbidden"));
+  }
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  return (Array.isArray(value) ? value[0] : value)?.split(",")[0]?.trim();
+}
+
+/** Origin 없는 운영 CLI 요청은 통과시키되, 브라우저 교차 출처 POST 는 막는다. */
+function assertRestartOrigin(): void {
+  const { headers } = Sonamu.getContext();
+  const origin = firstHeaderValue(headers.origin);
+  if (headers.origin === undefined) return;
+  if (!origin) throw new ForbiddenException();
+
+  const host = firstHeaderValue(headers["x-forwarded-host"]) ?? firstHeaderValue(headers.host);
+  try {
+    if (!host || new URL(origin).host !== host) throw new ForbiddenException();
+  } catch (error) {
+    if (error instanceof ForbiddenException) throw error;
+    throw new ForbiddenException();
+  }
+}
 
 /*
   Setting Model
@@ -207,8 +241,8 @@ class SettingModelClass extends BaseModelClass<
         label: def.label,
         kind: def.kind,
         applies: def.applies,
-        // 눈 토글을 위해 secret 도 원본을 내려보낸다. 이 엔드포인트는 배포 경계에서 인증해야
-        // 하며, dev0 는 Caddy 인증을 통과한 운영자만 접근할 수 있다.
+        // 눈 토글을 위해 secret 도 원본을 내려보낸다. 이 엔드포인트는 배포 경계에서
+        // 반드시 인증해야 한다.
         value: effective,
         source,
         min: def.min ?? null,
@@ -218,7 +252,7 @@ class SettingModelClass extends BaseModelClass<
       };
     });
 
-    return { settings, runtime: this.runtimeInfo() };
+    return { settings, runtime: this.runtimeInfo(), supervisor: detectSupervisor() };
   }
 
   private runtimeInfo(): RuntimeInfoItem[] {
@@ -271,6 +305,44 @@ class SettingModelClass extends BaseModelClass<
     // token.model 을 mock 하는 테스트가 실제 모듈을 먼저 로드하게 된다.
     const { sendExpiredTokenReminderNow } = await import("../qgrid/expired-token-reminder");
     return { sent: await sendExpiredTokenReminderNow() };
+  }
+
+  /**
+   * 서버를 재시작한다 — 정확히는 스스로 종료하고, pm2 가 다시 띄우는 것에 맡긴다.
+   *
+   * `restart` 로 표시된 워커 설정은 dispatcher 생성자에서 한 번만 읽히므로 이 경로 말고는
+   * 반영할 방법이 없었다. 지금까지는 SSH 로 `pm2 restart` 를 쳐야 했다.
+   *
+   * 부수 효과가 하나 더 있다: pm2 는 `ecosystem.config.cjs` 의 원래 명령으로 다시 띄우고,
+   * 그 명령에 `--skip-update` 가 없으면 CLI 가 npm 최신 버전을 받아 올린다. 즉 재시작은
+   * 배포이기도 하다 — 화면 문구가 이 사실을 함께 알린다.
+   */
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async restartServer(): Promise<{ supervisor: SupervisorKind }> {
+    assertRestartOrigin();
+    const supervisor = detectSupervisor();
+    if (!supervisor) {
+      // 다시 띄워줄 주체가 없으면 종료가 곧 정지다. 살릴 수 없는데 죽이지 않는다.
+      throw new BadRequestException(SD("setting.noSupervisor")());
+    }
+
+    const { reply } = Sonamu.getContext();
+    const started = beginServerRestart();
+    if (started) {
+      logger.warn(`restart requested via dashboard, exiting for ${supervisor} to respawn`);
+
+      try {
+        // 정적 import로 qgrid.frame/token 그래프를 당겨오면 모듈 목 테스트가 오염된다.
+        // 재시작이 실제로 확정된 시점에 active native run 정합성 처리만 로드한다.
+        const { finishActiveNativeRunsForRestart } = await import("../qgrid/qgrid-run-lifecycle");
+        await finishActiveNativeRunsForRestart();
+      } finally {
+        // 정합성 처리가 실패해도 응답이 flush 된 뒤에는 재시작을 끝까지 진행한다.
+        armServerRestartExit(reply.raw);
+      }
+    }
+
+    return { supervisor };
   }
 }
 

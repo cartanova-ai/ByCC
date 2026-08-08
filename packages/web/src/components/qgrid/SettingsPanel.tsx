@@ -1,19 +1,22 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
+import { useEffect, useRef, useState } from "react";
 import EyeIcon from "~icons/lucide/eye";
 import EyeOffIcon from "~icons/lucide/eye-off";
 import MinusIcon from "~icons/lucide/minus";
 import PlusIcon from "~icons/lucide/plus";
 import RotateIcon from "~icons/lucide/rotate-ccw";
 
-import { SettingService } from "@/services/services.generated";
-import { type SettingItem } from "@/services/setting/setting.types";
+import { QgridService, SettingService } from "@/services/services.generated";
+import { type SettingItem, type SupervisorKind } from "@/services/setting/setting.types";
+import { isSonamuError } from "@/services/sonamu.shared";
 
 const GROUP_LABELS: Record<string, string> = {
   openai: "OpenAI 워커",
   slack: "Slack 알림",
   slackConnection: "Slack 연결",
 };
+const RESTART_READY_TIMEOUT_MS = 3 * 60 * 1_000;
 
 function maskValue(value: string): string {
   if (!value) return "";
@@ -167,7 +170,9 @@ function SettingRow({ item }: { item: SettingItem }) {
   const dirty = draft !== null && draft !== item.value;
 
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["Setting", "getSettingList"] });
+    queryClient.invalidateQueries({
+      queryKey: SettingService.getSettingListQueryOptions().queryKey,
+    });
 
   const commit = async (next: string) => {
     setError(null);
@@ -332,8 +337,241 @@ function TriggerReminderButton() {
   );
 }
 
+/**
+ * 재시작은 스스로 종료하고 감독자(pm2)가 다시 띄우는 것에 맡긴다. 되돌릴 수 없고 1~2분간
+ * 요청이 실패하므로 확인 단계를 둔다 — 무엇이 일어나는지 모달이 먼저 설명한다.
+ */
+function RestartPanel({ supervisor }: { supervisor: SupervisorKind | null }) {
+  const [confirming, setConfirming] = useState(false);
+  const [restartRequested, setRestartRequested] = useState(false);
+  const [restartStartedAt, setRestartStartedAt] = useState<number | null>(null);
+  const [sawUnavailable, setSawUnavailable] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const completingRef = useRef(false);
+  const restartAttemptRef = useRef(0);
+  const queryClient = useQueryClient();
+  const mutation = SettingService.useRestartServerMutation();
+  const resetMutation = mutation.reset;
+  const healthQuery = useQuery({
+    ...QgridService.healthQueryOptions(),
+    enabled: restartRequested && !completing,
+    refetchInterval: restartRequested && !completing ? 1_000 : false,
+    refetchIntervalInBackground: true,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!restartRequested || restartStartedAt === null || completing) return;
+
+    const remaining = Math.max(0, RESTART_READY_TIMEOUT_MS - (Date.now() - restartStartedAt));
+    const timeout = window.setTimeout(() => {
+      restartAttemptRef.current += 1;
+      resetMutation();
+      setConfirming(false);
+      setRestartRequested(false);
+      setRestartStartedAt(null);
+      setSawUnavailable(false);
+      setError(
+        "재시작 후 3분 안에 서버 준비를 확인하지 못했습니다. 상태를 확인한 뒤 다시 시도하세요.",
+      );
+    }, remaining);
+    return () => window.clearTimeout(timeout);
+  }, [completing, resetMutation, restartRequested, restartStartedAt]);
+
+  useEffect(() => {
+    if (!restartRequested || restartStartedAt === null) return;
+
+    const currentAttemptError =
+      healthQuery.isError && healthQuery.errorUpdatedAt >= restartStartedAt;
+    const currentAttemptData =
+      healthQuery.isSuccess && healthQuery.dataUpdatedAt >= restartStartedAt;
+
+    if (currentAttemptError || (currentAttemptData && healthQuery.data.ready === false)) {
+      setSawUnavailable(true);
+      return;
+    }
+
+    // 재시작 POST 직후 예전 프로세스의 ready:true를 받을 수 있다. 한 번이라도
+    // unreachable/ready:false를 본 뒤에 돌아온 ready:true만 새 프로세스로 인정한다.
+    if (
+      !sawUnavailable ||
+      !currentAttemptData ||
+      healthQuery.data.ready !== true ||
+      completingRef.current
+    ) {
+      return;
+    }
+
+    completingRef.current = true;
+    setCompleting(true);
+    void queryClient
+      .invalidateQueries({
+        queryKey: SettingService.getSettingListQueryOptions().queryKey,
+      })
+      .then(() => {
+        restartAttemptRef.current += 1;
+        resetMutation();
+        setConfirming(false);
+        setRestartRequested(false);
+        setRestartStartedAt(null);
+        setSawUnavailable(false);
+      })
+      .catch((cause) => {
+        restartAttemptRef.current += 1;
+        resetMutation();
+        setConfirming(false);
+        setRestartRequested(false);
+        setRestartStartedAt(null);
+        setSawUnavailable(false);
+        setError(`서버는 준비됐지만 설정을 새로고침하지 못했습니다: ${(cause as Error).message}`);
+      })
+      .finally(() => {
+        completingRef.current = false;
+        setCompleting(false);
+      });
+  }, [
+    healthQuery.dataUpdatedAt,
+    healthQuery.data?.ready,
+    healthQuery.errorUpdatedAt,
+    healthQuery.isError,
+    healthQuery.isSuccess,
+    queryClient,
+    resetMutation,
+    restartStartedAt,
+    restartRequested,
+    sawUnavailable,
+  ]);
+
+  const restart = async () => {
+    const attempt = restartAttemptRef.current + 1;
+    restartAttemptRef.current = attempt;
+    setError(null);
+    setSawUnavailable(false);
+    setCompleting(false);
+    completingRef.current = false;
+    setRestartRequested(true);
+    setRestartStartedAt(Date.now());
+    try {
+      await mutation.mutateAsync();
+    } catch (e) {
+      if (restartAttemptRef.current !== attempt) return;
+      // HTTP 응답으로 명확히 거부된 경우만 재시도 가능 상태로 되돌린다.
+      // 응답 없는 transport 오류와 프록시 5xx는 서버가 종료되며 생긴 정상 경계일 수 있다.
+      const explicitlyRejected = isSonamuError(e)
+        ? e.code >= 400 && e.code < 500
+        : isAxiosError(e) &&
+          e.response !== undefined &&
+          e.response.status >= 400 &&
+          e.response.status < 500;
+      if (explicitlyRejected) {
+        restartAttemptRef.current += 1;
+        resetMutation();
+        setConfirming(false);
+        setRestartRequested(false);
+        setRestartStartedAt(null);
+        setError((e as Error).message || "재시작 요청이 거부되었습니다.");
+      }
+    }
+  };
+
+  const closeConfirmation = () => {
+    if (restartRequested) return;
+    setConfirming(false);
+    setError(null);
+  };
+
+  return (
+    <div className="panel overflow-hidden">
+      <div className="panel-header px-4 py-2.5 sm:px-5">
+        <span className="text-[13px] font-medium text-sand-700">서버 제어</span>
+      </div>
+      <div className="px-4 py-3 sm:px-5 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[13px] text-sand-800">qgrid 재시작</p>
+          <p className="mt-0.5 text-[11px] text-sand-500">
+            {supervisor
+              ? "재시작 필요 설정을 반영하고 qgrid·Codex·Claude CLI를 확인합니다"
+              : "로컬 실행 환경에서는 재시작할 수 없습니다"}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!supervisor || restartRequested || mutation.isPending}
+          onClick={() => setConfirming(true)}
+          className="shrink-0 px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-colors duration-150"
+        >
+          재시작
+        </button>
+      </div>
+
+      {error && <p className="px-4 pb-3 sm:px-5 text-[11px] text-red-500">{error}</p>}
+
+      {confirming && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
+          <div
+            className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
+            onClick={closeConfirmation}
+            onKeyDown={() => {}}
+          />
+          <div className="relative panel shadow-xl w-full max-w-sm mx-4">
+            <div className="px-5 py-4 border-b border-sand-100/60">
+              <h3 className="text-base font-medium text-sand-900">
+                {restartRequested
+                  ? mutation.isPending
+                    ? "재시작 요청 중"
+                    : "서버 재연결 중"
+                  : "qgrid 재시작"}
+              </h3>
+            </div>
+            <div className="px-5 py-4 space-y-2">
+              <p className="text-[13px] text-sand-700">
+                워커가 다시 뜰 때까지 <strong className="text-sand-900">1~2분간 요청이 실패</strong>
+                합니다.
+              </p>
+              <p className="text-[12px] text-sand-500">
+                서버를 종료하면 모니터링 도구가 다시 띄웁니다. 이때 재시작 필요 설정을 반영하고,
+                qgrid와 Codex CLI·Claude Code의 최신 버전을 확인합니다.
+              </p>
+              {restartRequested && (
+                <p className="text-[12px] font-medium text-sienna-600">
+                  {mutation.isPending
+                    ? "종료 요청을 처리하고 있습니다…"
+                    : sawUnavailable
+                      ? "새 서버가 준비될 때까지 연결을 확인하고 있습니다…"
+                      : "서버 종료를 기다리고 있습니다…"}
+                </p>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-sand-100/60 flex justify-end gap-2">
+              {!restartRequested && (
+                <button
+                  type="button"
+                  onClick={closeConfirmation}
+                  className="px-3 py-1.5 text-[12px] rounded-lg text-sand-600 hover:bg-sand-100 transition-colors duration-150"
+                >
+                  취소
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={restartRequested || mutation.isPending}
+                onClick={() => void restart()}
+                className="px-3 py-1.5 text-[12px] font-medium rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors duration-150"
+              >
+                {restartRequested ? (mutation.isPending ? "요청 중" : "재연결 중") : "재시작"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel() {
-  const { data, isLoading } = SettingService.useSettingList();
+  const settingsQuery = SettingService.useSettingList();
+  const { data, isLoading } = settingsQuery;
 
   if (isLoading) {
     return (
@@ -353,6 +591,23 @@ export function SettingsPanel() {
             </div>
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (settingsQuery.isError && !data) {
+    return (
+      <div className="panel px-5 py-6 text-center">
+        <p className="text-[13px] font-medium text-sand-800">설정을 불러오지 못했습니다</p>
+        <p className="mt-1 text-[11px] text-red-500">{settingsQuery.error.message}</p>
+        <button
+          type="button"
+          onClick={() => void settingsQuery.refetch()}
+          disabled={settingsQuery.isFetching}
+          className="mt-3 px-3 py-1.5 text-[12px] rounded-lg border border-sand-200 text-sand-600 hover:bg-sand-100 disabled:opacity-50"
+        >
+          {settingsQuery.isFetching ? "다시 불러오는 중" : "다시 시도"}
+        </button>
       </div>
     );
   }
@@ -396,6 +651,8 @@ export function SettingsPanel() {
           </div>
         );
       })}
+
+      <RestartPanel supervisor={data?.supervisor ?? null} />
     </div>
   );
 }

@@ -8,11 +8,11 @@ import { Command } from "commander";
 
 import { applyQgridDatabaseEnv } from "./database-env";
 import {
-  detectSelfUpdatePackageManager,
+  parseVersion,
   pnpmGlobalBinDir,
-  resolveQgridRestartCommand,
-  selfUpdateInstallCommand,
-  withPrependedPath,
+  runSelfUpdate,
+  SELF_UPDATE_CHECK_TIMEOUT_MS,
+  SELF_UPDATE_INSTALL_TIMEOUT_MS,
 } from "./self-update";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -37,7 +37,12 @@ type RuntimeCliDependency = (typeof RUNTIME_CLI_DEPENDENCIES)[number];
 
 function commandVersion(command: string, env: NodeJS.ProcessEnv = process.env): string | null {
   try {
-    return execFileSync(command, ["--version"], { encoding: "utf-8", env, stdio: "pipe" }).trim();
+    return execFileSync(command, ["--version"], {
+      encoding: "utf-8",
+      env,
+      stdio: "pipe",
+      timeout: SELF_UPDATE_CHECK_TIMEOUT_MS,
+    }).trim();
   } catch {
     return null;
   }
@@ -47,16 +52,17 @@ function packageLatestVersion(packageName: string): string {
   return execFileSync("npm", ["view", packageName, "version"], {
     encoding: "utf-8",
     stdio: "pipe",
+    timeout: SELF_UPDATE_CHECK_TIMEOUT_MS,
   }).trim();
-}
-
-function parseVersion(output: string | null): string | null {
-  return output?.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/)?.[0] ?? null;
 }
 
 function commandPath(command: string): string {
   try {
-    return execFileSync("which", [command], { encoding: "utf-8", stdio: "pipe" }).trim();
+    return execFileSync("which", [command], {
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: SELF_UPDATE_CHECK_TIMEOUT_MS,
+    }).trim();
   } catch {
     return "";
   }
@@ -68,7 +74,10 @@ function warnMissingRuntimeCliDependency(dep: RuntimeCliDependency): void {
 }
 
 function installRuntimeCliDependency(dep: RuntimeCliDependency): void {
-  execFileSync("npm", ["i", "-g", `${dep.packageName}@latest`], { stdio: "inherit" });
+  execFileSync("npm", ["i", "-g", `${dep.packageName}@latest`], {
+    stdio: "inherit",
+    timeout: SELF_UPDATE_INSTALL_TIMEOUT_MS,
+  });
 }
 
 function ensureLatestRuntimeCliDependencies(): void {
@@ -134,40 +143,26 @@ program
 
     // check latest version and self-update
     if (!opts.skipUpdate) {
-      const latest = packageLatestVersion("@cartanova/qgrid-cli");
-      const shouldUpdate = latest !== pkg.version;
-
-      if (shouldUpdate) {
-        const packageManager = detectSelfUpdatePackageManager(commandPath("qgrid"));
-        const globalBinDir = packageManager === "pnpm" ? pnpmGlobalBinDir() : null;
-        const updateEnv = withPrependedPath(process.env, globalBinDir);
-        const installCmd = selfUpdateInstallCommand(packageManager, "@cartanova/qgrid-cli", latest);
-        console.log(`Updating qgrid-cli: ${pkg.version} → ${latest}`);
-        const updated = spawnSync(installCmd.command, installCmd.args, {
-          env: updateEnv,
-          stdio: "inherit",
-        });
-        if (updated.status !== 0) {
-          console.error(`Failed to update qgrid-cli to ${latest}.`);
-          console.error(`Fix the global ${packageManager} installation and run qgrid again.`);
-          process.exit(updated.status ?? 1);
-        }
-
-        const restartCommand = resolveQgridRestartCommand(packageManager, globalBinDir);
-        const updatedVersion = parseVersion(commandVersion(restartCommand, updateEnv));
-        if (updatedVersion !== latest) {
-          console.error(
-            `Failed to run updated qgrid-cli. Expected ${latest}, found ${updatedVersion ?? "unknown"}.`,
-          );
-          console.error(`Check PATH and global ${packageManager} bin configuration.`);
-          process.exit(1);
-        }
-
-        console.log("Updated. Restarting...\n");
-        const args = process.argv.slice(2).concat("--skip-update");
-        const restarted = spawnSync(restartCommand, args, { env: updateEnv, stdio: "inherit" });
-        process.exit(restarted.status ?? 0);
-      }
+      const outcome = runSelfUpdate(
+        {
+          packageName: "@cartanova/qgrid-cli",
+          currentVersion: pkg.version,
+          args: process.argv.slice(2),
+          env: process.env,
+          userAgent: process.env.npm_config_user_agent,
+        },
+        {
+          latestVersion: packageLatestVersion,
+          commandPath,
+          commandVersion,
+          pnpmGlobalBinDir,
+          spawn: (command, args, options) => spawnSync(command, args, options),
+          log: console.log,
+          warn: console.warn,
+          error: console.error,
+        },
+      );
+      if (outcome.kind === "exit") process.exit(outcome.exitCode);
     }
 
     ensureLatestRuntimeCliDependencies();

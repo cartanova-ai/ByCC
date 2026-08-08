@@ -21,6 +21,16 @@ export type SettingApplies = z.infer<typeof SettingApplies>;
 export const SettingSource = z.enum(["db", "env", "default"]);
 export type SettingSource = z.infer<typeof SettingSource>;
 
+/**
+ * 프로세스를 다시 띄워주는 도구. 재시작은 스스로 종료하고 이 도구에 맡기므로,
+ * 없으면(null) 화면에서 재시작을 시도조차 하지 않는다.
+ *
+ * API 반환 타입에 쓰이므로 zod 로 둔다 — sonamu syncer 가 클라이언트 코드를 만들 때
+ * 타입만 있는 선언은 모듈을 찾지 못한다.
+ */
+export const SupervisorKind = z.enum(["pm2"]);
+export type SupervisorKind = z.infer<typeof SupervisorKind>;
+
 export const SettingItem = z.object({
   key: z.string(),
   group: z.string(),
@@ -49,5 +59,7 @@ export type RuntimeInfoItem = z.infer<typeof RuntimeInfoItem>;
 export const SettingsResponse = z.object({
   settings: SettingItem.array(),
   runtime: RuntimeInfoItem.array(),
+  /** null 이면 재시작 버튼을 쓸 수 없다 — 종료해도 되살릴 주체가 없다. */
+  supervisor: SupervisorKind.nullable(),
 });
 export type SettingsResponse = z.infer<typeof SettingsResponse>;
