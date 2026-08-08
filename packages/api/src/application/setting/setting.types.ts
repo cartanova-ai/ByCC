@@ -18,15 +18,19 @@ export type SettingKind = z.infer<typeof SettingKind>;
 export const SettingApplies = z.enum(["immediate", "restart"]);
 export type SettingApplies = z.infer<typeof SettingApplies>;
 
+export const SettingSource = z.enum(["db", "env", "default"]);
+export type SettingSource = z.infer<typeof SettingSource>;
+
 export const SettingItem = z.object({
   key: z.string(),
+  group: z.string(),
   label: z.string(),
   kind: SettingKind,
   applies: SettingApplies,
   /** 현재 적용 중인 값. secret 은 마스킹된 상태로 내려간다. */
   value: z.string(),
-  /** DB 에 저장된 값인지. false 면 env 나 코드 기본값을 쓰는 중이다. */
-  stored: z.boolean(),
+  /** 이 값이 어디서 왔는지. 화면에서 출처를 보여줘야 "왜 안 바뀌지"가 없다. */
+  source: SettingSource,
   min: z.number().nullable(),
   max: z.number().nullable(),
   help: z.string().nullable(),

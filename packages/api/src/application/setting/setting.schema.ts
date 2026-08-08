@@ -7,8 +7,12 @@
 
 export type SettingKind = "boolean" | "integer" | "number" | "string" | "secret";
 
+/** 화면에서 묶어 보여줄 단위. 9개를 평평하게 나열하면 어디를 봐야 할지 알 수 없다. */
+export type SettingGroup = "openai" | "slack";
+
 export type SettingDef = {
   key: string;
+  group: SettingGroup;
   envKey: string;
   label: string;
   kind: SettingKind;
@@ -16,12 +20,19 @@ export type SettingDef = {
   applies: "immediate" | "restart";
   min?: number;
   max?: number;
+  /**
+   * 저장값도 env 도 없을 때 실제로 적용되는 값. 화면을 비워두면 "설정 안 됨"으로 읽히지만
+   * 실제로는 이 값이 돌고 있다 — 소비처의 기본값과 반드시 같아야 한다.
+   */
+  fallback: string;
   help?: string;
 };
 
 export const SETTING_DEFS: SettingDef[] = [
   {
     key: "openai.autoscale",
+    fallback: "true",
+    group: "openai",
     envKey: "QGRID_OPENAI_AUTOSCALE",
     label: "OpenAI 워커 오토스케일",
     kind: "boolean",
@@ -30,6 +41,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "openai.minWorkersPerToken",
+    fallback: "1",
+    group: "openai",
     envKey: "QGRID_OPENAI_MIN_WORKERS_PER_TOKEN",
     label: "토큰당 최소 워커",
     kind: "integer",
@@ -39,6 +52,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "openai.maxWorkersPerToken",
+    fallback: "3",
+    group: "openai",
     envKey: "QGRID_OPENAI_MAX_WORKERS_PER_TOKEN",
     label: "토큰당 최대 워커",
     kind: "integer",
@@ -49,6 +64,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "openai.maxEstimatedRssGiB",
+    fallback: "16",
+    group: "openai",
     envKey: "QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB",
     label: "워커 메모리 상한 (GiB)",
     kind: "number",
@@ -58,6 +75,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "openai.minHostAvailableGiB",
+    fallback: "20",
+    group: "openai",
     envKey: "QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB",
     label: "호스트 여유 메모리 하한 (GiB)",
     kind: "number",
@@ -66,6 +85,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "slack.expiryReminderMinutes",
+    fallback: "0",
+    group: "slack",
     envKey: "SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES",
     label: "만료 알림 반복 주기 (분)",
     kind: "integer",
@@ -76,6 +97,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "slack.channelId",
+    fallback: "",
+    group: "slack",
     envKey: "SLACK_CHANNEL_ID",
     label: "Slack 채널 ID",
     kind: "string",
@@ -84,6 +107,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "slack.userMap",
+    fallback: "",
+    group: "slack",
     envKey: "SLACK_USER_MAP",
     label: "Slack 사용자 매핑",
     kind: "string",
@@ -92,6 +117,8 @@ export const SETTING_DEFS: SettingDef[] = [
   },
   {
     key: "slack.botToken",
+    fallback: "",
+    group: "slack",
     envKey: "SLACK_BOT_TOKEN",
     label: "Slack 봇 토큰",
     kind: "secret",
@@ -138,3 +165,8 @@ export function maskSecret(value: string): string {
   if (value.length <= 12) return "***";
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
+
+export const SETTING_GROUP_LABELS: Record<SettingGroup, string> = {
+  openai: "OpenAI 워커",
+  slack: "Slack 알림",
+};

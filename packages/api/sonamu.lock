@@ -49,11 +49,11 @@
   },
   {
     "path": "api/src/application/setting/setting.model.ts",
-    "checksum": "b742ecf468120fa504a5d568eebaee27dafcc078"
+    "checksum": "56798f1fc2ffc5f33204665baf4dbbd20613d259"
   },
   {
     "path": "api/src/application/setting/setting.types.ts",
-    "checksum": "bcbff8d898dee9c77445ba821a185c9cc9b6098e"
+    "checksum": "6b2b887519585d5faee7e393f296bc00348c8a51"
   },
   {
     "path": "api/src/application/sonamu.generated.http",
@@ -129,7 +129,7 @@
   },
   {
     "path": "web/src/services/setting/setting.types.ts",
-    "checksum": "c50f0539a50986e7bc6ea6e61e2bbe0f8ad48820"
+    "checksum": "f21709b3320f6406016308411e385b3adcc7ad82"
   },
   {
     "path": "web/src/services/sonamu.generated.ts",

@@ -196,15 +196,23 @@ class SettingModelClass extends BaseModelClass<
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"], resourceName: "SettingList" })
   async listSettings(): Promise<SettingsResponse> {
     const settings: SettingItem[] = SETTING_DEFS.map((def) => {
-      const raw = getSetting(def.key, def.envKey) ?? "";
+      // 저장값도 env 도 없으면 코드 기본값이 실제로 적용 중이다. 빈칸으로 두면 화면과
+      // 런타임이 어긋나 보인다.
+      const stored = isStored(def.key);
+      const raw = getSetting(def.key, def.envKey);
+      const effective = raw ?? def.fallback;
+      const source = stored ? "db" : raw !== undefined ? "env" : "default";
+
       return {
         key: def.key,
+        group: def.group,
         label: def.label,
         kind: def.kind,
         applies: def.applies,
-        // 설정 화면에는 인증이 없다. 자격증명은 값 자체를 내려보내지 않는다.
-        value: def.kind === "secret" ? (raw ? maskSecret(raw) : "") : raw,
-        stored: isStored(def.key),
+        // secret 도 원본을 내려보낸다 — 화면에서 기본 마스킹하고 토글로 확인한다.
+        // 대시보드에 인증이 없으므로 이 응답은 접근 가능한 사람 모두가 볼 수 있다.
+        value: effective,
+        source,
         min: def.min ?? null,
         max: def.max ?? null,
         help: def.help ?? null,
