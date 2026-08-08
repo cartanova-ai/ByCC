@@ -89,6 +89,8 @@ function notifyLastActiveTokenDying(token: DeadTokenRef, reasonCode: string): vo
       ` · 풀이 비지 않도록 유지 중입니다. ` +
       `전 토큰이 동시에 실패했다면 client_id 취소나 OAuth 계약 변경을 의심하세요`,
     color: SLACK_COLOR.bad,
+    // provider 전체가 죽었다는 신호다. 조용 시간에 묻히면 다음 근무일까지 서비스가 멈춘다.
+    urgent: true,
   });
 }
 

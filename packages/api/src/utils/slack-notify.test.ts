@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { notifySlack, SLACK_COLOR } from "./slack-notify";
 
+// 조용 시간(주말·20~8시)에는 전송이 막힌다. 전송을 검증하는 케이스가 시계에 좌우되지
+// 않도록 목으로 고정하고, 조용 시간 동작은 이 목을 뒤집어 확인한다.
+const { quietMock } = vi.hoisted(() => ({ quietMock: vi.fn(() => false) }));
+vi.mock("./quiet-hours", () => ({ isQuietHours: quietMock }));
+
 describe("notifySlack", () => {
   const savedToken = process.env.SLACK_BOT_TOKEN;
   const savedChannel = process.env.SLACK_CHANNEL_ID;
@@ -9,6 +14,7 @@ describe("notifySlack", () => {
   beforeEach(() => {
     process.env.SLACK_BOT_TOKEN = "xoxb-test";
     process.env.SLACK_CHANNEL_ID = "C123";
+    quietMock.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -95,5 +101,26 @@ describe("notifySlack", () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("timed out"));
 
     await expect(notifySlack({ title: "hello" })).resolves.toBeUndefined();
+  });
+
+  it("조용 시간에는 보통 알림을 보내지 않는다", async () => {
+    quietMock.mockReturnValue(true);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await notifySlack({ title: "세션 만료" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("urgent 알림은 조용 시간에도 보낸다", async () => {
+    // provider 전체가 죽은 상황은 다음 근무일까지 미룰 수 없다.
+    quietMock.mockReturnValue(true);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+
+    await notifySlack({ title: "마지막 토큰 사망", urgent: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

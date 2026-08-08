@@ -2,9 +2,12 @@
  * Slack 알림 (chat.postMessage).
  *
  * fail-open: env 미설정이면 조용히 no-op 이고, 전송 실패는 warn 로그로만 남긴다.
+ * 조용 시간(주말·20~8시)에는 `urgent` 가 아닌 알림을 보내지 않는다.
  * 알림 경로가 토큰 라우팅이나 오류 전파를 지연·차단해서는 안 된다.
  */
 import { getLogger } from "@logtape/logtape";
+
+import { isQuietHours } from "./quiet-hours";
 
 const logger = getLogger(["qgrid", "slack"]);
 
@@ -25,14 +28,25 @@ export type SlackNotification = {
   /** 제목 아래 작은 글씨로 내려가는 부가 정보 — 읽지 않아도 되는 것들. */
   context?: string;
   color?: (typeof SLACK_COLOR)[keyof typeof SLACK_COLOR];
+  /**
+   * 조용 시간(주말·20~8시)에도 보낸다. 서비스가 멈춘 상태처럼 지금 알지 않으면 손해가
+   * 커지는 사건에만 쓴다 — 남용하면 조용 시간 자체가 무의미해진다.
+   */
+  urgent?: boolean;
 };
 
 export async function notifySlack(notification: SlackNotification): Promise<void> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const channel = process.env.SLACK_CHANNEL_ID;
-  const { title, subject, context, color } = notification;
+  const { title, subject, context, color, urgent } = notification;
   if (!botToken || !channel) {
     logger.debug(`slack not configured, skipping notification: ${title} ${subject ?? ""}`);
+    return;
+  }
+
+  // 만료 알림은 주기적으로 반복되므로 여기서 버려도 다음 근무 시간 첫 주기에 다시 온다.
+  if (!urgent && isQuietHours()) {
+    logger.debug(`quiet hours, skipping notification: ${title} ${subject ?? ""}`);
     return;
   }
 
