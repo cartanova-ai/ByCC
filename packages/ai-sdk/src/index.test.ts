@@ -1536,4 +1536,161 @@ describe("qgrid AI SDK provider", () => {
       } as never),
     ).rejects.toThrow(/not supported with streamText/i);
   });
+
+  // ── SON-527: 툴 사용 시 봉투 증분 파싱으로 answer 델타 재방출 ──
+  describe("envelope answer delta re-emission with tools", () => {
+    function stubStreamFetch(deltas: string[], done: unknown) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.includes("/prepareStream")) {
+            return new Response(JSON.stringify({ streamId: "s-envelope" }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (url.includes("/queryStream")) {
+            const encoder = new TextEncoder();
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  for (const text of deltas) {
+                    controller.enqueue(
+                      encoder.encode(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
+                    );
+                  }
+                  controller.enqueue(
+                    encoder.encode(`event: done\ndata: ${JSON.stringify(done)}\n\n`),
+                  );
+                  controller.close();
+                },
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response("{}", { status: 200 });
+        }),
+      );
+    }
+
+    async function collectParts(options: Record<string, unknown>) {
+      const result = await qgrid("openai/gpt-5.5").doStream(options as never);
+      const parts: Array<Record<string, unknown>> = [];
+      for await (const part of result.stream) {
+        parts.push(part as Record<string, unknown>);
+      }
+      return parts;
+    }
+
+    it("re-emits answer text deltas before done and skips the done full-text fallback", async () => {
+      const answer = "일본 여행이라면 도현 #1333 추천해요";
+      const envelope = `{"result":{"action":"answer","answer":${JSON.stringify(answer)},"toolCalls":null}}`;
+      // 이스케이프/키 경계가 잘리도록 어색한 지점에서 자른 델타
+      const deltas = [
+        envelope.slice(0, 18),
+        envelope.slice(18, 29),
+        envelope.slice(29, 47),
+        envelope.slice(47),
+      ];
+      stubStreamFetch(deltas, {
+        text: answer,
+        content: [{ type: "text", text: answer }],
+        finishReason: "stop",
+        model: "gpt-5.5",
+        usage,
+        durationMs: 100,
+        costUsd: 0.01,
+      });
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [tool()],
+      });
+
+      const textDeltas = parts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.length).toBeGreaterThan(1); // done 이전 증분 방출
+      expect(textDeltas.map((p) => p.delta).join("")).toBe(answer); // 중복 없이 정확히 1회
+      expect(parts.filter((p) => p.type === "text-start")).toHaveLength(1);
+      expect(parts.at(-1)).toMatchObject({ type: "finish" });
+    });
+
+    it("stays silent on tool_call envelopes and still maps tool-call content", async () => {
+      const envelope =
+        '{"result":{"action":"tool_call","answer":null,"toolCalls":[{"toolName":"getWeather","args":"{\\"city\\":\\"tokyo\\"}"}]}}';
+      stubStreamFetch([envelope.slice(0, 40), envelope.slice(40)], {
+        text: "",
+        content: [
+          { type: "tool-call", toolCallId: "qg_1", toolName: "getWeather", input: '{"city":"tokyo"}' },
+        ],
+        finishReason: "tool-calls",
+        model: "gpt-5.5",
+        usage,
+        durationMs: 100,
+        costUsd: 0.01,
+      });
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
+        tools: [tool()],
+      });
+
+      expect(parts.filter((p) => p.type === "text-delta")).toHaveLength(0);
+      expect(parts.filter((p) => p.type === "tool-call")).toHaveLength(1);
+      expect(parts.at(-1)).toMatchObject({
+        type: "finish",
+        finishReason: { unified: "tool-calls" },
+      });
+    });
+
+    it("re-emits raw answer JSON deltas when tools and a user schema are combined", async () => {
+      const answerObj = { result: "일본 여행 특집" };
+      const rawAnswer = JSON.stringify(answerObj);
+      const envelope = `{"result":{"action":"answer","answer":${rawAnswer},"toolCalls":null}}`;
+      stubStreamFetch(
+        [envelope.slice(0, 45), envelope.slice(45, 52), envelope.slice(52)],
+        {
+          text: rawAnswer,
+          content: [{ type: "text", text: rawAnswer }],
+          finishReason: "stop",
+          model: "gpt-5.5",
+          usage,
+          durationMs: 100,
+          costUsd: 0.01,
+        },
+      );
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [tool()],
+        responseFormat: { type: "json", schema: structuredOutputSchema },
+      });
+
+      const textDeltas = parts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.length).toBeGreaterThan(1);
+      const streamed = textDeltas.map((p) => p.delta).join("");
+      expect(streamed).toBe(rawAnswer); // raw JSON verbatim → partialOutputStream 부분 파싱 가능
+      expect(JSON.parse(streamed)).toEqual(answerObj);
+    });
+
+    it("falls back to the done full-text emission when no deltas arrive", async () => {
+      const answer = "델타 없는 완성본";
+      stubStreamFetch([], {
+        text: answer,
+        content: [{ type: "text", text: answer }],
+        finishReason: "stop",
+        model: "gpt-5.5",
+        usage,
+        durationMs: 100,
+        costUsd: 0.01,
+      });
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [tool()],
+      });
+
+      const textDeltas = parts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.map((p) => p.delta).join("")).toBe(answer);
+    });
+  });
 });

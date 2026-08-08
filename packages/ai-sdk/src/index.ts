@@ -9,6 +9,7 @@ import {
   type LanguageModelV3StreamResult,
 } from "@ai-sdk/provider";
 
+import { createEnvelopeStreamParser } from "./envelope-stream-parser";
 import {
   type QgridSupportedModel,
   type QueryOutput,
@@ -441,13 +442,22 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       let textStarted = false;
       let deltaTextEmitted = false;
 
+      // 툴이 있으면 델타는 봉투 JSON 원문이다. 증분 파싱해 action:"answer" 로
+      // 판명되는 순간부터 answer 값만 재방출한다 (SON-527). tool_call 이거나
+      // 미판명 구간이면 파서가 "" 를 돌려줘 기존처럼 보류된다.
+      const envelopeParser = hasTools
+        ? createEnvelopeStreamParser(jsonSchema ? "json" : "text")
+        : undefined;
+
       const stream = new ReadableStream<LanguageModelV3StreamPart>({
         async start(controller) {
           try {
             let streamCompleted = false;
             for await (const event of parseSSE(streamRes.body!)) {
               if (event.type === "delta") {
-                if (!hasTools) {
+                const raw = (event.data as { text: string }).text;
+                const text = envelopeParser ? envelopeParser.push(raw) : raw;
+                if (text !== "") {
                   if (!textStarted) {
                     controller.enqueue({ type: "text-start", id: textId });
                     textStarted = true;
@@ -455,7 +465,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                   controller.enqueue({
                     type: "text-delta",
                     id: textId,
-                    delta: (event.data as { text: string }).text,
+                    delta: text,
                   });
                   deltaTextEmitted = true;
                 }

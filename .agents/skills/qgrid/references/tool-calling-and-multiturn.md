@@ -266,6 +266,27 @@ The old tolerant decoder silently shipped degenerate envelopes as answers
 Unknown tool names throw. `answerKind` is required and derived from
 `input.jsonSchema` presence at the dispatcher.
 
+## Streaming With Tools (Envelope Delta Re-Emission)
+
+With tools, provider deltas are raw envelope JSON. The server forwards them
+unmodified over SSE. The SDK (`envelope-stream-parser.ts`, wired into
+`doStream`) incrementally parses that envelope and re-emits only the
+`result.answer` value as `text-delta` parts once `result.action` resolves to
+`"answer"` (SON-527, SDK-only change — the server was never the blocker).
+
+- Undetermined or `tool_call` envelopes emit nothing, matching the pre-change
+  hold-everything behavior.
+- `answerKind: "text"`: the answer JSON string is unescaped to plain text;
+  escape sequences split across delta boundaries are safe (char-level state
+  machine).
+- `answerKind: "json"`: the answer value's raw JSON text is emitted verbatim so
+  AI SDK `partialOutputStream` can partial-parse it.
+- The parser is preview-only. The server strict decoder still decides the final
+  result, and the `done` event's full-text fallback covers streams where the
+  parser emitted nothing (`deltaTextEmitted` flag).
+- Do not re-add a client-side gate that drops deltas when tools are present;
+  that was the failure this section replaces.
+
 ## Multi-Step And Multi-Turn
 
 AI SDK multi-step behavior is client-orchestrated:
