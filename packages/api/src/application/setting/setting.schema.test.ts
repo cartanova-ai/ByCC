@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+
+import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.schema";
+
+describe("validateSettingValue", () => {
+  const intDef = findSettingDef("openai.maxWorkersPerToken")!;
+  const boolDef = findSettingDef("openai.autoscale")!;
+  const numDef = findSettingDef("openai.maxEstimatedRssGiB")!;
+
+  it("정수 범위를 벗어나면 거부한다", () => {
+    // 저장을 막지 않으면 런타임에서 조용히 기본값으로 떨어져 원인을 찾기 어렵다.
+    expect(validateSettingValue(intDef, "21")).toMatchObject({ ok: false });
+    expect(validateSettingValue(intDef, "0")).toMatchObject({ ok: false });
+    expect(validateSettingValue(intDef, "20")).toMatchObject({ ok: true, value: "20" });
+  });
+
+  it("정수 자리에 소수를 넣으면 거부한다", () => {
+    expect(validateSettingValue(intDef, "3.5")).toMatchObject({ ok: false });
+  });
+
+  it("숫자가 아닌 값을 거부한다", () => {
+    expect(validateSettingValue(intDef, "많이")).toMatchObject({ ok: false });
+  });
+
+  it("실수 설정은 소수를 허용한다", () => {
+    expect(validateSettingValue(numDef, "16.5")).toMatchObject({ ok: true, value: "16.5" });
+  });
+
+  it("boolean 은 true/false 만 받는다", () => {
+    expect(validateSettingValue(boolDef, "true")).toMatchObject({ ok: true });
+    expect(validateSettingValue(boolDef, "false")).toMatchObject({ ok: true });
+    expect(validateSettingValue(boolDef, "1")).toMatchObject({ ok: false });
+  });
+
+  it("앞뒤 공백은 저장 전에 떨어뜨린다", () => {
+    expect(validateSettingValue(intDef, "  7  ")).toMatchObject({ ok: true, value: "7" });
+  });
+});
+
+describe("maskSecret", () => {
+  it("긴 값은 앞뒤만 남긴다", () => {
+    expect(maskSecret("xoxb-1234567890-abcdefghij")).toBe("xoxb-123...ghij");
+  });
+
+  it("짧은 값은 통째로 가린다", () => {
+    // 앞뒤를 남기면 짧은 값은 사실상 전부 노출된다.
+    expect(maskSecret("short")).toBe("***");
+  });
+});
+
+describe("SETTING_DEFS", () => {
+  it("키가 중복되지 않는다", () => {
+    const keys = SETTING_DEFS.map((d) => d.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("env 키도 중복되지 않는다", () => {
+    // 겹치면 한 env 를 두 설정이 서로 덮어쓴다.
+    const envKeys = SETTING_DEFS.map((d) => d.envKey);
+    expect(new Set(envKeys).size).toBe(envKeys.length);
+  });
+
+  it("정의되지 않은 키는 찾지 못한다", () => {
+    expect(findSettingDef("nope.bad")).toBeUndefined();
+  });
+});

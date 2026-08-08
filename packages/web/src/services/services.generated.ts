@@ -35,8 +35,16 @@ import {
 } from "./request-log-step/request-log-step.types";
 import { RequestLogListParams, RequestLogSaveParams } from "./request-log/request-log.types";
 import {
+  SettingListParams,
+  SettingSaveParams,
+  SettingsResponse,
+  SettingApplies,
+} from "./setting/setting.types";
+import {
   TokenSubsetKey,
   TokenSubsetMapping,
+  SettingSubsetKey,
+  SettingSubsetMapping,
   RequestLogStepSubsetKey,
   RequestLogStepSubsetMapping,
   RequestLogSubsetKey,
@@ -188,6 +196,178 @@ export namespace TokenService {
   export const useDelMutation = () =>
     useMutation({
       mutationFn: (params: { ids: number[] }) => del(params.ids),
+    });
+}
+
+export namespace SettingService {
+  export async function getSetting<T extends SettingSubsetKey>(
+    subset: T,
+    id: number,
+  ): Promise<SettingSubsetMapping[T]> {
+    return fetch({
+      method: "GET",
+      url: `/api/setting/findById?${qs.stringify({ subset, id })}`,
+    });
+  }
+
+  export const getSettingQueryOptions = <T extends SettingSubsetKey>(subset: T, id: number) =>
+    queryOptions({
+      queryKey: ["Setting", "getSetting", subset, id],
+      queryFn: () => getSetting(subset, id),
+    });
+
+  export const useSetting = <T extends SettingSubsetKey>(
+    subset: T,
+    id: number,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useQuery({
+        ...getSettingQueryOptions(subset, id),
+        ...options,
+      }),
+    );
+
+  export async function getSettings<T extends SettingSubsetKey, LP extends SettingListParams>(
+    subset: T,
+    rawParams?: LP,
+  ): Promise<ListResult<LP, SettingSubsetMapping[T]>> {
+    return fetch({
+      method: "GET",
+      url: `/api/setting/findMany?${qs.stringify({ subset, rawParams })}`,
+    });
+  }
+
+  export const getSettingsQueryOptions = <T extends SettingSubsetKey, LP extends SettingListParams>(
+    subset: T,
+    rawParams?: LP,
+  ) =>
+    queryOptions({
+      queryKey: ["Setting", "getSettings", subset, rawParams],
+      queryFn: () => getSettings(subset, rawParams),
+    });
+
+  export const useSettings = <T extends SettingSubsetKey, LP extends SettingListParams>(
+    subset: T,
+    rawParams?: LP,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useQuery({
+        ...getSettingsQueryOptions(subset, rawParams),
+        ...options,
+      }),
+    );
+
+  export const getSettingsInfiniteQueryOptions = <
+    T extends SettingSubsetKey,
+    LP extends SettingListParams,
+  >(
+    subset: T,
+    rawParams?: LP,
+  ) =>
+    infiniteQueryOptions({
+      queryKey: ["Setting", "getSettings", "infinite", subset, rawParams],
+      queryFn: ({ pageParam }) => getSettings(subset, { ...rawParams, page: pageParam }),
+      initialPageParam: 1 as number,
+      getNextPageParam: (lastPage, allPages) => {
+        const total = (lastPage as { total?: number })?.total ?? 0;
+        const loaded = allPages.reduce(
+          (sum, p) => sum + ((p as { rows?: unknown[] })?.rows?.length ?? 0),
+          0,
+        );
+        return loaded < total ? allPages.length + 1 : undefined;
+      },
+      select: dedupeAndFlatten,
+    });
+
+  export const useSettingsInfinite = <T extends SettingSubsetKey, LP extends SettingListParams>(
+    subset: T,
+    rawParams?: LP,
+    options?: { enabled?: boolean },
+  ) =>
+    useRefreshable(
+      useInfiniteQuery({
+        ...getSettingsInfiniteQueryOptions(subset, rawParams),
+        ...options,
+      }),
+    );
+
+  export async function save(spa: SettingSaveParams[]): Promise<number[]> {
+    return fetch({
+      method: "POST",
+      url: `/api/setting/save`,
+      data: { spa },
+    });
+  }
+
+  export const useSaveMutation = () =>
+    useMutation({
+      mutationFn: (params: { spa: SettingSaveParams[] }) => save(params.spa),
+    });
+
+  export async function del(ids: number[]): Promise<number> {
+    return fetch({
+      method: "POST",
+      url: `/api/setting/del`,
+      data: { ids },
+    });
+  }
+
+  export const useDelMutation = () =>
+    useMutation({
+      mutationFn: (params: { ids: number[] }) => del(params.ids),
+    });
+
+  export async function getSettingList(): Promise<SettingsResponse> {
+    return fetch({
+      method: "GET",
+      url: `/api/setting/listSettings`,
+    });
+  }
+
+  export const getSettingListQueryOptions = () =>
+    queryOptions({
+      queryKey: ["Setting", "getSettingList"],
+      queryFn: () => getSettingList(),
+    });
+
+  export const useSettingList = (options?: { enabled?: boolean }) =>
+    useRefreshable(
+      useQuery({
+        ...getSettingListQueryOptions(),
+        ...options,
+      }),
+    );
+
+  export async function updateSetting(
+    key: string,
+    value: string,
+  ): Promise<{ applies: SettingApplies }> {
+    return fetch({
+      method: "POST",
+      url: `/api/setting/updateSetting`,
+      data: { key, value },
+    });
+  }
+
+  export const useUpdateSettingMutation = () =>
+    useMutation({
+      mutationFn: (params: { key: string; value: string }) =>
+        updateSetting(params.key, params.value),
+    });
+
+  export async function resetSetting(key: string): Promise<{ applies: SettingApplies }> {
+    return fetch({
+      method: "POST",
+      url: `/api/setting/resetSetting`,
+      data: { key },
+    });
+  }
+
+  export const useResetSettingMutation = () =>
+    useMutation({
+      mutationFn: (params: { key: string }) => resetSetting(params.key),
     });
 }
 
@@ -942,6 +1122,17 @@ export const RequestLogStepAsyncIdConfig: AsyncIdConfig<
   placeholderKey: "entity.RequestLogStep",
   useList: RequestLogStepService.useRequestLogSteps,
   useListInfinite: RequestLogStepService.useRequestLogStepsInfinite,
+};
+
+// AsyncIdConfig: Setting
+export const SettingAsyncIdConfig: AsyncIdConfig<
+  SettingSubsetKey,
+  SettingSubsetMapping,
+  SettingListParams
+> = {
+  placeholderKey: "entity.Setting",
+  useList: SettingService.useSettings,
+  useListInfinite: SettingService.useSettingsInfinite,
 };
 
 // AsyncIdConfig: Token

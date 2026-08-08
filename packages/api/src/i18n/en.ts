@@ -47,6 +47,8 @@ export default {
   "error.internalServerError": "Internal server error",
   "error.notFound": "Not found",
   "error.serviceUnavailable": "Service unavailable",
+  "setting.invalidValue": (reason: string) => `Invalid setting value: ${reason}`,
+  "setting.unknownKey": (key: string) => `Unknown setting key ${key}`,
   "qgrid.dispatcherFailed": (provider: string) => `${provider} dispatcher failed to initialize`,
   "qgrid.dispatcherStarting": (provider: string) =>
     `${provider} dispatcher is starting up. Please retry shortly`,

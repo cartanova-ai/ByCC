@@ -1,0 +1,47 @@
+import { z } from "zod";
+
+import { SettingBaseSchema, SettingBaseListParams } from "../sonamu.generated";
+
+// Setting - ListParams
+export const SettingListParams = SettingBaseListParams;
+export type SettingListParams = z.infer<typeof SettingListParams>;
+
+// Setting - SaveParams
+export const SettingSaveParams = SettingBaseSchema.partial({ id: true, created_at: true });
+export type SettingSaveParams = z.infer<typeof SettingSaveParams>;
+
+// ── 설정 API 응답 스키마 ──
+
+export const SettingKind = z.enum(["boolean", "integer", "number", "string", "secret"]);
+export type SettingKind = z.infer<typeof SettingKind>;
+
+export const SettingApplies = z.enum(["immediate", "restart"]);
+export type SettingApplies = z.infer<typeof SettingApplies>;
+
+export const SettingItem = z.object({
+  key: z.string(),
+  label: z.string(),
+  kind: SettingKind,
+  applies: SettingApplies,
+  /** 현재 적용 중인 값. secret 은 마스킹된 상태로 내려간다. */
+  value: z.string(),
+  /** DB 에 저장된 값인지. false 면 env 나 코드 기본값을 쓰는 중이다. */
+  stored: z.boolean(),
+  min: z.number().nullable(),
+  max: z.number().nullable(),
+  help: z.string().nullable(),
+});
+export type SettingItem = z.infer<typeof SettingItem>;
+
+/** 화면에서 바꿀 수 없는 기동 시점 값들 — 어떤 환경에 붙어 있는지 확인용. */
+export const RuntimeInfoItem = z.object({
+  label: z.string(),
+  value: z.string(),
+});
+export type RuntimeInfoItem = z.infer<typeof RuntimeInfoItem>;
+
+export const SettingsResponse = z.object({
+  settings: SettingItem.array(),
+  runtime: RuntimeInfoItem.array(),
+});
+export type SettingsResponse = z.infer<typeof SettingsResponse>;

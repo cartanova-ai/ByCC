@@ -1,0 +1,59 @@
+{
+  "id": "Setting",
+  "table": "settings",
+  "title": "Setting",
+  "props": [
+    {
+      "name": "id",
+      "type": "integer",
+      "desc": "ID"
+    },
+    {
+      "name": "created_at",
+      "desc": "등록일시",
+      "dbDefault": "CURRENT_TIMESTAMP",
+      "type": "date"
+    },
+    {
+      "name": "key",
+      "type": "string",
+      "length": 100,
+      "desc": "설정 키 (예: openai.maxWorkersPerToken)",
+      "toFilter": true
+    },
+    {
+      "name": "value",
+      "type": "string",
+      "desc": "설정 값 (문자열 저장, 앱에서 파싱·검증)"
+    },
+    {
+      "name": "updated_at",
+      "type": "date",
+      "nullable": true,
+      "desc": "최종 수정일시"
+    }
+  ],
+  "indexes": [
+    {
+      "type": "unique",
+      "name": "settings_key_unique",
+      "columns": [
+        {
+          "name": "key"
+        }
+      ],
+      "using": "btree"
+    }
+  ],
+  "subsets": {
+    "A": ["id", "created_at", "key", "value", "updated_at"]
+  },
+  "enums": {
+    "SettingOrderBy": {
+      "key-asc": "키순"
+    },
+    "SettingSearchField": {
+      "key": "키"
+    }
+  }
+}

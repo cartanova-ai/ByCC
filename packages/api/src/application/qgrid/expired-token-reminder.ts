@@ -13,6 +13,7 @@
 import { getLogger } from "@logtape/logtape";
 
 import { notifySlack, SLACK_COLOR } from "../../utils/slack-notify";
+import { getSetting } from "../setting/setting.store";
 import { TokenModel } from "../token/token.model";
 import { getSlackUserMap, mentionFor } from "./slack-user-map";
 
@@ -60,7 +61,9 @@ let timer: ReturnType<typeof setInterval> | null = null;
  * 없고, 하루 몇 건 수준이라 중복을 감수하는 편이 잠금 장치를 두는 것보다 낫다.
  */
 export function startExpiredTokenReminder(): void {
-  const minutes = Number(process.env.SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES ?? 0);
+  const minutes = Number(
+    getSetting("slack.expiryReminderMinutes", "SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES") ?? 0,
+  );
   if (!Number.isFinite(minutes) || minutes <= 0) return;
 
   const userMap = getSlackUserMap();

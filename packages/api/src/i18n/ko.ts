@@ -46,6 +46,8 @@ export default {
   "error.internalServerError": "서버 오류가 발생했습니다",
   "error.notFound": "찾을 수 없습니다",
   "error.serviceUnavailable": "서비스를 사용할 수 없습니다",
+  "setting.invalidValue": (reason: string) => `설정 값이 올바르지 않습니다: ${reason}`,
+  "setting.unknownKey": (key: string) => `알 수 없는 설정 키 ${key}`,
   "qgrid.dispatcherFailed": (provider: string) => `${provider} dispatcher 초기화에 실패했습니다`,
   "qgrid.dispatcherStarting": (provider: string) =>
     `${provider} dispatcher 기동 중입니다. 잠시 후 다시 시도해주세요`,

@@ -128,6 +128,14 @@ export const RequestLogStepSearchField = z.enum(["id"]).describe("RequestLogStep
 export type RequestLogStepSearchField = z.infer<typeof RequestLogStepSearchField>;
 export const RequestLogStepSearchFieldLabel = { id: "ID" };
 
+// Enums: Setting
+export const SettingOrderBy = z.enum(["key-asc"]).describe("SettingOrderBy");
+export type SettingOrderBy = z.infer<typeof SettingOrderBy>;
+export const SettingOrderByLabel = { "key-asc": "키순" };
+export const SettingSearchField = z.enum(["key"]).describe("SettingSearchField");
+export type SettingSearchField = z.infer<typeof SettingSearchField>;
+export const SettingSearchFieldLabel = { key: "키" };
+
 // Enums: Token
 export const TokenOrderBy = z.enum(["id-desc", "ord-asc"]).describe("TokenOrderBy");
 export type TokenOrderBy = z.infer<typeof TokenOrderBy>;
@@ -263,6 +271,18 @@ export type RequestLogStepBaseSchema = z.infer<typeof RequestLogStepBaseSchema> 
   ];
 };
 
+// BaseSchema: Setting
+export const SettingBaseSchema = z.object({
+  id: z.int(),
+  created_at: z.date(),
+  key: z.string().max(100),
+  value: z.string(),
+  updated_at: z.date().nullable(),
+});
+export type SettingBaseSchema = z.infer<typeof SettingBaseSchema> & {
+  readonly __hasDefault__: readonly ["created_at", "updated_at", "id"];
+};
+
 // BaseSchema: Token
 export const TokenBaseSchema = z.object({
   id: z.int(),
@@ -319,6 +339,22 @@ export const RequestLogStepBaseListParams = z
   })
   .partial();
 export type RequestLogStepBaseListParams = z.infer<typeof RequestLogStepBaseListParams>;
+
+// BaseListParams: Setting
+export const SettingBaseListParams = z
+  .object({
+    num: z.number().int().nonnegative(),
+    page: z.number().int().min(1),
+    search: SettingSearchField,
+    keyword: z.string(),
+    orderBy: SettingOrderBy,
+    queryMode: SonamuQueryMode,
+    id: zArrayable(z.number().int().positive()),
+    sonamuFilter: z.custom<ApplySonamuFilter<SettingBaseSchema, never, never>>(),
+    key: z.string().max(100),
+  })
+  .partial();
+export type SettingBaseListParams = z.infer<typeof SettingBaseListParams>;
 
 // BaseListParams: Token
 export const TokenBaseListParams = z
@@ -486,6 +522,21 @@ export type RequestLogStepSubsetMapping = {
 };
 export const RequestLogStepSubsetKey = z.enum(["A", "T", "I"]);
 export type RequestLogStepSubsetKey = z.infer<typeof RequestLogStepSubsetKey>;
+
+// Subsets: Setting
+export const SettingSubsetA = z.object({
+  id: z.int(),
+  created_at: z.date(),
+  key: z.string().max(100),
+  value: z.string(),
+  updated_at: z.date().nullable(),
+});
+export type SettingSubsetA = z.infer<typeof SettingSubsetA>;
+export type SettingSubsetMapping = {
+  A: SettingSubsetA;
+};
+export const SettingSubsetKey = z.enum(["A"]);
+export type SettingSubsetKey = z.infer<typeof SettingSubsetKey>;
 
 // Subsets: Token
 export const TokenSubsetA = z.object({

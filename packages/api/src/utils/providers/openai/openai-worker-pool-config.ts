@@ -1,3 +1,6 @@
+import { SETTING_DEFS } from "../../../application/setting/setting.schema";
+import { getSetting } from "../../../application/setting/setting.store";
+
 export const MAX_OPENAI_WORKERS_PER_TOKEN = 20;
 const DEFAULT_OPENAI_MIN_WORKERS_PER_TOKEN = 1;
 const DEFAULT_OPENAI_MAX_WORKERS_PER_TOKEN = 3;
@@ -32,8 +35,23 @@ function boundedNumber(value: string | undefined, fallback: number, min: number)
   return Math.max(min, parsed);
 }
 
+/**
+ * 설정 저장소(DB) 를 먼저 보고 없으면 env 로 떨어지는 조회 객체.
+ *
+ * 기존 파싱 로직이 `env[KEY]` 형태를 전제하므로, 소스만 바꿔 끼우고 검증·기본값 처리는
+ * 그대로 둔다. 테스트는 `env` 인자에 순수한 맵을 넘겨 저장소를 우회한다.
+ */
+function settingsBackedEnv(): Record<string, string | undefined> {
+  return new Proxy({} as Record<string, string | undefined>, {
+    get: (_target, prop: string) => {
+      const def = SETTING_DEFS.find((d) => d.envKey === prop);
+      return def ? getSetting(def.key, def.envKey) : process.env[prop];
+    },
+  });
+}
+
 export function resolveOpenAIWorkerPoolConfig(
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = settingsBackedEnv(),
 ): OpenAIWorkerPoolConfig {
   const autoscale = env.QGRID_OPENAI_AUTOSCALE !== "false" && env.QGRID_OPENAI_AUTOSCALE !== "0";
   const minWorkersPerToken = boundedInteger(

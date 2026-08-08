@@ -9,6 +9,8 @@
  * 맞는 동작이다.
  */
 
+import { getSetting } from "../setting/setting.store";
+
 /** `토큰명:SlackUserId` 목록을 파싱한다. */
 export function parseSlackUserMap(raw: string | undefined): Map<string, string> {
   const map = new Map<string, string>();
@@ -41,7 +43,7 @@ export function mentionFor(tokenName: string | null, userMap: Map<string, string
 let cached: Map<string, string> | null = null;
 
 export function getSlackUserMap(): Map<string, string> {
-  cached ??= parseSlackUserMap(process.env.SLACK_USER_MAP);
+  cached ??= parseSlackUserMap(getSetting("slack.userMap", "SLACK_USER_MAP"));
   return cached;
 }
 

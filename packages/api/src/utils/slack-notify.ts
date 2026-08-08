@@ -7,6 +7,7 @@
  */
 import { getLogger } from "@logtape/logtape";
 
+import { getSetting } from "../application/setting/setting.store";
 import { isQuietHours } from "./quiet-hours";
 
 const logger = getLogger(["qgrid", "slack"]);
@@ -33,19 +34,21 @@ export type SlackNotification = {
    * 커지는 사건에만 쓴다 — 남용하면 조용 시간 자체가 무의미해진다.
    */
   urgent?: boolean;
+  /** 조용 시간 판정 기준 시각. 테스트에서 시계를 고정할 때만 넘긴다. */
+  now?: Date;
 };
 
 export async function notifySlack(notification: SlackNotification): Promise<void> {
-  const botToken = process.env.SLACK_BOT_TOKEN;
-  const channel = process.env.SLACK_CHANNEL_ID;
-  const { title, subject, context, color, urgent } = notification;
+  const botToken = getSetting("slack.botToken", "SLACK_BOT_TOKEN");
+  const channel = getSetting("slack.channelId", "SLACK_CHANNEL_ID");
+  const { title, subject, context, color, urgent, now } = notification;
   if (!botToken || !channel) {
     logger.debug(`slack not configured, skipping notification: ${title} ${subject ?? ""}`);
     return;
   }
 
   // 만료 알림은 주기적으로 반복되므로 여기서 버려도 다음 근무 시간 첫 주기에 다시 온다.
-  if (!urgent && isQuietHours()) {
+  if (!urgent && isQuietHours(now)) {
     logger.debug(`quiet hours, skipping notification: ${title} ${subject ?? ""}`);
     return;
   }

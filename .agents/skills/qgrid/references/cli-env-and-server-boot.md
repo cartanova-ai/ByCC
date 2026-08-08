@@ -88,6 +88,14 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 On shutdown, it stops provider dispatchers and the token subscriber.
 
+### Runtime settings
+
+Some env values are editable at runtime through the dashboard's Settings page, backed by the `settings` table (key-value). Resolution order is DB → env → code default: env stays as a fallback so a deploy that has not written any setting yet keeps working exactly as before. `loadSettings()` runs in `onStart` before the dispatchers are constructed, since the OpenAI pool reads its worker counts in its constructor.
+
+- Editable: OpenAI autoscale and min/max workers per token, the worker memory guards, the Slack expiry-reminder interval, and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.schema.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart.
+- Not editable: anything needed before the server can read its own database (`QGRID_DB_*`, `HOST`, `PORT`, `NODE_ENV`). These are exposed read-only on the same page so an operator can confirm which environment they are looking at; the DB password is masked.
+- Worker settings are marked `restart` because `resolveOpenAIWorkerPoolConfig` is called once in the dispatcher constructor. Changing them writes to the DB but does not resize a running pool.
+
 ### Readiness during startup
 
 HTTP listening opens before the dispatchers finish starting, so requests can arrive while a provider is still unavailable. On dev0 that window is 1–2 minutes: 25 OpenAI workers spawn at `SPAWN_INTERVAL_MS` apart, plus codex process init.

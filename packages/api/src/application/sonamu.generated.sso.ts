@@ -8,9 +8,11 @@ import { type PuriWrapper, type DatabaseSchemaExtend, type PuriLoaderQueries } f
 import {
   type RequestLogSubsetKey,
   type RequestLogStepSubsetKey,
+  type SettingSubsetKey,
   type TokenSubsetKey,
   type RequestLogBaseSchema,
   type RequestLogStepBaseSchema,
+  type SettingBaseSchema,
   type TokenBaseSchema,
 } from "./sonamu.generated";
 
@@ -176,6 +178,24 @@ export const requestLogStepLoaderQueries = {
   I: [],
 } as const satisfies PuriLoaderQueries<RequestLogStepSubsetKey>;
 
+// SubsetQuery: Setting
+export const settingSubsetQueries = {
+  A: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
+    return qbWrapper.from("settings").select({
+      id: "settings.id",
+      created_at: "settings.created_at",
+      key: "settings.key",
+      value: "settings.value",
+      updated_at: "settings.updated_at",
+    });
+  },
+};
+
+// LoaderQuery: Setting
+export const settingLoaderQueries = {
+  A: [],
+} as const satisfies PuriLoaderQueries<SettingSubsetKey>;
+
 // SubsetQuery: Token
 export const tokenSubsetQueries = {
   A: (qbWrapper: PuriWrapper<DatabaseSchemaExtend>) => {
@@ -206,6 +226,7 @@ declare module "sonamu" {
   export interface DatabaseSchemaExtend {
     request_logs: RequestLogBaseSchema;
     request_log_steps: RequestLogStepBaseSchema;
+    settings: SettingBaseSchema;
     tokens: TokenBaseSchema;
   }
 

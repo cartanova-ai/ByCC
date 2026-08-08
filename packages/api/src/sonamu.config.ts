@@ -15,6 +15,7 @@ import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
 import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
+import { loadSettings } from "./application/setting/setting.store";
 import { handleServerError } from "./server-error-handler";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
@@ -169,6 +170,9 @@ export default defineConfig({
     lifecycle: {
       onStart: async () => {
         const log = getLogger(["qgrid", "startup"]);
+
+        // dispatcher 가 생성자에서 워커 설정을 읽으므로 그 전에 올려야 한다.
+        await loadSettings();
 
         let triggerReady = true;
         try {

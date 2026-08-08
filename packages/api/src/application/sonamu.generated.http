@@ -70,6 +70,81 @@ Content-Type: application/json
 
 ###
 
+GET {{baseUrl}}/api/setting/findById
+	?subset=A
+	&id=0
+Content-Type: application/json
+
+###
+
+GET {{baseUrl}}/api/setting/findMany
+	?subset=A
+	&rawParams[num]=24
+	&rawParams[page]=1
+	&rawParams[search]=key
+	&rawParams[keyword]=KEYWORD
+	&rawParams[orderBy]=key-asc
+	&rawParams[queryMode]=both
+	&rawParams[id]=0
+	&rawParams[sonamuFilter]=unknown-custom
+	&rawParams[key]=KEY
+Content-Type: application/json
+
+###
+
+POST {{baseUrl}}/api/setting/save
+Content-Type: application/json
+
+{
+  "spa": [
+    {
+      "id": 0,
+      "created_at": "2000-01-01",
+      "key": "KEY",
+      "value": "VALUE",
+      "updated_at": null
+    }
+  ]
+}
+
+###
+
+POST {{baseUrl}}/api/setting/del
+Content-Type: application/json
+
+{
+  "ids": [
+    0
+  ]
+}
+
+###
+
+GET {{baseUrl}}/api/setting/listSettings
+	?
+Content-Type: application/json
+
+###
+
+POST {{baseUrl}}/api/setting/updateSetting
+Content-Type: application/json
+
+{
+  "key": "KEY",
+  "value": "VALUE"
+}
+
+###
+
+POST {{baseUrl}}/api/setting/resetSetting
+Content-Type: application/json
+
+{
+  "key": "KEY"
+}
+
+###
+
 GET {{baseUrl}}/api/requestLogStep/findById
 	?subset=A
 	&id=0

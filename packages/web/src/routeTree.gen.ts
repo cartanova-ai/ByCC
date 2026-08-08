@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TokensRouteImport } from './routes/tokens'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as MonitRouteImport } from './routes/monit'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as IndexRouteImport } from './routes/index'
@@ -18,6 +19,11 @@ import { Route as RequestsShowRouteImport } from './routes/requests/show'
 const TokensRoute = TokensRouteImport.update({
   id: '/tokens',
   path: '/tokens',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MonitRoute = MonitRouteImport.update({
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/logs': typeof LogsRoute
   '/monit': typeof MonitRoute
+  '/settings': typeof SettingsRoute
   '/tokens': typeof TokensRoute
   '/requests/show': typeof RequestsShowRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/logs': typeof LogsRoute
   '/monit': typeof MonitRoute
+  '/settings': typeof SettingsRoute
   '/tokens': typeof TokensRoute
   '/requests/show': typeof RequestsShowRoute
 }
@@ -60,21 +68,36 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/logs': typeof LogsRoute
   '/monit': typeof MonitRoute
+  '/settings': typeof SettingsRoute
   '/tokens': typeof TokensRoute
   '/requests/show': typeof RequestsShowRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/logs' | '/monit' | '/tokens' | '/requests/show'
+  fullPaths:
+    | '/'
+    | '/logs'
+    | '/monit'
+    | '/settings'
+    | '/tokens'
+    | '/requests/show'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/logs' | '/monit' | '/tokens' | '/requests/show'
-  id: '__root__' | '/' | '/logs' | '/monit' | '/tokens' | '/requests/show'
+  to: '/' | '/logs' | '/monit' | '/settings' | '/tokens' | '/requests/show'
+  id:
+    | '__root__'
+    | '/'
+    | '/logs'
+    | '/monit'
+    | '/settings'
+    | '/tokens'
+    | '/requests/show'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LogsRoute: typeof LogsRoute
   MonitRoute: typeof MonitRoute
+  SettingsRoute: typeof SettingsRoute
   TokensRoute: typeof TokensRoute
   RequestsShowRoute: typeof RequestsShowRoute
 }
@@ -86,6 +109,13 @@ declare module '@tanstack/react-router' {
       path: '/tokens'
       fullPath: '/tokens'
       preLoaderRoute: typeof TokensRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/monit': {
@@ -123,6 +153,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LogsRoute: LogsRoute,
   MonitRoute: MonitRoute,
+  SettingsRoute: SettingsRoute,
   TokensRoute: TokensRoute,
   RequestsShowRoute: RequestsShowRoute,
 }

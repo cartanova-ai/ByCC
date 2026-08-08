@@ -19,7 +19,13 @@ function createSSRQuery(
 
 import { RequestLogStepListParams } from "./request-log-step/request-log-step.types";
 import { RequestLogListParams } from "./request-log/request-log.types";
-import { TokenSubsetKey, RequestLogStepSubsetKey, RequestLogSubsetKey } from "./sonamu.generated";
+import { SettingListParams } from "./setting/setting.types";
+import {
+  TokenSubsetKey,
+  SettingSubsetKey,
+  RequestLogStepSubsetKey,
+  RequestLogSubsetKey,
+} from "./sonamu.generated";
 import { TokenListParams } from "./token/token.types";
 
 export namespace TokenService {
@@ -31,6 +37,20 @@ export namespace TokenService {
     rawParams?: LP,
   ): SSRQuery =>
     createSSRQuery("TokenModel", "findMany", [subset, rawParams], ["Token", "getTokens"]);
+}
+
+export namespace SettingService {
+  export const getSetting = <T extends SettingSubsetKey>(subset: T, id: number): SSRQuery =>
+    createSSRQuery("SettingModel", "findById", [subset, id], ["Setting", "getSetting"]);
+
+  export const getSettings = <T extends SettingSubsetKey, LP extends SettingListParams>(
+    subset: T,
+    rawParams?: LP,
+  ): SSRQuery =>
+    createSSRQuery("SettingModel", "findMany", [subset, rawParams], ["Setting", "getSettings"]);
+
+  export const getSettingList = (): SSRQuery =>
+    createSSRQuery("SettingModel", "listSettings", [], ["Setting", "getSettingList"]);
 }
 
 export namespace RequestLogStepService {

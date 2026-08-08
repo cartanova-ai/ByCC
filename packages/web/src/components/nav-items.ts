@@ -2,6 +2,7 @@ import type React from "react";
 import ActivityIcon from "~icons/lucide/file-text";
 import GaugeIcon from "~icons/lucide/home";
 import KeyRoundIcon from "~icons/lucide/key-round";
+import SettingsIcon from "~icons/lucide/settings";
 import TerminalIcon from "~icons/lucide/terminal";
 
 export type NavItem = {
@@ -29,6 +30,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { title: "Tokens", path: "/tokens", icon: KeyRoundIcon },
       { title: "Request Logs", shortTitle: "Logs", path: "/logs", icon: ActivityIcon },
       { title: "Server Logs", shortTitle: "Server", path: "/monit", icon: TerminalIcon },
+      { title: "Settings", path: "/settings", icon: SettingsIcon },
     ],
   },
 ];
