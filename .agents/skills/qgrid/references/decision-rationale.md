@@ -66,6 +66,13 @@ Key decisions:
 - `runContext.requestLogId` is intentionally direct. qgrid SDK and server are in the same product boundary, so an opaque indirection was not worth the complexity.
 - Lifecycle endpoints remain public because `createQgridLogger` records non-qgrid AI SDK calls into qgrid logs without forcing those calls through the qgrid provider.
 - Structured-output failures should fail honestly. Especially on Claude Code, partial or invalid structured output must not be rescued into a fake success.
+- Streaming with tools re-emits `answer` deltas by incrementally parsing the
+  envelope client-side (SDK 2.6.10, SON-527). The server keeps forwarding raw
+  envelope deltas unchanged; the SDK parser is preview-only and the strict
+  server decoder still owns the final result. Silence-on-anomaly plus the done
+  full-text fallback means the worst case degrades to the old hold-everything
+  behavior, never to leaked envelope text. See
+  `references/tool-calling-and-multiturn.md` (Streaming With Tools).
 
 ## OpenAI/Codex Runtime
 
