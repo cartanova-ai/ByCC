@@ -8,9 +8,6 @@ import { QgridService } from "@/services/services.generated";
 import { type TokenSubsetMapping } from "@/services/sonamu.generated";
 import { useUpdateTokenMutation } from "@/services/token/use-update-token-mutation";
 
-import { OAuthCodeEntry } from "./OAuthCodeEntry";
-import { type Provider, useOAuthLoginFlow } from "./use-oauth-login-flow";
-
 type Token = TokenSubsetMapping["A"];
 
 function getExpiresAt(token: Token): number | null {
@@ -52,8 +49,6 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
   const removeMutation = QgridService.useRemoveTokenMutation();
   const updateMutation = useUpdateTokenMutation();
   const toggleMutation = QgridService.useToggleTokenMutation();
-  // 재로그인은 Add Token 과 같은 플로우를 쓴다 — 원격 접속이면 코드 입력 단계로 이어진다.
-  const oauth = useOAuthLoginFlow();
 
   const invalidate = () =>
     Promise.all([
@@ -71,10 +66,6 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
     await removeMutation.mutateAsync({ id: deleteTarget.id });
     await invalidate();
     setDeleteTarget(null);
-  };
-
-  const submitReloginCode = async (pastedCode: string) => {
-    if (await oauth.submitCode(pastedCode)) oauth.reset();
   };
 
   const openEdit = (token: Token) => {
@@ -185,26 +176,6 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-1">
-                        {!token.active && (
-                          <button
-                            type="button"
-                            title="기존 이름으로 다시 로그인"
-                            className="px-2 py-0.5 mr-1 text-[11px] font-medium rounded-md border border-sand-300 text-sand-600 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150 inline-flex items-center gap-1"
-                            disabled={oauth.loadingProvider !== null}
-                            onClick={() =>
-                              void oauth.start(token.provider as Provider, token.name ?? "")
-                            }
-                          >
-                            {oauth.loadingProvider === token.provider ? (
-                              <>
-                                <span className="w-3 h-3 border-2 border-sand-400 border-t-transparent rounded-full animate-spin" />
-                                로그인 대기
-                              </>
-                            ) : (
-                              "재로그인"
-                            )}
-                          </button>
-                        )}
                         <button
                           type="button"
                           className="p-1 rounded text-sand-400 hover:text-sienna-500 transition-colors duration-150"
@@ -228,30 +199,6 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
           </table>
         </div>
       </div>
-
-      {/* 재로그인 코드 입력 (원격 접속 code 모드) */}
-      {oauth.codeEntry && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
-          <div
-            className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
-            onClick={oauth.reset}
-            onKeyDown={() => {}}
-          />
-          <div className="relative panel shadow-xl w-full max-w-md mx-4">
-            <div className="px-5 py-4 border-b border-sand-100/60">
-              <h3 className="text-base font-medium text-sand-900">재로그인</h3>
-            </div>
-            <div className="px-5 py-4">
-              <OAuthCodeEntry
-                isPending={oauth.completeMutation.isPending}
-                isError={oauth.completeMutation.isError}
-                onSubmit={(code) => void submitReloginCode(code)}
-                onRestart={oauth.reset}
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Edit Modal */}
       {editTarget && (

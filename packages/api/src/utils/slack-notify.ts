@@ -50,8 +50,15 @@ export async function notifySlack(
     return;
   }
 
+  // 연휴처럼 규칙으로 잡을 수 없는 기간에 관리자가 내리는 스위치. urgent 는 통과시킨다 —
+  // 끈 상태로 provider 가 전부 죽으면 연휴 내내 서비스가 멈춘 줄 아무도 모른다.
+  if (!urgent && readSetting("slack.enabled", "SLACK_ENABLED") === "false") {
+    logger.debug(`slack disabled, skipping notification: ${title} ${subject ?? ""}`);
+    return;
+  }
+
   // 만료 알림은 주기적으로 반복되므로 여기서 버려도 다음 근무 시간 첫 주기에 다시 온다.
-  if (!urgent && isQuietHours(now)) {
+  if (!urgent && isQuietHours(now ?? new Date(), readSetting)) {
     logger.debug(`quiet hours, skipping notification: ${title} ${subject ?? ""}`);
     return;
   }

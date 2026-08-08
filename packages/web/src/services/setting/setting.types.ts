@@ -17,7 +17,7 @@ export type SettingSaveParams = z.infer<typeof SettingSaveParams>;
 
 // ── 설정 API 응답 스키마 ──
 
-export const SettingKind = z.enum(["boolean", "integer", "number", "string", "secret"]);
+export const SettingKind = z.enum(["boolean", "integer", "number", "string", "secret", "preset"]);
 export type SettingKind = z.infer<typeof SettingKind>;
 
 export const SettingApplies = z.enum(["immediate", "restart"]);
@@ -38,6 +38,8 @@ export const SettingItem = z.object({
   source: SettingSource,
   min: z.number().nullable(),
   max: z.number().nullable(),
+  /** `preset` 종류에서 고를 수 있는 값. 다른 종류는 빈 배열. */
+  presets: z.number().array(),
   help: z.string().nullable(),
 });
 export type SettingItem = z.infer<typeof SettingItem>;

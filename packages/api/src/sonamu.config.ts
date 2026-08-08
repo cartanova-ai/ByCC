@@ -176,7 +176,9 @@ export default defineConfig({
         await loadSettings();
         // 런타임 설정 소비자를 상위 계층에서 연결해 setting 모듈이 qgrid 를 역참조하지 않게 한다.
         setSettingChangeHandler((key) => {
-          if (key === "slack.expiryReminderMinutes") rescheduleExpiredTokenReminder();
+          if (key === "slack.expiryReminderMinutes" || key === "slack.remindersEnabled") {
+            rescheduleExpiredTokenReminder();
+          }
         });
 
         let triggerReady = true;

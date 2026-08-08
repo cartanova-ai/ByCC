@@ -117,6 +117,13 @@ Content-Type: application/json
 
 ###
 
+POST {{baseUrl}}/api/setting/triggerExpiryReminder
+Content-Type: application/json
+
+{}
+
+###
+
 GET {{baseUrl}}/api/requestLogStep/findById
 	?subset=A
 	&id=0

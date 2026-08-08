@@ -53,9 +53,9 @@ export function buildReminderContext(
   return [...lines, "재로그인이 필요합니다"].filter(Boolean).join("\n");
 }
 
-async function sendReminder(deps: ExpiredTokenReminderDeps): Promise<void> {
+async function sendReminder(deps: ExpiredTokenReminderDeps, urgent = false): Promise<number> {
   const inactive = await deps.findInactive();
-  if (inactive.length === 0) return;
+  if (inactive.length === 0) return 0;
 
   const userMap = deps.getSlackUserMap();
 
@@ -65,13 +65,33 @@ async function sendReminder(deps: ExpiredTokenReminderDeps): Promise<void> {
     subject: inactive.length > 1 ? `${inactive.length}건` : (inactive[0]!.name ?? "unnamed"),
     context: buildReminderContext(inactive, userMap),
     color: SLACK_COLOR.bad,
+    urgent,
   });
+  return inactive.length;
+}
+
+/**
+ * 화면의 "지금 보내기". 사람이 직접 누른 것이므로 조용 시간·마스터 스위치를 통과시킨다 —
+ * 눌렀는데 아무 일도 안 일어나면 버튼이 고장 난 것으로 읽힌다.
+ *
+ * 보낸 건수를 돌려줘 호출부가 "보낼 대상 없음"과 "보냄"을 구분해 보여준다.
+ */
+export function sendExpiredTokenReminderNow(
+  deps: ExpiredTokenReminderDeps = defaultDeps,
+): Promise<number> {
+  return sendReminder(deps, true);
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
 function scheduleExpiredTokenReminder(runNow: boolean, deps: ExpiredTokenReminderDeps): void {
   stopExpiredTokenReminder();
+
+  // 주기 값과 별개인 스위치다. 꺼도 주기는 남아 있어 다시 켤 때 고르던 값이 그대로다.
+  if (deps.readSetting("slack.remindersEnabled", "SLACK_REMINDERS_ENABLED") === "false") {
+    logger.info("expired token reminder disabled");
+    return;
+  }
 
   const minutes = Number(
     deps.readSetting("slack.expiryReminderMinutes", "SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES") ?? 0,

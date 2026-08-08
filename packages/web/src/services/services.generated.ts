@@ -338,6 +338,18 @@ export namespace SettingService {
     useMutation({
       mutationFn: (params: { key: string }) => resetSetting(params.key),
     });
+
+  export async function triggerExpiryReminder(): Promise<{ sent: number }> {
+    return fetch({
+      method: "POST",
+      url: `/api/setting/triggerExpiryReminder`,
+    });
+  }
+
+  export const useTriggerExpiryReminderMutation = () =>
+    useMutation({
+      mutationFn: (params: void) => triggerExpiryReminder(),
+    });
 }
 
 export namespace RequestLogStepService {

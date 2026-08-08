@@ -2,7 +2,7 @@ import {
   MAX_OPENAI_ESTIMATED_RSS_GIB,
   MAX_OPENAI_MIN_HOST_AVAILABLE_GIB,
   SETTING_DEFS,
-} from "../../../application/setting/setting.schema";
+} from "../../../application/setting/setting.constant";
 import { getSetting } from "../../../application/setting/setting.store";
 
 export const MAX_OPENAI_WORKERS_PER_TOKEN = 20;

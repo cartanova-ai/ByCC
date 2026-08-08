@@ -10,6 +10,7 @@ import {
   buildReminderContext,
   type ExpiredTokenReminderDeps,
   rescheduleExpiredTokenReminder,
+  sendExpiredTokenReminderNow,
   startExpiredTokenReminder,
   stopExpiredTokenReminder,
 } from "./expired-token-reminder";
@@ -88,12 +89,14 @@ describe("buildReminderContext", () => {
 describe("expired token reminder scheduling", () => {
   let minutes = "10";
   let rawUserMap = "yds:U-OLD";
+  let remindersEnabled = "true";
   let deps: ExpiredTokenReminderDeps;
 
   beforeEach(() => {
     vi.useFakeTimers();
     minutes = "10";
     rawUserMap = "yds:U-OLD";
+    remindersEnabled = "true";
     findInactiveMock.mockReset();
     getSettingMock.mockReset();
     notifySlackMock.mockReset();
@@ -101,6 +104,7 @@ describe("expired token reminder scheduling", () => {
     getSettingMock.mockImplementation((key: string) => {
       if (key === "slack.expiryReminderMinutes") return minutes;
       if (key === "slack.userMap") return rawUserMap;
+      if (key === "slack.remindersEnabled") return remindersEnabled;
       return undefined;
     });
     notifySlackMock.mockResolvedValue(undefined);
@@ -122,6 +126,45 @@ describe("expired token reminder scheduling", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("반복을 끄면 부팅해도 알리지 않는다", async () => {
+    remindersEnabled = "false";
+
+    startExpiredTokenReminder(deps);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(notifySlackMock).not.toHaveBeenCalled();
+  });
+
+  it("반복을 꺼도 주기 값은 남아 다시 켜면 그대로 쓴다", async () => {
+    remindersEnabled = "false";
+    rescheduleExpiredTokenReminder(deps);
+
+    remindersEnabled = "true";
+    rescheduleExpiredTokenReminder(deps);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    // 저장된 10분 주기가 그대로 살아 있다.
+    expect(notifySlackMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("수동 트리거는 조용 시간을 통과하도록 urgent 로 보낸다", async () => {
+    // 사람이 직접 누른 것이라 밤이라고 삼키면 버튼이 고장 난 것으로 읽힌다.
+    const sent = await sendExpiredTokenReminderNow(deps);
+
+    expect(sent).toBe(1);
+    expect(notifySlackMock).toHaveBeenCalledWith(expect.objectContaining({ urgent: true }));
+  });
+
+  it("보낼 대상이 없으면 0을 돌려주고 아무것도 보내지 않는다", async () => {
+    findInactiveMock.mockResolvedValue([]);
+
+    const sent = await sendExpiredTokenReminderNow(deps);
+
+    expect(sent).toBe(0);
+    expect(notifySlackMock).not.toHaveBeenCalled();
   });
 
   it("start를 다시 호출해도 interval은 하나만 남는다", async () => {

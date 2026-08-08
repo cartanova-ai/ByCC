@@ -12,6 +12,7 @@ import { type SettingItem } from "@/services/setting/setting.types";
 const GROUP_LABELS: Record<string, string> = {
   openai: "OpenAI 워커",
   slack: "Slack 알림",
+  slackConnection: "Slack 연결",
 };
 
 function maskValue(value: string): string {
@@ -76,6 +77,51 @@ function Stepper({
         <PlusIcon className="size-3" />
       </button>
     </div>
+  );
+}
+
+/** 고정 선택지. 자유 입력보다 고르는 편이 빠르고, 범위를 벗어난 값이 생기지 않는다. */
+function PresetGroup({
+  value,
+  presets,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  presets: number[];
+  disabled: boolean;
+  onChange: (next: string) => void;
+}) {
+  const current = Number(value);
+  return (
+    <div className="segmented-control inline-flex">
+      {presets.map((preset) => (
+        <button
+          key={preset}
+          type="button"
+          disabled={disabled}
+          data-active={current === preset}
+          onClick={() => onChange(String(preset))}
+          className="rounded-[6px] px-2.5 py-1 text-[11px] font-medium tabular-nums text-sand-500 transition-colors hover:text-sand-800 disabled:opacity-50 data-[active=true]:text-sand-900"
+        >
+          {preset >= 60 ? `${preset / 60}시간` : `${preset}분`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 값이 어디서 왔는지. 되돌림 버튼이 무엇을 지우는지 이 배지가 설명한다. */
+function SourceBadge({ source }: { source: SettingItem["source"] }) {
+  const label = source === "db" ? "저장값" : source === "env" ? "환경변수" : "기본값";
+  return (
+    <span
+      className={`text-[10px] px-1.5 py-0.5 rounded ${
+        source === "db" ? "bg-sienna-50 text-sienna-600" : "bg-sand-100 text-sand-500"
+      }`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -145,9 +191,6 @@ function SettingRow({ item }: { item: SettingItem }) {
     }
   };
 
-  // boolean 은 누르는 즉시 확정한다 — 토글에 저장 버튼을 붙이면 조작이 두 단계가 된다.
-  const isToggle = item.kind === "boolean";
-  const isNumeric = item.kind === "integer" || item.kind === "number";
   const isSecret = item.kind === "secret";
 
   return (
@@ -156,6 +199,7 @@ function SettingRow({ item }: { item: SettingItem }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[13px] text-sand-800">{item.label}</span>
+            <SourceBadge source={item.source} />
             {item.applies === "restart" && (
               <span
                 className="text-[10px] text-caution-500"
@@ -169,7 +213,8 @@ function SettingRow({ item }: { item: SettingItem }) {
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {isToggle && (
+          {/* boolean 은 누르는 즉시 확정한다 — 토글에 저장 버튼을 붙이면 조작이 두 단계가 된다. */}
+          {item.kind === "boolean" && (
             <Toggle
               on={value === "true"}
               disabled={pending}
@@ -177,7 +222,16 @@ function SettingRow({ item }: { item: SettingItem }) {
             />
           )}
 
-          {isNumeric && (
+          {item.kind === "preset" && (
+            <PresetGroup
+              value={value}
+              presets={item.presets}
+              disabled={pending}
+              onChange={(next) => void commit(next)}
+            />
+          )}
+
+          {(item.kind === "integer" || item.kind === "number") && (
             <Stepper
               value={value}
               min={item.min}
@@ -231,7 +285,7 @@ function SettingRow({ item }: { item: SettingItem }) {
           {!dirty && item.source === "db" && (
             <button
               type="button"
-              title="저장값을 지우고 env 또는 기본값으로 되돌립니다"
+              title="저장값을 지웁니다 — 환경변수 또는 기본값으로 돌아갑니다"
               onClick={() => void reset()}
               disabled={pending}
               className="size-7 grid place-items-center rounded-lg text-sand-400 hover:text-sand-600 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150"
@@ -247,10 +301,35 @@ function SettingRow({ item }: { item: SettingItem }) {
   );
 }
 
-function SourceLegend({ items }: { items: SettingItem[] }) {
-  const stored = items.filter((i) => i.source === "db").length;
-  if (stored === 0) return null;
-  return <span className="text-[11px] text-sand-400">{stored}개 항목이 저장값을 사용 중</span>;
+/** 만료 알림을 주기를 기다리지 않고 지금 보낸다. 설정이 제대로 붙었는지 확인하는 용도. */
+function TriggerReminderButton() {
+  const [result, setResult] = useState<string | null>(null);
+  const mutation = SettingService.useTriggerExpiryReminderMutation();
+
+  const trigger = async () => {
+    setResult(null);
+    try {
+      const { sent } = await mutation.mutateAsync();
+      // 0건과 실패를 구분해준다 — 아무 반응이 없으면 버튼이 고장 난 것으로 읽힌다.
+      setResult(sent === 0 ? "재로그인이 필요한 토큰이 없습니다" : `${sent}건 발송`);
+    } catch (e) {
+      setResult((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {result && <span className="text-[11px] text-sand-500">{result}</span>}
+      <button
+        type="button"
+        onClick={() => void trigger()}
+        disabled={mutation.isPending}
+        className="px-2 py-1 text-[11px] rounded-lg border border-sand-200/80 text-sand-600 hover:bg-sand-100 disabled:opacity-50 transition-colors duration-150"
+      >
+        {mutation.isPending ? "보내는 중" : "지금 보내기"}
+      </button>
+    </div>
+  );
 }
 
 export function SettingsPanel() {
@@ -307,7 +386,7 @@ export function SettingsPanel() {
               <span className="text-[13px] font-medium text-sand-700">
                 {GROUP_LABELS[group] ?? group}
               </span>
-              <SourceLegend items={items} />
+              {group === "slack" && <TriggerReminderButton />}
             </div>
             <div className="divide-y divide-sand-100/80">
               {items.map((item) => (

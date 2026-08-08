@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.schema";
+import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.constant";
 
 describe("validateSettingValue", () => {
   const intDef = findSettingDef("openai.maxWorkersPerToken")!;
@@ -34,6 +34,35 @@ describe("validateSettingValue", () => {
 
   it("앞뒤 공백은 저장 전에 떨어뜨린다", () => {
     expect(validateSettingValue(intDef, "  7  ")).toMatchObject({ ok: true, value: "7" });
+  });
+});
+
+describe("preset 검증", () => {
+  const presetDef = findSettingDef("slack.expiryReminderMinutes")!;
+
+  it("목록에 있는 값만 받는다", () => {
+    expect(validateSettingValue(presetDef, "30")).toMatchObject({ ok: true, value: "30" });
+    expect(validateSettingValue(presetDef, "180")).toMatchObject({ ok: true });
+  });
+
+  it("목록 밖의 값은 거부한다", () => {
+    // 저장되면 화면에서 아무 버튼도 선택돼 보이지 않아 "왜 안 바뀌지"가 된다.
+    expect(validateSettingValue(presetDef, "45")).toMatchObject({ ok: false });
+    expect(validateSettingValue(presetDef, "0")).toMatchObject({ ok: false });
+    expect(validateSettingValue(presetDef, "많이")).toMatchObject({ ok: false });
+  });
+});
+
+describe("조용 시간 설정", () => {
+  // fallback("20"/"8")은 quiet-hours.ts 의 DEFAULT_QUIET_* 와 같아야 하지만 테스트로 묶지
+  // 않는다 — 두 모듈을 한 파일에서 import 하면 setting.store → token.model 이 딸려와,
+  // token.model 을 mock 하는 테스트가 같은 워커에 배치될 때 실제 모듈을 먼저 로드해 버린다.
+  it("0..23 을 벗어나면 거부한다", () => {
+    const fromDef = findSettingDef("slack.quietFromHour")!;
+    expect(validateSettingValue(fromDef, "24")).toMatchObject({ ok: false });
+    expect(validateSettingValue(fromDef, "-1")).toMatchObject({ ok: false });
+    expect(validateSettingValue(fromDef, "0")).toMatchObject({ ok: true });
+    expect(validateSettingValue(fromDef, "23")).toMatchObject({ ok: true });
   });
 });
 

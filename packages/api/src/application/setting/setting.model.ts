@@ -11,7 +11,7 @@ import {
 import { SD } from "../../i18n/sd.generated";
 import { type SettingSubsetKey, type SettingSubsetMapping } from "../sonamu.generated";
 import { settingSubsetQueries, settingLoaderQueries } from "../sonamu.generated.sso";
-import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.schema";
+import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.constant";
 import {
   getSetting,
   isStored,
@@ -213,6 +213,7 @@ class SettingModelClass extends BaseModelClass<
         source,
         min: def.min ?? null,
         max: def.max ?? null,
+        presets: def.presets ?? [],
         help: def.help ?? null,
       };
     });
@@ -257,6 +258,19 @@ class SettingModelClass extends BaseModelClass<
 
     await resetStoredSetting(key);
     return { applies: def.applies };
+  }
+
+  /**
+   * 만료 알림을 지금 한 번 보낸다. 주기를 기다리지 않고 설정이 제대로 붙었는지 확인하거나,
+   * 재로그인을 재촉할 때 쓴다. 보낸 건수를 돌려줘 "보낼 대상 없음"과 구분한다.
+   */
+  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
+  async triggerExpiryReminder(): Promise<{ sent: number }> {
+    // 동적 import 로 알림 모듈을 호출 시점에만 끌어온다. 정적으로 걸면
+    // setting.model → expired-token-reminder → token.model 경로가 생겨,
+    // token.model 을 mock 하는 테스트가 실제 모듈을 먼저 로드하게 된다.
+    const { sendExpiredTokenReminderNow } = await import("../qgrid/expired-token-reminder");
+    return { sent: await sendExpiredTokenReminderNow() };
   }
 }
 

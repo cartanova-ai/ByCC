@@ -505,10 +505,13 @@ function WeightControl({ token }: { token: Token }) {
 }
 
 /**
- * 비활성 토큰 카드의 재로그인 진입점.
+ * 재로그인의 유일한 진입점.
  *
- * Tokens 페이지와 같은 OAuth 플로우(`useOAuthLoginFlow`)를 쓴다 — 원격 접속이면 코드 입력
- * 단계로 이어지므로 모달까지 이 컴포넌트가 함께 들고 있다.
+ * 조치가 필요하다는 것을 알게 되는 곳이 만료된 토큰 카드라, 거기서 바로 누를 수 있어야
+ * 한다. Tokens 페이지에도 같은 버튼을 두었더니 같은 일을 두 곳에서 하게 돼 걷어냈다.
+ *
+ * `useOAuthLoginFlow` 는 Add Token 과 공유한다 — 원격 접속이면 코드 입력 단계로 이어지므로
+ * 모달까지 이 컴포넌트가 함께 들고 있다.
  */
 function ReloginButton({ token }: { token: Token }) {
   const oauth = useOAuthLoginFlow();
