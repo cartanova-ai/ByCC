@@ -1692,5 +1692,164 @@ describe("qgrid AI SDK provider", () => {
       const textDeltas = parts.filter((p) => p.type === "text-delta");
       expect(textDeltas.map((p) => p.delta).join("")).toBe(answer);
     });
+
+    it("falls back cleanly when a text preamble precedes the envelope (parser silent)", async () => {
+      const answer = "폴백 답변";
+      const envelope = `{"result":{"action":"answer","answer":${JSON.stringify(answer)},"toolCalls":null}}`;
+      stubStreamFetch(["생각해 볼게요. ", envelope], {
+        text: answer,
+        content: [{ type: "text", text: answer }],
+        finishReason: "stop",
+        model: "gpt-5.5",
+        usage,
+        durationMs: 100,
+        costUsd: 0.01,
+      });
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [tool()],
+      });
+
+      // 프리앰블 원문이 절대 새어나가면 안 되고, done 폴백이 정확히 1회 방출한다.
+      const textDeltas = parts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.map((p) => p.delta).join("")).toBe(answer);
+      expect(textDeltas.some((p) => String(p.delta).includes("생각해"))).toBe(false);
+    });
+
+    it("skips empty-string deltas without emitting empty text parts", async () => {
+      const answer = "ok";
+      const envelope = `{"result":{"action":"answer","answer":"ok","toolCalls":null}}`;
+      stubStreamFetch(["", envelope.slice(0, 30), "", envelope.slice(30), ""], {
+        text: answer,
+        content: [{ type: "text", text: answer }],
+        finishReason: "stop",
+        model: "gpt-5.5",
+        usage,
+        durationMs: 100,
+        costUsd: 0.01,
+      });
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [tool()],
+      });
+
+      const textDeltas = parts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.every((p) => p.delta !== "")).toBe(true);
+      expect(textDeltas.map((p) => p.delta).join("")).toBe(answer);
+    });
+
+    it("keeps the no-tools delta path verbatim, even for envelope-looking text", async () => {
+      // 툴 없는 호출은 봉투가 없으므로 파서를 태우면 안 된다 — 원문 그대로.
+      const fakeEnvelopeText = '{"result":{"action":"answer","answer":"이건 그냥 본문"}}';
+      stubStreamFetch([fakeEnvelopeText.slice(0, 20), fakeEnvelopeText.slice(20)], {
+        text: fakeEnvelopeText,
+        content: [{ type: "text", text: fakeEnvelopeText }],
+        finishReason: "stop",
+        model: "gpt-5.5",
+        usage,
+        durationMs: 100,
+        costUsd: 0.01,
+      });
+
+      const parts = await collectParts({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      });
+
+      const textDeltas = parts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.map((p) => p.delta).join("")).toBe(fakeEnvelopeText);
+    });
+
+    it("runs a full streamed tool loop: silent tool_call turn, then streamed answer follow-up", async () => {
+      const toolEnvelope =
+        '{"result":{"action":"tool_call","answer":null,"toolCalls":[{"toolName":"getWeather","args":"{\\"city\\":\\"Seoul\\"}"}]}}';
+      const answer = "서울은 맑아요";
+      const answerEnvelope = `{"result":{"action":"answer","answer":${JSON.stringify(answer)},"toolCalls":null}}`;
+      const encoder = new TextEncoder();
+      let streamNumber = 0;
+
+      const sseFrom = (deltas: string[], done: unknown) =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const text of deltas) {
+              controller.enqueue(
+                encoder.encode(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
+              );
+            }
+            controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify(done)}\n\n`));
+            controller.close();
+          },
+        });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.includes("/prepareStream")) {
+            return new Response(JSON.stringify({ streamId: `s${++streamNumber}` }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (url.includes("streamId=s1")) {
+            return new Response(
+              sseFrom([toolEnvelope.slice(0, 33), toolEnvelope.slice(33)], {
+                text: "",
+                content: [
+                  {
+                    type: "tool-call",
+                    toolCallId: "call_loop",
+                    toolName: "getWeather",
+                    input: '{"city":"Seoul"}',
+                  },
+                ],
+                finishReason: "tool-calls",
+                model: "gpt-5.5",
+                usage,
+                durationMs: 100,
+                costUsd: 0.01,
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            sseFrom([answerEnvelope.slice(0, 41), answerEnvelope.slice(41)], {
+              text: answer,
+              content: [{ type: "text", text: answer }],
+              finishReason: "stop",
+              model: "gpt-5.5",
+              usage,
+              durationMs: 80,
+              costUsd: 0.005,
+            }),
+            { status: 200 },
+          );
+        }),
+      );
+
+      const model = qgrid("openai/gpt-5.5");
+      const first = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "weather" }] }],
+        tools: [tool()],
+      } as never);
+      const firstParts: Array<Record<string, unknown>> = [];
+      for await (const part of first.stream) firstParts.push(part as Record<string, unknown>);
+
+      // 1턴: tool_call — 봉투 델타가 텍스트로 새면 안 된다.
+      expect(firstParts.filter((p) => p.type === "text-delta")).toHaveLength(0);
+      expect(firstParts.filter((p) => p.type === "tool-call")).toHaveLength(1);
+
+      const second = await model.doStream({
+        prompt: toolPrompt(["call_loop"]),
+        tools: [tool()],
+      } as never);
+      const secondParts: Array<Record<string, unknown>> = [];
+      for await (const part of second.stream) secondParts.push(part as Record<string, unknown>);
+
+      // 2턴: 새 파서 인스턴스로 answer 증분 방출.
+      const textDeltas = secondParts.filter((p) => p.type === "text-delta");
+      expect(textDeltas.length).toBeGreaterThan(1);
+      expect(textDeltas.map((p) => p.delta).join("")).toBe(answer);
+    });
   });
 });
