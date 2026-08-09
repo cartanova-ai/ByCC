@@ -98,7 +98,7 @@ export function createEnvelopeStreamParser(answerKind: EnvelopeAnswerKind): Enve
 
   // 봉투 레벨(result 오브젝트 직속)의 값인지 판별.
   const atEnvelopeLevel = () =>
-    stack.length === 2 && stack[0]!.openedAtKey === null && stack[1]!.openedAtKey === "result";
+    stack.length === 2 && stack[0].openedAtKey === null && stack[1].openedAtKey === "result";
 
   const deliverStringChar = (ch: string) => {
     if (stringIsKey) keyBuf += ch;

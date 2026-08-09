@@ -153,7 +153,7 @@ export function MonitConsole({
     count: visible.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 20,
-    getItemKey: (index) => visible[index]!.key,
+    getItemKey: (index) => visible[index].key,
     anchorTo: "end",
     followOnAppend: true,
     scrollEndThreshold: 80,
@@ -339,7 +339,7 @@ export function MonitConsole({
           ) : (
             <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
-                const item = visible[virtualRow.index]!;
+                const item = visible[virtualRow.index];
                 return (
                   <div
                     key={virtualRow.key}

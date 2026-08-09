@@ -387,7 +387,7 @@ function RestartPanel({ supervisor }: { supervisor: SupervisorKind | null }) {
     const currentAttemptData =
       healthQuery.isSuccess && healthQuery.dataUpdatedAt >= restartStartedAt;
 
-    if (currentAttemptError || (currentAttemptData && healthQuery.data.ready === false)) {
+    if (currentAttemptError || (currentAttemptData && !healthQuery.data.ready)) {
       setSawUnavailable(true);
       return;
     }
@@ -397,7 +397,7 @@ function RestartPanel({ supervisor }: { supervisor: SupervisorKind | null }) {
     if (
       !sawUnavailable ||
       !currentAttemptData ||
-      healthQuery.data.ready !== true ||
+      !healthQuery.data.ready ||
       completingRef.current
     ) {
       return;
