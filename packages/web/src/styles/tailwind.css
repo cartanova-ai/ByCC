@@ -179,3 +179,50 @@
 .prose-qgrid :where(li)::marker {
   color: var(--color-sand-400);
 }
+
+/* Chat widget — 버튼 자리에서 펼쳐지는 팝 (transform-origin 은 마크업의 origin-bottom-right) */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-panel-pop {
+    animation: chat-panel-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes chat-panel-pop {
+    from {
+      transform: scale(0.9);
+      opacity: 0;
+    }
+  }
+  .chat-panel-pop-out {
+    animation: chat-panel-pop-out 0.15s cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+  @keyframes chat-panel-pop-out {
+    to {
+      transform: scale(0.9);
+      opacity: 0;
+    }
+  }
+}
+
+/* Chat widget typing indicator */
+.chat-typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 100px;
+  background: var(--color-sand-400);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-typing-dot {
+    animation: chat-typing-bounce 1s infinite ease-in-out;
+  }
+  @keyframes chat-typing-bounce {
+    0%,
+    60%,
+    100% {
+      transform: translateY(0);
+      opacity: 0.5;
+    }
+    30% {
+      transform: translateY(-3px);
+      opacity: 1;
+    }
+  }
+}
