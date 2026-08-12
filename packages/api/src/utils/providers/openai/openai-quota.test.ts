@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type RateLimitSnapshot } from "../../../codex-protocol/v2/RateLimitSnapshot";
-import { readOpenAIQuotaUsage, type OpenAIRateLimitsWithMeta } from "./openai-quota";
+import { type QuotaRateLimitSnapshot } from "../common/provider-types";
+import {
+  CHATGPT_WHAM_USAGE_URL,
+  readOpenAIQuotaUsage,
+  type OpenAIRateLimitsWithMeta,
+} from "./openai-quota";
 
-function snapshot(overrides: Partial<RateLimitSnapshot> = {}): RateLimitSnapshot {
+function snapshot(overrides: Partial<QuotaRateLimitSnapshot> = {}): QuotaRateLimitSnapshot {
   return {
     limitId: "codex-primary",
     limitName: "Codex Primary",
@@ -16,7 +20,7 @@ function snapshot(overrides: Partial<RateLimitSnapshot> = {}): RateLimitSnapshot
   };
 }
 
-function payload(rateLimits: RateLimitSnapshot): OpenAIRateLimitsWithMeta {
+function payload(rateLimits: QuotaRateLimitSnapshot): OpenAIRateLimitsWithMeta {
   return { data: { rateLimits, rateLimitsByLimitId: null }, cachedAt: Date.now() - 1_250 };
 }
 
@@ -65,7 +69,7 @@ describe("readOpenAIQuotaUsage", () => {
     });
   });
 
-  it("converts missing primary data and rejected RPCs into lookup_failed", async () => {
+  it("converts missing primary data and rejected lookups into lookup_failed", async () => {
     await expect(
       readOpenAIQuotaUsage(async () => payload(snapshot({ primary: null }))),
     ).resolves.toMatchObject({
@@ -75,11 +79,80 @@ describe("readOpenAIQuotaUsage", () => {
 
     await expect(
       readOpenAIQuotaUsage(async () => {
-        throw new Error("rpc timeout");
+        throw new Error("lookup timeout");
       }),
     ).resolves.toMatchObject({
       kind: "lookup_failed",
-      reason: "rpc timeout",
+      reason: "lookup timeout",
     });
+  });
+
+  it("reads wham usage directly with Codex identity headers", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify(payload(snapshot()).data), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(
+      readOpenAIQuotaUsage({
+        credentials: { accessToken: "access", accountId: "acct" },
+        fetch: fetchMock,
+      }),
+    ).resolves.toMatchObject({ kind: "ok", utilizationPct: 17 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      CHATGPT_WHAM_USAGE_URL,
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Authorization: "Bearer access",
+          "ChatGPT-Account-ID": "acct",
+          originator: "codex_cli_rs",
+        }),
+      }),
+    );
+  });
+
+  it("normalizes the pinned wham rate_limit and additional_rate_limits shape", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({
+        plan_type: "pro",
+        credits: { balance: 12 },
+        rate_limit_reached: "primary",
+        rate_limits: {
+          rate_limit: {
+            limit_id: "primary",
+            primary_window: { used_percent: 21, window_minutes: 300, reset_at: 123 },
+          },
+          additional_rate_limits: [{
+            rate_limit: {
+              limit_id: "secondary",
+              primary_window: { used_percent: 4, window_minutes: 10080, reset_at: 456 },
+            },
+          }],
+        },
+      }), { status: 200 }),
+    );
+    const result = await readOpenAIQuotaUsage({
+      credentials: { accessToken: "access", accountId: "acct" },
+      fetch: fetchMock,
+    });
+    expect(result).toMatchObject({
+      kind: "ok",
+      utilizationPct: 21,
+      raw: {
+        rateLimits: { limitId: "primary", planType: "pro", credits: { balance: 12 }, rateLimitReachedType: "primary" },
+        rateLimitsByLimitId: { secondary: { limitId: "secondary", primary: { usedPercent: 4 } } },
+      },
+    });
+  });
+
+  it("fails open for direct HTTP failures", async () => {
+    await expect(
+      readOpenAIQuotaUsage({
+        credentials: { accessToken: "access", accountId: "acct" },
+        fetch: async () => new Response("unavailable", { status: 503 }),
+      }),
+    ).resolves.toEqual({ kind: "lookup_failed", reason: "OpenAI quota lookup failed: HTTP 503" });
   });
 });
