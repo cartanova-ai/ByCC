@@ -1,0 +1,584 @@
+{
+  "title": "3분 안에 끝내는 웨이브",
+  "opening_line": "두 아이를 학교에 보내고 겨우 짬을 낸 세영, 오래전부터 폰에 저장해둔 웨이브 사진을 들고 미용실 의자에 앉았다.",
+  "poster": {"place": "미용실", "time_of_day": "오후", "mood": "따뜻한"},
+  "level": "A2",
+  "protagonist": "세영",
+  "characters": [
+    {"id": "세영", "display_name": "세영", "is_speaker": true, "outfit": "캐주얼"},
+    {"id": "니아", "display_name": "니아", "is_speaker": true, "outfit": "미용사"}
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "bg_image": {"place": "미용실", "spot": "시술의자", "time_of_day": "오후"},
+      "bgm": {"genre": "어쿠스틱", "tempo": "중간"},
+      "mood": "따뜻한",
+      "contents": [
+        {"type": "text", "id": "s1_t1", "characterId": "세영", "l1": "거울 앞 조명이 따뜻하게 얼굴을 감쌌다. 세영은 폰을 켜고 사진첩을 뒤적이다가, 오래전에 캡처해둔 사진 하나를 니아에게 내밀었다. 굵은 웨이브가 어깨 아래로 부드럽게 흘러내리는 사진이었다.", "sfx": null},
+        {"type": "dialogue", "id": "s1_l1", "speaker": "세영", "text": "Can I get this look? I mean, with my hair the way it is now.", "l1": "이 스타일 가능할까요? 그러니까, 지금 제 머리 상태로요.", "expression": "기대", "sfx": null},
+        {"type": "text", "id": "s1_t2", "characterId": "니아", "l1": "니아가 사진을 확대해 보더니 세영의 머리카락 한 가닥을 살짝 들어 손끝으로 결을 확인했다.", "sfx": null},
+        {"type": "dialogue", "id": "s1_l2", "speaker": "니아", "text": "Yeah, your hair's got enough length and thickness for this. It'll fall a little looser than the photo, but it'll be close.", "l1": "네, 이 스타일 나올 만큼 길이랑 숱이 충분해요. 사진보다는 조금 느슨하게 나오겠지만, 비슷하게는 나올 거예요.", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s1_l3", "speaker": "세영", "text": "Oh, that's totally fine. Let's do it.", "l1": "아, 그 정도면 완전 괜찮아요. 해주세요.", "expression": "기쁨", "sfx": null}
+      ]
+    },
+    {
+      "id": "s2",
+      "bg_image": {"place": "미용실", "spot": "시술의자", "time_of_day": "저녁"},
+      "bgm": {"genre": "어쿠스틱", "tempo": "중간"},
+      "mood": "편안",
+      "contents": [
+        {"type": "text", "id": "s2_t1", "characterId": "세영", "l1": "펌이 끝나고 거울 속 웨이브가 낯설 만큼 예뻤다. 세영은 만족스러운 미소를 짓다가도, 문득 표정이 굳었다. 아침마다 이 모양을 어떻게 되살릴지, 그게 진짜 걱정이었다.", "sfx": null},
+        {"type": "dialogue", "id": "s2_l1", "speaker": "세영", "text": "Okay, so how do I keep this looking like this at home? In the mornings, I mean.", "l1": "자, 그럼 집에서는 이 모양을 어떻게 유지해야 해요? 아침에요.", "expression": "불안", "sfx": null},
+        {"type": "dialogue", "id": "s2_l2", "speaker": "니아", "text": "First thing, wet your hair a bit. Not soaking, just damp all over.", "l1": "일단, 머리를 살짝 적셔주세요. 흠뻑 말고, 전체적으로 촉촉할 정도로만요.", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s2_l3", "speaker": "세영", "text": "Damp all over, got it. And then the essence goes on before or after that?", "l1": "전체적으로 촉촉하게, 알겠어요. 그리고 에센스는 그 전에 발라요, 아니면 그 후에요?", "expression": "기대", "sfx": null},
+        {"type": "dialogue", "id": "s2_l4", "speaker": "니아", "text": "After. Put it on while your hair's still damp, then scrunch it up from the ends.", "l1": "그 후에요. 머리가 아직 촉촉할 때 발라주고, 그다음 끝부분부터 위로 쥐어짜듯 눌러주세요.", "expression": "기쁨", "sfx": null}
+      ]
+    },
+    {
+      "id": "s3",
+      "bg_image": {"place": "미용실", "spot": "시술의자", "time_of_day": "저녁"},
+      "bgm": {"genre": "어쿠스틱", "tempo": "중간"},
+      "mood": "일상적",
+      "contents": [
+        {"type": "text", "id": "s3_t1", "characterId": "세영", "l1": "세영은 손으로 허공에 쥐어짜는 시늉을 해보며 고개를 끄덕였다. 그러다 문득 시계를 흘깃 보고는, 정말 중요한 문제를 꺼냈다.", "sfx": null},
+        {"type": "dialogue", "id": "s3_l1", "speaker": "세영", "text": "Okay, and what about a diffuser? I've seen people use those.", "l1": "네, 그리고 디퓨저는요? 사람들이 그거 쓰는 거 봤거든요.", "expression": "기대", "sfx": null},
+        {"type": "dialogue", "id": "s3_l2", "speaker": "니아", "text": "You can, but here's the thing — I only have about three minutes in the morning. Two kids, you know?", "l1": "쓰셔도 되는데, 근데 문제가 있어요 — 저는 아침에 3분 정도밖에 시간이 없거든요. 애가 둘이라서요, 아시죠?", "expression": "불안", "sfx": null},
+        {"type": "text", "id": "s3_t2", "characterId": "니아", "l1": "니아가 웃음을 터뜨리며 손을 내저었다. 3분이면 자기도 익히 아는 시간이라는 표정이었다.", "sfx": null},
+        {"type": "dialogue", "id": "s3_l3", "speaker": "니아", "text": "Oh, then skip the diffuser. Just scrunch with your hands and let it air-dry. That's the fastest way, honestly.", "l1": "아, 그럼 디퓨저는 건너뛰세요. 그냥 손으로 쥐어짜고 자연 건조시키세요. 그게 제일 빠른 방법이에요, 솔직히.", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s3_l4", "speaker": "세영", "text": "That's exactly what I needed to hear. Thanks, Nia.", "l1": "그 말이 딱 필요했어요. 고마워요, 니아.", "expression": "기쁨", "sfx": null}
+      ]
+    }
+  ],
+  "atoms": [
+    {
+      "line_id": "s1_l1",
+      "elements": [
+        {
+          "span": "Can I get this look?",
+          "l1": "이 스타일 가능할까요?",
+          "tokens": [
+            {"t": "Can", "l1": "가능"},
+            {"t": "I", "l1": "제가"},
+            {"t": "get", "l1": "얻다"},
+            {"t": "this", "l1": "이"},
+            {"t": "look?", "l1": "스타일"}
+          ],
+          "function": ["ask_preference"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "am", "hint": "요청·가능 여부엔 can을 써요", "for": "Can", "kind": "form"},
+            {"token": "style", "hint": null, "for": null, "kind": null}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "get a look", "surface_form": "get this look", "l1": "이런 스타일이 나오다/이렇게 되다"}
+          ],
+          "explain": "사진 속 스타일이 자신에게도 가능한지 물을 때 쓰는 표현."
+        },
+        {
+          "span": "I mean, with my hair the way it is now.",
+          "l1": "그러니까, 지금 제 머리 상태로요.",
+          "tokens": [
+            {"t": "I", "l1": "제가", "free": true, "freeGroup": 1},
+            {"t": "mean,", "l1": "그러니까", "free": true, "freeGroup": 1},
+            {"t": "with", "l1": "~로"},
+            {"t": "my", "l1": "제"},
+            {"t": "hair", "l1": "머리카락"},
+            {"t": "the", "l1": "그"},
+            {"t": "way", "l1": "상태로"},
+            {"t": "it", "l1": "그것이"},
+            {"t": "is", "l1": "~이다"},
+            {"t": "now.", "l1": "지금"}
+          ],
+          "function": ["ask_preference"],
+          "grammar": [],
+          "discourse": ["hedge"],
+          "level": "B1",
+          "distractors": [
+            {"token": "how", "hint": null, "for": null, "kind": null}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "the way it is", "surface_form": "the way it is", "l1": "지금 상태 그대로"}
+          ],
+          "explain": "앞에서 한 말을 조금 더 구체적으로 풀어 설명할 때 덧붙이는 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s1_l2",
+      "elements": [
+        {
+          "span": "Yeah, your hair's got enough length and thickness for this.",
+          "l1": "네, 이 스타일 나올 만큼 길이랑 숱이 충분해요.",
+          "tokens": [
+            {"t": "Yeah,", "l1": "네"},
+            {"t": "your", "l1": "당신의"},
+            {"t": "hair's", "l1": "머리카락이"},
+            {"t": "got", "l1": "가지고 있다"},
+            {"t": "enough", "l1": "충분한"},
+            {"t": "length", "l1": "길이"},
+            {"t": "and", "l1": "그리고"},
+            {"t": "thickness", "l1": "숱/굵기"},
+            {"t": "for", "l1": "~위해"},
+            {"t": "this.", "l1": "이것"}
+          ],
+          "function": ["report_situation"],
+          "grammar": [],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "has", "hint": "hair's는 hair has의 줄임말이에요", "for": "hair's", "kind": "form"},
+            {"token": "much", "hint": "가산·비가산 모두에 쓰이지만 여기선 enough가 자연스러워요", "for": "enough", "kind": "nuance"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "have enough length and thickness", "surface_form": "hair's got enough length and thickness", "l1": "길이와 숱이 충분하다"}
+          ],
+          "explain": "손님 모발 상태를 보고 원하는 스타일이 가능한지 평가해줄 때."
+        },
+        {
+          "span": "It'll fall a little looser than the photo, but it'll be close.",
+          "l1": "사진보다는 조금 느슨하게 나오겠지만, 비슷하게는 나올 거예요.",
+          "tokens": [
+            {"t": "It'll", "l1": "그것은 ~할 것이다"},
+            {"t": "fall", "l1": "떨어지다"},
+            {"t": "a", "l1": "조금"},
+            {"t": "little", "l1": "약간"},
+            {"t": "looser", "l1": "더 느슨하게"},
+            {"t": "than", "l1": "~보다"},
+            {"t": "the", "l1": "그"},
+            {"t": "photo,", "l1": "사진"},
+            {"t": "but", "l1": "하지만"},
+            {"t": "it'll", "l1": "그것은 ~할 것이다"},
+            {"t": "be", "l1": "~이다"},
+            {"t": "close.", "l1": "비슷한"}
+          ],
+          "function": ["reassure"],
+          "grammar": ["comparative"],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "loose", "hint": "비교할 땐 -er을 붙여요", "for": "looser", "kind": "form"},
+            {"token": "as", "hint": "비교급 문장이라 than을 써요", "for": "than", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "fall looser", "surface_form": "fall looser", "l1": "더 느슨하게 떨어지다(웨이브가)"}
+          ],
+          "explain": "사진과 완전히 똑같지는 않아도 비슷하게 나올 거라고 미리 안심시킬 때."
+        }
+      ]
+    },
+    {
+      "line_id": "s1_l3",
+      "elements": []
+    },
+    {
+      "line_id": "s2_l1",
+      "elements": [
+        {
+          "span": "Okay, so how do I keep this looking like this at home?",
+          "l1": "자, 그럼 집에서는 이 모양을 어떻게 유지해야 해요?",
+          "tokens": [
+            {"t": "Okay,", "l1": "자"},
+            {"t": "so", "l1": "그럼"},
+            {"t": "how", "l1": "어떻게"},
+            {"t": "do", "l1": "~인가요"},
+            {"t": "I", "l1": "제가"},
+            {"t": "keep", "l1": "유지하다"},
+            {"t": "this", "l1": "이것"},
+            {"t": "looking", "l1": "보이게"},
+            {"t": "like", "l1": "~처럼"},
+            {"t": "this", "l1": "이것"},
+            {"t": "at", "l1": "~에서", "free": true, "freeGroup": 1},
+            {"t": "home?", "l1": "집", "free": true, "freeGroup": 1}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": ["discourse_opener", "topic_shift"],
+          "level": "B1",
+          "distractors": [
+            {"token": "does", "hint": "주어가 I라 do를 써요", "for": "do", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "keep something looking like this", "surface_form": "keep this looking like this", "l1": "이 모양이 유지되게 하다"}
+          ],
+          "explain": "시술 후 결과물을 집에서 어떻게 관리하는지 물을 때 화제를 바꾸며 꺼내는 말."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l2",
+      "elements": [
+        {
+          "span": "First thing, wet your hair a bit.",
+          "l1": "일단, 머리를 살짝 적셔주세요.",
+          "tokens": [
+            {"t": "First", "l1": "첫째로"},
+            {"t": "thing,", "l1": "일단"},
+            {"t": "wet", "l1": "적시다"},
+            {"t": "your", "l1": "당신의"},
+            {"t": "hair", "l1": "머리카락"},
+            {"t": "a", "l1": "조금"},
+            {"t": "bit.", "l1": "약간"}
+          ],
+          "function": ["give_reason"],
+          "grammar": [],
+          "discourse": ["discourse_opener"],
+          "level": "A2",
+          "distractors": [
+            {"token": "wetting", "hint": "지시할 땐 동사원형으로 시작해요", "for": "wet", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "wet one's hair", "surface_form": "wet your hair", "l1": "머리를 적시다"}
+          ],
+          "explain": "손질 순서를 알려줄 때 첫 단계를 짚어주는 말."
+        },
+        {
+          "span": "Not soaking, just damp all over.",
+          "l1": "흠뻑 말고, 전체적으로 촉촉할 정도로만요.",
+          "tokens": [
+            {"t": "Not", "l1": "아니고"},
+            {"t": "soaking,", "l1": "흠뻑 젖은"},
+            {"t": "just", "l1": "그냥"},
+            {"t": "damp", "l1": "촉촉한"},
+            {"t": "all", "l1": "전체적으로"},
+            {"t": "over.", "l1": "곳곳"}
+          ],
+          "function": ["give_reason"],
+          "grammar": [],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "wet", "hint": "이미 wet은 앞에서 썼으니 여기선 damp가 자연스러워요", "for": "damp", "kind": "nuance"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "damp all over", "surface_form": "damp all over", "l1": "전체적으로 촉촉한 상태"}
+          ],
+          "explain": "적시는 정도를 구체적으로 정정·보충 설명할 때."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l3",
+      "elements": [
+        {
+          "span": "Damp all over, got it.",
+          "l1": "전체적으로 촉촉하게, 알겠어요.",
+          "tokens": [
+            {"t": "Damp", "l1": "촉촉한"},
+            {"t": "all", "l1": "전체적으로"},
+            {"t": "over,", "l1": "곳곳"},
+            {"t": "got", "l1": "이해했다"},
+            {"t": "it.", "l1": "그것"}
+          ],
+          "function": ["agree"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "got it", "surface_form": "got it", "l1": "알겠어요"}
+          ],
+          "explain": "방금 들은 설명을 확인·수긍할 때 짧게 쓰는 말."
+        },
+        {
+          "span": "And then the essence goes on before or after that?",
+          "l1": "그리고 에센스는 그 전에 발라요, 아니면 그 후에요?",
+          "tokens": [
+            {"t": "And", "l1": "그리고"},
+            {"t": "then", "l1": "그럼"},
+            {"t": "the", "l1": "그"},
+            {"t": "essence", "l1": "에센스"},
+            {"t": "goes", "l1": "바르다/들어가다"},
+            {"t": "on", "l1": "위에"},
+            {"t": "before", "l1": "전에"},
+            {"t": "or", "l1": "아니면"},
+            {"t": "after", "l1": "후에"},
+            {"t": "that?", "l1": "그것"}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": ["topic_shift"],
+          "level": "B1",
+          "distractors": [
+            {"token": "go", "hint": "essence는 단수라 goes를 써요", "for": "goes", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "go on", "surface_form": "goes on", "l1": "발라지다/적용되다"}
+          ],
+          "explain": "제품을 바르는 순서가 궁금할 때 되묻는 말."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l4",
+      "elements": [
+        {
+          "span": "Put it on while your hair's still damp, then scrunch it up from the ends.",
+          "l1": "머리가 아직 촉촉할 때 발라주고, 그다음 끝부분부터 위로 쥐어짜듯 눌러주세요.",
+          "tokens": [
+            {"t": "Put", "l1": "바르다"},
+            {"t": "it", "l1": "그것을"},
+            {"t": "on", "l1": "위에"},
+            {"t": "while", "l1": "~하는 동안"},
+            {"t": "your", "l1": "당신의"},
+            {"t": "hair's", "l1": "머리카락이"},
+            {"t": "still", "l1": "아직"},
+            {"t": "damp,", "l1": "촉촉한"},
+            {"t": "then", "l1": "그다음"},
+            {"t": "scrunch", "l1": "쥐어짜다"},
+            {"t": "it", "l1": "그것을"},
+            {"t": "up", "l1": "위로"},
+            {"t": "from", "l1": "~부터"},
+            {"t": "the", "l1": "그"},
+            {"t": "ends.", "l1": "끝부분"}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "is", "hint": "hair's는 hair is의 줄임말이에요", "for": "hair's", "kind": "form"}
+          ],
+          "expected_errors": [
+            {"wrong": ["scrunch", "up", "it"], "right": ["scrunch", "it", "up"], "kind": "order", "hint": "구동사에서 대명사 목적어는 동사와 부사 사이에 와요"}
+          ],
+          "glosses": [
+            {"lemma": "scrunch up", "surface_form": "scrunch it up", "l1": "쥐어짜듯 눌러 웨이브를 만들다"},
+            {"lemma": "put on", "surface_form": "put it on", "l1": "바르다"}
+          ],
+          "explain": "에센스를 바르는 타이밍과 웨이브를 살리는 손동작 요령을 알려줄 때."
+        }
+      ]
+    },
+    {
+      "line_id": "s3_l1",
+      "elements": [
+        {
+          "span": "Okay, and what about a diffuser?",
+          "l1": "네, 그리고 디퓨저는요?",
+          "tokens": [
+            {"t": "Okay,", "l1": "네"},
+            {"t": "and", "l1": "그리고"},
+            {"t": "what", "l1": "무엇"},
+            {"t": "about", "l1": "~는 어때요"},
+            {"t": "a", "l1": "하나의"},
+            {"t": "diffuser?", "l1": "디퓨저"}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": ["topic_shift"],
+          "level": "A2",
+          "distractors": [
+            {"token": "how", "hint": "특정 대상을 화제로 꺼낼 땐 what about을 써요", "for": "what", "kind": "chunk"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "what about", "surface_form": "what about", "l1": "~는 어때요"}
+          ],
+          "explain": "새로운 도구나 방법을 궁금해서 화제로 꺼낼 때."
+        },
+        {
+          "span": "I've seen people use those.",
+          "l1": "사람들이 그거 쓰는 거 봤거든요.",
+          "tokens": [
+            {"t": "I've", "l1": "저는"},
+            {"t": "seen", "l1": "본 적 있다"},
+            {"t": "people", "l1": "사람들이"},
+            {"t": "use", "l1": "쓰는 것"},
+            {"t": "those.", "l1": "그것들"}
+          ],
+          "function": ["give_reason"],
+          "grammar": [],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "using", "hint": "지각동사 뒤엔 동사원형이 와요", "for": "use", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "have seen someone do something", "surface_form": "have seen people use", "l1": "사람들이 쓰는 걸 본 적 있다"}
+          ],
+          "explain": "질문의 배경이 된 경험을 짧게 덧붙일 때."
+        }
+      ]
+    },
+    {
+      "line_id": "s3_l2",
+      "elements": [
+        {
+          "span": "You can, but here's the thing — I only have about three minutes in the morning.",
+          "l1": "쓰셔도 되는데, 근데 문제가 있어요 — 저는 아침에 3분 정도밖에 시간이 없거든요.",
+          "tokens": [
+            {"t": "You", "l1": "당신은"},
+            {"t": "can,", "l1": "할 수 있다"},
+            {"t": "but", "l1": "하지만"},
+            {"t": "here's", "l1": "여기 있다"},
+            {"t": "the", "l1": "그"},
+            {"t": "thing", "l1": "문제"},
+            {"t": "—", "l1": ""},
+            {"t": "I", "l1": "저는"},
+            {"t": "only", "l1": "겨우"},
+            {"t": "have", "l1": "가지고 있다"},
+            {"t": "about", "l1": "약"},
+            {"t": "three", "l1": "3"},
+            {"t": "minutes", "l1": "분"},
+            {"t": "in", "l1": "~에", "free": true, "freeGroup": 1},
+            {"t": "the", "l1": "그", "free": true, "freeGroup": 1},
+            {"t": "morning.", "l1": "아침", "free": true, "freeGroup": 1}
+          ],
+          "function": ["mild_complaint", "give_reason"],
+          "grammar": [],
+          "discourse": ["discourse_opener"],
+          "level": "B1",
+          "distractors": [
+            {"token": "there's", "hint": "여기선 문제를 소개하는 here's the thing을 써요", "for": "here's", "kind": "chunk"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "here's the thing", "surface_form": "here's the thing", "l1": "근데 문제가 있어요"}
+          ],
+          "explain": "가능하지만 현실적으로 어려운 사정을 말하기 전에 꺼내는 말."
+        },
+        {
+          "span": "Two kids, you know?",
+          "l1": "애가 둘이라서요, 아시죠?",
+          "tokens": [
+            {"t": "Two", "l1": "둘"},
+            {"t": "kids,", "l1": "아이"},
+            {"t": "you", "l1": "당신"},
+            {"t": "know?", "l1": "알잖아요"}
+          ],
+          "function": ["give_reason"],
+          "grammar": [],
+          "discourse": ["tag_seek_agreement"],
+          "level": "A2",
+          "distractors": [],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "you know", "surface_form": "you know", "l1": "아시잖아요"}
+          ],
+          "explain": "상대의 공감을 자연스럽게 구하며 이유를 짧게 덧붙일 때."
+        }
+      ]
+    },
+    {
+      "line_id": "s3_l3",
+      "elements": [
+        {
+          "span": "Oh, then skip the diffuser.",
+          "l1": "아, 그럼 디퓨저는 건너뛰세요.",
+          "tokens": [
+            {"t": "Oh,", "l1": "아"},
+            {"t": "then", "l1": "그럼"},
+            {"t": "skip", "l1": "건너뛰다"},
+            {"t": "the", "l1": "그"},
+            {"t": "diffuser.", "l1": "디퓨저"}
+          ],
+          "function": ["propose"],
+          "grammar": [],
+          "discourse": ["discourse_opener"],
+          "level": "A2",
+          "distractors": [
+            {"token": "skipping", "hint": "제안·지시는 동사원형으로 시작해요", "for": "skip", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "skip", "surface_form": "skip", "l1": "건너뛰다, 생략하다"}
+          ],
+          "explain": "시간 제약을 듣고 더 간단한 대안을 즉시 제안할 때."
+        },
+        {
+          "span": "Just scrunch with your hands and let it air-dry.",
+          "l1": "그냥 손으로 쥐어짜고 자연 건조시키세요.",
+          "tokens": [
+            {"t": "Just", "l1": "그냥"},
+            {"t": "scrunch", "l1": "쥐어짜다"},
+            {"t": "with", "l1": "~로"},
+            {"t": "your", "l1": "당신의"},
+            {"t": "hands", "l1": "손"},
+            {"t": "and", "l1": "그리고"},
+            {"t": "let", "l1": "~하게 두다"},
+            {"t": "it", "l1": "그것을"},
+            {"t": "air-dry.", "l1": "자연 건조되다"}
+          ],
+          "function": ["propose"],
+          "grammar": ["base_form_after_aux"],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "drying", "hint": "let 뒤엔 동사원형이 와요", "for": "air-dry", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "let something air-dry", "surface_form": "let it air-dry", "l1": "자연 건조되게 두다"}
+          ],
+          "explain": "가장 간단한 손질법을 구체적으로 알려줄 때."
+        },
+        {
+          "span": "That's the fastest way, honestly.",
+          "l1": "그게 제일 빠른 방법이에요, 솔직히.",
+          "tokens": [
+            {"t": "That's", "l1": "그것이 ~이다"},
+            {"t": "the", "l1": "그"},
+            {"t": "fastest", "l1": "가장 빠른"},
+            {"t": "way,", "l1": "방법"},
+            {"t": "honestly.", "l1": "솔직히", "free": true, "freeGroup": 1}
+          ],
+          "function": ["express_opinion"],
+          "grammar": ["comparative"],
+          "discourse": ["hedge"],
+          "level": "A2",
+          "distractors": [
+            {"token": "faster", "hint": "가장 빠른 것을 말할 땐 the fastest를 써요", "for": "fastest", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "the fastest way", "surface_form": "the fastest way", "l1": "가장 빠른 방법"}
+          ],
+          "explain": "추천한 방법에 확신을 더해줄 때 덧붙이는 말."
+        }
+      ]
+    },
+    {
+      "line_id": "s3_l4",
+      "elements": [
+        {
+          "span": "That's exactly what I needed to hear.",
+          "l1": "그 말이 딱 필요했어요.",
+          "tokens": [
+            {"t": "That's", "l1": "그것이 ~이다"},
+            {"t": "exactly", "l1": "정확히"},
+            {"t": "what", "l1": "것"},
+            {"t": "I", "l1": "제가"},
+            {"t": "needed", "l1": "필요했다"},
+            {"t": "to", "l1": "~하기 위해"},
+            {"t": "hear.", "l1": "듣다"}
+          ],
+          "function": ["express_gratitude"],
+          "grammar": [],
+          "discourse": [],
+          "level": "B1",
+          "distractors": [
+            {"token": "need", "hint": "지난 순간 필요했던 것이라 needed를 써요", "for": "needed", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "exactly what I needed to hear", "surface_form": "exactly what I needed to hear", "l1": "딱 듣고 싶었던 말"}
+          ],
+          "explain": "간단한 해결책을 듣고 진심으로 만족했을 때 쓰는 표현."
+        }
+      ]
+    }
+  ]
+}

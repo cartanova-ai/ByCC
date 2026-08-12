@@ -1,0 +1,215 @@
+[
+  {
+    "label": "v1-1090711-generate",
+    "note": "1090711 재현 — 구 structured(--json-schema) 요청과 동일 입력을 새 경로로",
+    "model": "anthropic/claude-sonnet-5",
+    "effort": "low",
+    "baseline": {
+      "id": 1090711,
+      "durationMs": 509408,
+      "inTok": 122532,
+      "outTok": 55098,
+      "costMicro": 1117375
+    },
+    "wallMs": 20087,
+    "serverDurationMs": 16968,
+    "ttftMs": 0,
+    "finishReason": "stop",
+    "servedModel": "claude-sonnet-5",
+    "usage": {
+      "input_tokens": 18500,
+      "output_tokens": 1554,
+      "cache_creation_input_tokens": 18498,
+      "cache_creation_5m_input_tokens": 0,
+      "cache_creation_1h_input_tokens": 18498,
+      "cache_read_input_tokens": 0
+    },
+    "costUsd": 0.134304,
+    "responseChars": 2822,
+    "classification": {
+      "syntax": "ok",
+      "schemaValid": false,
+      "schemaErrors": [
+        "/scenes/0/contents/1/type: must be equal to constant",
+        "/scenes/0/contents/1/expression: must be equal to one of the allowed values",
+        "/scenes/0/contents/1: must match exactly one schema in oneOf"
+      ],
+      "fenceResidue": false,
+      "firstChar": "{",
+      "lastChar": "}",
+      "startsWhitespace": false,
+      "missingRequired": [],
+      "extraTopLevelKeys": [],
+      "topLevelKeys": [
+        "title",
+        "opening_line",
+        "poster",
+        "level",
+        "protagonist",
+        "characters",
+        "scenes",
+        "atoms"
+      ]
+    }
+  },
+  {
+    "label": "v1-1090711-stream",
+    "note": "1090711 재현 — 구 structured(--json-schema) 요청과 동일 입력을 새 경로로",
+    "model": "anthropic/claude-sonnet-5",
+    "effort": "low",
+    "baseline": {
+      "id": 1090711,
+      "durationMs": 509408,
+      "inTok": 122532,
+      "outTok": 55098,
+      "costMicro": 1117375
+    },
+    "wallMs": 88437,
+    "serverDurationMs": 87234,
+    "ttftMs": 3133,
+    "firstDeltaMs": 3187,
+    "deltaCount": 154,
+    "finishReason": "stop",
+    "servedModel": "claude-sonnet-5",
+    "usage": {
+      "input_tokens": 18500,
+      "output_tokens": 9909,
+      "cache_creation_input_tokens": 0,
+      "cache_creation_5m_input_tokens": 0,
+      "cache_creation_1h_input_tokens": 0,
+      "cache_read_input_tokens": 18498
+    },
+    "costUsd": 0.1541904,
+    "responseChars": 16170,
+    "classification": {
+      "syntax": "ok",
+      "schemaValid": false,
+      "schemaErrors": [
+        "/scenes/0/contents/1/type: must be equal to constant",
+        "/scenes/0/contents/1/expression: must be equal to one of the allowed values",
+        "/scenes/0/contents/1: must match exactly one schema in oneOf",
+        "/scenes/1/contents/4/type: must be equal to constant",
+        "/scenes/1/contents/4/expression: must be equal to one of the allowed values",
+        "/scenes/1/contents/4: must match exactly one schema in oneOf"
+      ],
+      "fenceResidue": false,
+      "firstChar": "{",
+      "lastChar": "}",
+      "startsWhitespace": false,
+      "missingRequired": [],
+      "extraTopLevelKeys": [],
+      "topLevelKeys": [
+        "title",
+        "opening_line",
+        "poster",
+        "level",
+        "protagonist",
+        "characters",
+        "scenes",
+        "atoms"
+      ]
+    },
+    "deltaDoneMismatch": false
+  },
+  {
+    "label": "v2-1091748-generate",
+    "note": "1091748 재현 — 민상님 수동 주입분을 제거한 base system + 서버 자동 주입",
+    "model": "anthropic/claude-sonnet-5",
+    "effort": "low",
+    "baseline": {
+      "id": 1091748,
+      "durationMs": 57936,
+      "inTok": 18852,
+      "outTok": 6782,
+      "costMicro": 110412
+    },
+    "wallMs": 75177,
+    "serverDurationMs": 68626,
+    "ttftMs": 0,
+    "finishReason": "stop",
+    "servedModel": "claude-sonnet-5",
+    "usage": {
+      "input_tokens": 18980,
+      "output_tokens": 8196,
+      "cache_creation_input_tokens": 18978,
+      "cache_creation_5m_input_tokens": 0,
+      "cache_creation_1h_input_tokens": 18978,
+      "cache_read_input_tokens": 0
+    },
+    "costUsd": 0.23681400000000002,
+    "responseChars": 17051,
+    "classification": {
+      "syntax": "ok",
+      "schemaValid": true,
+      "schemaErrors": [],
+      "fenceResidue": false,
+      "firstChar": "{",
+      "lastChar": "}",
+      "startsWhitespace": false,
+      "missingRequired": [],
+      "extraTopLevelKeys": [],
+      "topLevelKeys": [
+        "title",
+        "opening_line",
+        "poster",
+        "level",
+        "protagonist",
+        "characters",
+        "scenes",
+        "atoms"
+      ]
+    }
+  },
+  {
+    "label": "v2-1091748-stream",
+    "note": "1091748 재현 — 민상님 수동 주입분을 제거한 base system + 서버 자동 주입",
+    "model": "anthropic/claude-sonnet-5",
+    "effort": "low",
+    "baseline": {
+      "id": 1091748,
+      "durationMs": 57936,
+      "inTok": 18852,
+      "outTok": 6782,
+      "costMicro": 110412
+    },
+    "wallMs": 66173,
+    "serverDurationMs": 63909,
+    "ttftMs": 1834,
+    "firstDeltaMs": 3052,
+    "deltaCount": 113,
+    "finishReason": "stop",
+    "servedModel": "claude-sonnet-5",
+    "usage": {
+      "input_tokens": 18980,
+      "output_tokens": 7453,
+      "cache_creation_input_tokens": 18978,
+      "cache_creation_5m_input_tokens": 0,
+      "cache_creation_1h_input_tokens": 18978,
+      "cache_read_input_tokens": 0
+    },
+    "costUsd": 0.225669,
+    "responseChars": 12148,
+    "classification": {
+      "syntax": "ok",
+      "schemaValid": true,
+      "schemaErrors": [],
+      "fenceResidue": false,
+      "firstChar": "{",
+      "lastChar": "}",
+      "startsWhitespace": false,
+      "missingRequired": [],
+      "extraTopLevelKeys": [],
+      "topLevelKeys": [
+        "title",
+        "opening_line",
+        "poster",
+        "level",
+        "protagonist",
+        "characters",
+        "scenes",
+        "atoms"
+      ]
+    },
+    "deltaDoneMismatch": false
+  }
+]

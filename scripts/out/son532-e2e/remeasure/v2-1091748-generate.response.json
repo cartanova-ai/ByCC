@@ -1,0 +1,460 @@
+{
+  "title": "점심시간 카페 주문",
+  "opening_line": "점심시간, 강배와 도현이 근처 카페에 왔다. 메뉴판을 보며 뭘 시킬지 정해야 한다.",
+  "poster": {"place": "카페", "time_of_day": "낮", "mood": "활기찬"},
+  "level": "A2",
+  "protagonist": "강배",
+  "characters": [
+    {"id": "강배", "display_name": "강배", "is_speaker": true, "outfit": "캐주얼"},
+    {"id": "도현", "display_name": "도현", "is_speaker": true, "outfit": "정장"},
+    {"id": "하린", "display_name": "하린", "is_speaker": true, "outfit": "바리스타"}
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "bg_image": {"place": "카페", "spot": "주문대", "time_of_day": "낮"},
+      "bgm": {"genre": "시티팝", "tempo": "빠른"},
+      "mood": "활기찬",
+      "contents": [
+        {"type": "text", "id": "s1_t1", "characterId": "강배", "l1": "점심시간 카페 안은 사람들로 북적였다. 벽에 붙은 메뉴판 앞에서 강배와 도현이 나란히 서서 글자를 훑었다. 커피 향과 웅성거림이 공기를 채웠다.", "sfx": null},
+        {"type": "dialogue", "id": "s1_l1", "speaker": "도현", "text": "So, what are you in the mood for today?", "l1": "그래서, 오늘은 뭐 먹고 싶어요?", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s1_l2", "speaker": "강배", "text": "I don't know, maybe something light. I had a big breakfast.", "l1": "글쎄요, 가벼운 거로, 아마. 아침을 많이 먹었거든요.", "expression": "기쁨", "sfx": null},
+        {"type": "text", "id": "s1_t2", "characterId": "도현", "l1": "도현이 메뉴판 위쪽을 손끝으로 짚으며 고개를 갸웃했다.", "sfx": null},
+        {"type": "dialogue", "id": "s1_l3", "speaker": "도현", "text": "How about that sandwich set? It comes with a salad.", "l1": "저 샌드위치 세트는 어때요? 샐러드가 같이 나와요.", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s1_l4", "speaker": "강배", "text": "That sounds good. Let's go with that.", "l1": "그거 좋네요. 그걸로 하죠.", "expression": "기쁨", "sfx": null}
+      ]
+    },
+    {
+      "id": "s2",
+      "bg_image": {"place": "카페", "spot": "주문대", "time_of_day": "낮"},
+      "bgm": {"genre": "시티팝", "tempo": "빠른"},
+      "mood": "활기찬",
+      "contents": [
+        {"type": "text", "id": "s2_t1", "characterId": "하린", "l1": "줄이 줄어들자 하린이 카운터 너머로 미소를 지으며 두 사람을 맞았다. 손엔 펜과 주문지가 들려 있었다.", "sfx": "자동문소리"},
+        {"type": "dialogue", "id": "s2_l1", "speaker": "하린", "text": "Hi there, are you ready to order?", "l1": "안녕하세요, 주문하시겠어요?", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s2_l2", "speaker": "도현", "text": "Yeah, I'll have the sandwich set, please.", "l1": "네, 저는 샌드위치 세트로 할게요.", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s2_l3", "speaker": "하린", "text": "Great choice. And for you, sir?", "l1": "좋은 선택이에요. 그리고 손님은요?", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s2_l4", "speaker": "강배", "text": "I'll have the same, actually. And can I get an iced Americano with that?", "l1": "저도 사실 같은 걸로 할게요. 그리고 그거에 아이스 아메리카노도 하나 넣어주실 수 있어요?", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s2_l5", "speaker": "하린", "text": "Sure. Anything else, or is that all for you two?", "l1": "네. 다른 건 없으시고요, 두 분 이걸로 다인가요?", "expression": "기쁨", "sfx": null},
+        {"type": "dialogue", "id": "s2_l6", "speaker": "도현", "text": "That's it for me. Oh wait, could you make my coffee decaf?", "l1": "저는 이걸로 다예요. 아, 잠깐만요, 제 커피는 디카페인으로 해주실 수 있어요?", "expression": "불안", "sfx": null},
+        {"type": "dialogue", "id": "s2_l7", "speaker": "하린", "text": "No problem at all. It'll be ready in about ten minutes.", "l1": "전혀 문제없어요. 10분쯽이면 준비될 거예요.", "expression": "기쁨", "sfx": null}
+      ]
+    }
+  ],
+  "atoms": [
+    {
+      "line_id": "s1_l1",
+      "elements": [
+        {
+          "span": "So, what are you in the mood for today?",
+          "l1": "그래서, 오늘은 뭐 먹고 싶어요?",
+          "tokens": [
+            {"t": "So", "l1": "그래서", "free": true, "freeGroup": 1},
+            {"t": "what", "l1": "무엇을"},
+            {"t": "are", "l1": "~인가요"},
+            {"t": "you", "l1": "당신은"},
+            {"t": "in", "l1": "~에"},
+            {"t": "the", "l1": "그"},
+            {"t": "mood", "l1": "기분"},
+            {"t": "for", "l1": "~을 위한"},
+            {"t": "today", "l1": "오늘"}
+          ],
+          "function": ["ask_preference"],
+          "grammar": [],
+          "discourse": ["discourse_opener"],
+          "level": "A2",
+          "distractors": [
+            {"token": "were", "hint": "지금 묻는 거라 현재형 are예요", "for": "are", "kind": "form"},
+            {"token": "like", "hint": null, "for": null, "kind": null}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "be in the mood for", "surface_form": "are in the mood for", "l1": "~하고 싶은 기분이다"}
+          ],
+          "explain": "동료에게 먹고 싶은 게 뭔지 캐주얼하게 물을 때 쓰는 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s1_l2",
+      "elements": [
+        {
+          "span": "I don't know, maybe something light.",
+          "l1": "글쎄요, 가벼운 거로, 아마.",
+          "tokens": [
+            {"t": "I", "l1": "저는"},
+            {"t": "don't", "l1": "~하지 않아요"},
+            {"t": "know", "l1": "알다"},
+            {"t": "maybe", "l1": "아마"},
+            {"t": "something", "l1": "뭔가"},
+            {"t": "light", "l1": "가벼운"}
+          ],
+          "function": ["hedge"],
+          "grammar": [],
+          "discourse": ["hedge"],
+          "level": "A2",
+          "distractors": [
+            {"token": "heavy", "hint": "가벼운 음식이라 light예요", "for": "light", "kind": "contrast"}
+          ],
+          "expected_errors": [],
+          "glosses": [],
+          "explain": "메뉴를 확실히 정하지 못했을 때 부드럽게 대답하는 상황."
+        },
+        {
+          "span": "I had a big breakfast.",
+          "l1": "아침을 많이 먹었거든요.",
+          "tokens": [
+            {"t": "I", "l1": "저는"},
+            {"t": "had", "l1": "먹었어요"},
+            {"t": "a", "l1": "하나의"},
+            {"t": "big", "l1": "큰"},
+            {"t": "breakfast", "l1": "아침"}
+          ],
+          "function": ["give_reason"],
+          "grammar": ["past_simple"],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "have", "hint": "이미 먹은 과거 얘기라 had예요", "for": "had", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [],
+          "explain": "가벼운 걸 먹고 싶은 이유를 덧붙일 때 쓰는 문장."
+        }
+      ]
+    },
+    {
+      "line_id": "s1_l3",
+      "elements": [
+        {
+          "span": "How about that sandwich set?",
+          "l1": "저 샌드위치 세트는 어때요?",
+          "tokens": [
+            {"t": "How", "l1": "어때"},
+            {"t": "about", "l1": "~은"},
+            {"t": "that", "l1": "저"},
+            {"t": "sandwich", "l1": "샌드위치"},
+            {"t": "set", "l1": "세트"}
+          ],
+          "function": ["propose"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A1",
+          "distractors": [
+            {"token": "what", "hint": "제안할 땐 How about이에요", "for": "How", "kind": "chunk"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "how about", "surface_form": "How about", "l1": "~은 어때요"}
+          ],
+          "explain": "메뉴 하나를 골라 상대에게 제안할 때 쓰는 표현."
+        },
+        {
+          "span": "It comes with a salad.",
+          "l1": "샐러드가 같이 나와요.",
+          "tokens": [
+            {"t": "It", "l1": "그건"},
+            {"t": "comes", "l1": "나와요"},
+            {"t": "with", "l1": "함께"},
+            {"t": "a", "l1": "하나의"},
+            {"t": "salad", "l1": "샐러드"}
+          ],
+          "function": ["report_situation"],
+          "grammar": ["third_person_s"],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "come", "hint": "it은 3인칭 단수라 comes예요", "for": "comes", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "come with", "surface_form": "comes with", "l1": "~이 딸려 나오다"}
+          ],
+          "explain": "세트 메뉴에 뭐가 포함돼 있는지 설명하는 문장."
+        }
+      ]
+    },
+    {
+      "line_id": "s1_l4",
+      "elements": [
+        {
+          "span": "That sounds good. Let's go with that.",
+          "l1": "그거 좋네요. 그걸로 하죠.",
+          "tokens": [
+            {"t": "That", "l1": "그거"},
+            {"t": "sounds", "l1": "들려요"},
+            {"t": "good", "l1": "좋게"},
+            {"t": "Let's", "l1": "~하죠"},
+            {"t": "go", "l1": "가다"},
+            {"t": "with", "l1": "~으로"},
+            {"t": "that", "l1": "그것"}
+          ],
+          "function": ["agree"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "goes", "hint": "제안이라 원형 go예요", "for": "go", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "go with", "surface_form": "go with", "l1": "~로 정하다/선택하다"}
+          ],
+          "explain": "상대 제안에 동의하며 그걸로 결정하자고 할 때 쓰는 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l1",
+      "elements": [
+        {
+          "span": "Hi there, are you ready to order?",
+          "l1": "안녕하세요, 주문하시겠어요?",
+          "tokens": [
+            {"t": "Hi", "l1": "안녕하세요"},
+            {"t": "there", "l1": "저기", "free": true, "freeGroup": 1},
+            {"t": "are", "l1": "~인가요"},
+            {"t": "you", "l1": "당신은"},
+            {"t": "ready", "l1": "준비된"},
+            {"t": "to", "l1": "~할"},
+            {"t": "order", "l1": "주문"}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": ["greeting"],
+          "level": "A1",
+          "distractors": [
+            {"token": "is", "hint": "you는 are예요", "for": "are", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "be ready to", "surface_form": "are ready to", "l1": "~할 준비가 되다"}
+          ],
+          "explain": "점원이 손님에게 주문받을 준비가 됐는지 물어보는 인사말."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l2",
+      "elements": [
+        {
+          "span": "I'll have the sandwich set, please.",
+          "l1": "저는 샌드위치 세트로 할게요.",
+          "tokens": [
+            {"t": "I'll", "l1": "저는 ~할게요"},
+            {"t": "have", "l1": "먹다"},
+            {"t": "the", "l1": "그"},
+            {"t": "sandwich", "l1": "샌드위치"},
+            {"t": "set", "l1": "세트"},
+            {"t": "please", "l1": "부탁해요"}
+          ],
+          "function": ["commit_deadline"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A1",
+          "distractors": [
+            {"token": "will", "hint": "구어체라 I'll처럼 축약해요", "for": "I'll", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "have", "surface_form": "have", "l1": "(음식을) 먹다, 주문하다"}
+          ],
+          "explain": "카페나 식당에서 자기 주문을 정해 말할 때 쓰는 기본 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l3",
+      "elements": [
+        {
+          "span": "Great choice. And for you, sir?",
+          "l1": "좋은 선택이에요. 그리고 손님은요?",
+          "tokens": [
+            {"t": "Great", "l1": "좋은"},
+            {"t": "choice", "l1": "선택"},
+            {"t": "And", "l1": "그리고", "free": true, "freeGroup": 1},
+            {"t": "for", "l1": "~는"},
+            {"t": "you", "l1": "당신은"},
+            {"t": "sir", "l1": "손님"}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": ["topic_shift"],
+          "level": "A2",
+          "distractors": [],
+          "expected_errors": [],
+          "glosses": [],
+          "explain": "한 사람 주문을 받고 다음 사람에게 순서를 넘기는 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l4",
+      "elements": [
+        {
+          "span": "I'll have the same, actually.",
+          "l1": "저도 사실 같은 걸로 할게요.",
+          "tokens": [
+            {"t": "I'll", "l1": "저는 ~할게요"},
+            {"t": "have", "l1": "먹다"},
+            {"t": "the", "l1": "그"},
+            {"t": "same", "l1": "똑같은 것"},
+            {"t": "actually", "l1": "사실", "free": true, "freeGroup": 1}
+          ],
+          "function": ["commit_deadline"],
+          "grammar": [],
+          "discourse": ["hedge"],
+          "level": "A2",
+          "distractors": [
+            {"token": "similar", "hint": "완전히 같은 거라 same이에요", "for": "same", "kind": "contrast"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "have the same", "surface_form": "have the same", "l1": "같은 걸로 주문하다"}
+          ],
+          "explain": "다른 사람과 같은 메뉴를 시킬 때 쓰는 표현."
+        },
+        {
+          "span": "And can I get an iced Americano with that?",
+          "l1": "그리고 그거에 아이스 아메리카노도 하나 넣어주실 수 있어요?",
+          "tokens": [
+            {"t": "And", "l1": "그리고", "free": true, "freeGroup": 1},
+            {"t": "can", "l1": "~해줄 수"},
+            {"t": "I", "l1": "제가"},
+            {"t": "get", "l1": "받다"},
+            {"t": "an", "l1": "하나의"},
+            {"t": "iced", "l1": "아이스"},
+            {"t": "Americano", "l1": "아메리카노"},
+            {"t": "with", "l1": "함께"},
+            {"t": "that", "l1": "그것"}
+          ],
+          "function": ["polite_request"],
+          "grammar": ["article_a_an"],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "a", "hint": "iced는 모음 발음이라 an이에요", "for": "an", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "can I get", "surface_form": "can I get", "l1": "~을 받을 수 있을까요"}
+          ],
+          "explain": "주문에 음료를 추가로 요청할 때 쓰는 정중한 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l5",
+      "elements": [
+        {
+          "span": "Anything else, or is that all for you two?",
+          "l1": "다른 건 없으시고요, 두 분 이걸로 다인가요?",
+          "tokens": [
+            {"t": "Anything", "l1": "뭐라도"},
+            {"t": "else", "l1": "다른"},
+            {"t": "or", "l1": "아니면"},
+            {"t": "is", "l1": "~인가요"},
+            {"t": "that", "l1": "그것"},
+            {"t": "all", "l1": "다"},
+            {"t": "for", "l1": "~에게"},
+            {"t": "you", "l1": "당신들"},
+            {"t": "two", "l1": "두 명"}
+          ],
+          "function": ["ask_info"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "something", "hint": "질문이라 anything이에요", "for": "Anything", "kind": "contrast"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "is that all", "surface_form": "is that all", "l1": "그게 전부인가요"}
+          ],
+          "explain": "주문을 마무리하기 전에 더 필요한 게 있는지 확인하는 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l6",
+      "elements": [
+        {
+          "span": "That's it for me.",
+          "l1": "저는 이걸로 다예요.",
+          "tokens": [
+            {"t": "That's", "l1": "그게"},
+            {"t": "it", "l1": "그것"},
+            {"t": "for", "l1": "~에게"},
+            {"t": "me", "l1": "저"}
+          ],
+          "function": ["report_situation"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "that's it for", "surface_form": "that's it for", "l1": "~는 이걸로 끝이다"}
+          ],
+          "explain": "주문이 더 없다고 마무리할 때 쓰는 표현."
+        },
+        {
+          "span": "Oh wait, could you make my coffee decaf?",
+          "l1": "아, 잠깐만요, 제 커피는 디카페인으로 해주실 수 있어요?",
+          "tokens": [
+            {"t": "Oh", "l1": "아", "free": true, "freeGroup": 1},
+            {"t": "wait", "l1": "잠깐만요", "free": true, "freeGroup": 1},
+            {"t": "could", "l1": "~해줄 수"},
+            {"t": "you", "l1": "당신이"},
+            {"t": "make", "l1": "만들다"},
+            {"t": "my", "l1": "제"},
+            {"t": "coffee", "l1": "커피"},
+            {"t": "decaf", "l1": "디카페인으로"}
+          ],
+          "function": ["polite_request"],
+          "grammar": ["base_form_after_aux"],
+          "discourse": ["discourse_opener"],
+          "level": "A2",
+          "distractors": [
+            {"token": "making", "hint": "could you 뒤엔 동사 원형이에요", "for": "make", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "could you make", "surface_form": "could you make", "l1": "~하게 해주실 수 있나요"}
+          ],
+          "explain": "이미 말한 주문에 조건을 뒤늦게 덧붙여 요청할 때 쓰는 표현."
+        }
+      ]
+    },
+    {
+      "line_id": "s2_l7",
+      "elements": [
+        {
+          "span": "It'll be ready in about ten minutes.",
+          "l1": "10분쯽이면 준비될 거예요.",
+          "tokens": [
+            {"t": "It'll", "l1": "그건 ~할 거예요"},
+            {"t": "be", "l1": "될"},
+            {"t": "ready", "l1": "준비된"},
+            {"t": "in", "l1": "~ 후에"},
+            {"t": "about", "l1": "약", "free": true, "freeGroup": 1},
+            {"t": "ten", "l1": "10"},
+            {"t": "minutes", "l1": "분"}
+          ],
+          "function": ["reassure"],
+          "grammar": [],
+          "discourse": [],
+          "level": "A2",
+          "distractors": [
+            {"token": "minute", "hint": "10분이라 복수형 minutes예요", "for": "minutes", "kind": "form"}
+          ],
+          "expected_errors": [],
+          "glosses": [
+            {"lemma": "be ready in", "surface_form": "be ready in", "l1": "~ 후면 준비되다"}
+          ],
+          "explain": "주문한 음식이 언제쯽 나올지 안심시키며 알려주는 표현."
+        }
+      ]
+    }
+  ]
+}
