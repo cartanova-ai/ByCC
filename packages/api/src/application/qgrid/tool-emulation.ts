@@ -119,11 +119,15 @@ function parseEnvelope(text: string, tools: QgridTool[], answerKind: AnswerKind)
   try {
     value = JSON.parse(text);
   } catch (error) {
-    // 관용 폴백 없음: envelope 는 양 provider 의 structured output 으로 강제되는 내부
-    // 계약이라 여기 도달한 비 JSON 은 버그다. 과거의 텍스트 구제는 퇴화 봉투를 답변으로
-    // 흘려보내 조용한 오염을 만들었다(2026-07 medpath, 13.5k 건).
+    // 관용 폴백 없음. openai 는 envelope 이 structured output 으로 강제되므로 여기 도달한
+    // 비 JSON 은 버그다. anthropic 은 계약을 프롬프트로만 안내하므로(SON-532) 비 JSON 이
+    // "예상 가능한 모델 실패"지만, 그래도 구제하지 않는다 — 과거의 텍스트 구제는 퇴화
+    // 봉투를 답변으로 흘려보내 조용한 오염을 만들었다(2026-07 medpath, 13.5k 건).
+    // 정직한 실패가 보여야 소비자가 재시도하거나 근본 원인을 고친다.
     logger.warn(`tool envelope parse failed: ${(error as Error).message}`);
-    throw new ToolCallEmulationError(`invalid tool envelope: ${(error as Error).message}`);
+    throw new ToolCallEmulationError(
+      `invalid tool envelope (response is not JSON — the model ignored the envelope contract; retry is the caller's decision): ${(error as Error).message}`,
+    );
   }
 
   assertStructuredEnvelopeComplexity(value);

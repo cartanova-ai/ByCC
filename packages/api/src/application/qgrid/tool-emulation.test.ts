@@ -161,6 +161,18 @@ describe("applyToolCallEmulation envelope validation", () => {
     expect(() => applyEnvelope(result, "text")).toThrowError(ToolCallEmulationError);
   });
 
+  // SON-532: anthropic 은 envelope 을 프롬프트로만 안내하므로 프로즈 응답이 "예상 가능한
+  // 모델 실패"가 됐다. 그래도 구제하지 않는다 — 정직한 실패가 소비자 재시도를 안내한다.
+  it("rejects a prose response with a message that guides the caller", () => {
+    expect(() =>
+      applyToolCallEmulation(
+        { ...baseResult, text: "Sure! I looked it up and the answer is 42." },
+        tools,
+        { answerKind: "json" },
+      ),
+    ).toThrow(/response is not JSON.*retry is the caller's decision/);
+  });
+
   it("rejects an envelope missing the result wrapper", () => {
     expect(() =>
       applyToolCallEmulation(
