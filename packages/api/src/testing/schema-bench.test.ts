@@ -245,7 +245,8 @@ describe("checkpoint", () => {
   };
 
   it("동일 조합은 같은 키 — resume 시 재발사가 스킵된다", () => {
-    expect(checkpointKey(record)).toBe(checkpointKey({ ...record, durationMs: 99 }));
+    const withDifferentDuration: BenchRecord = { ...record, durationMs: 99 };
+    expect(checkpointKey(record)).toBe(checkpointKey(withDifferentDuration));
     expect(checkpointKey(record)).not.toBe(checkpointKey({ ...record, iteration: 4 }));
     expect(checkpointKey(record)).not.toBe(checkpointKey({ ...record, mode: "stream" }));
   });

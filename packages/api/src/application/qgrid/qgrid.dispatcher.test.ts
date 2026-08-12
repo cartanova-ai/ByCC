@@ -6,6 +6,7 @@ import {
   type GenerateStreamCallbacks,
 } from "../../utils/providers/common/provider-dispatcher";
 import { buildStrictOutputSchema, QgridDispatcherClass } from "./qgrid.dispatcher";
+import { type QueryOutput } from "./qgrid.types";
 
 function providerResult(overrides: Partial<GenerateResult> = {}): GenerateResult {
   return {
@@ -520,19 +521,21 @@ describe("QgridDispatcherClass", () => {
 
   it("스키마 없는 Anthropic 요청은 system 을 그대로 둔다", async () => {
     const dispatcher = new QgridDispatcherClass();
-    const generate = vi.fn(async () => providerResult());
+    const generate = vi.fn(async (_req: GenerateRequest) => providerResult());
     dispatcher.anthropicDispatcher = { generate } as never;
 
     await dispatcher.query({ prompt: "hi", system: "plain", model: "anthropic/claude-sonnet-4-6" });
-    expect(generate.mock.calls[0]![0].systemPrompt).toBe("plain");
+    expect(generate.mock.calls[0]![0]!.systemPrompt).toBe("plain");
 
     await dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" });
-    expect(generate.mock.calls[1]![0].systemPrompt).toBeUndefined();
+    expect(generate.mock.calls[1]![0]!.systemPrompt).toBeUndefined();
   });
 
   it("OpenAI 요청의 system 에는 계약을 합성하지 않는다", async () => {
     const dispatcher = new QgridDispatcherClass();
-    const generate = vi.fn(async () => providerResult({ text: '{"a":"ok"}' }));
+    const generate = vi.fn(async (_req: GenerateRequest) =>
+      providerResult({ text: '{"a":"ok"}' }),
+    );
     dispatcher.openaiDispatcher = { generate } as never;
 
     await dispatcher.query({
@@ -542,7 +545,7 @@ describe("QgridDispatcherClass", () => {
       jsonSchema: JSON.stringify({ type: "object", properties: { a: { type: "string" } } }),
     });
 
-    expect(generate.mock.calls[0]![0].systemPrompt).toBe("plain");
+    expect(generate.mock.calls[0]![0]!.systemPrompt).toBe("plain");
   });
 
   // SON-532: 계약 주입 스트림의 델타에서 펜스를 벗긴다. 클라이언트(EnvelopeStreamParser,
