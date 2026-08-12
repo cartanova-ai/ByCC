@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1280" viewBox="0 0 1600 1280" role="img" aria-labelledby="title desc">
   <title id="title">Qgrid 아키텍처 다이어그램</title>
-  <desc id="desc">요청 라우팅, OpenAI codex app-server worker 실행, Anthropic 실행, 토큰 동기화, 요청 로그를 분리해서 보여주는 Qgrid 아키텍처 다이어그램입니다.</desc>
+  <desc id="desc">요청 라우팅, OpenAI 직접 HTTPS 및 SSE 실행, Anthropic 실행, 토큰 동기화, 요청 로그를 분리해서 보여주는 Qgrid 아키텍처 다이어그램입니다.</desc>
   <defs>
     <marker id="blueArrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
       <path d="M 0 0 L 7 3.5 L 0 7 z" fill="#2563eb"/>
@@ -45,7 +45,7 @@
   <rect class="bg" width="1600" height="1280"/>
 
   <text class="title" x="64" y="64">Qgrid 아키텍처</text>
-  <text class="subtitle" x="64" y="94">구독 토큰을 AI SDK처럼 쓰기 위한 프록시, codex app-server worker, 토큰 동기화, 요청 로그 구조</text>
+  <text class="subtitle" x="64" y="94">구독 토큰을 AI SDK처럼 쓰기 위한 프록시, OpenAI 직접 transport, 토큰 동기화, 요청 로그 구조</text>
 
   <g transform="translate(64 126)">
     <rect class="chip" x="0" y="0" width="166" height="30" rx="15"/>
@@ -116,12 +116,12 @@
 
   <g>
     <rect class="openai" x="64" y="496" width="1472" height="334" rx="18"/>
-    <text class="h" x="94" y="538">OpenAI 경로: 토큰 기반 codex app-server worker pool</text>
+    <text class="h" x="94" y="538">OpenAI 경로: private Codex Responses backend 직접 호출</text>
 
     <rect class="queue" x="94" y="564" width="410" height="102" rx="12"/>
     <text class="h2" x="122" y="594">OpenAIDispatcher</text>
-    <text class="body" x="122" y="620">ready + active + not busy worker 선택</text>
-    <text class="body" x="122" y="644">round-robin, 전부 busy면 queue 대기</text>
+    <text class="body" x="122" y="620">토큰 permit + quota eligibility</text>
+    <text class="body" x="122" y="644">smooth weighted routing, 없으면 queue</text>
 
     <rect class="white" x="544" y="564" width="320" height="102" rx="12"/>
     <text class="h2" x="572" y="594">Backpressure</text>
@@ -130,25 +130,21 @@
 
     <rect class="white" x="94" y="702" width="390" height="92" rx="12"/>
     <text class="h2" x="122" y="732">OpenAI 토큰 A</text>
-    <text class="mono" x="122" y="764">codex[0]</text>
-    <text class="mono" x="232" y="764">codex[1]</text>
-    <text class="mono" x="342" y="764">codex[2]</text>
+    <text class="mono" x="122" y="764">concurrent permits</text>
 
     <rect class="white" x="524" y="702" width="390" height="92" rx="12"/>
     <text class="h2" x="552" y="732">OpenAI 토큰 B</text>
-    <text class="mono" x="552" y="764">codex[0]</text>
-    <text class="mono" x="662" y="764">codex[1]</text>
-    <text class="mono" x="772" y="764">codex[2]</text>
+    <text class="mono" x="552" y="764">concurrent permits</text>
 
     <rect class="white" x="954" y="564" width="520" height="230" rx="12"/>
-    <text class="h2" x="982" y="594">CodexAppServerWorker</text>
+    <text class="h2" x="982" y="594">OpenAIResponsesTransport</text>
     <rect class="box" x="982" y="616" width="300" height="38" rx="9"/>
-    <text class="mono" x="1002" y="641">codex app-server</text>
-    <text class="mono" x="982" y="682">stdio JSON-RPC</text>
-    <text class="mono" x="982" y="708">initialize</text>
-    <text class="mono" x="982" y="734">login: chatgptAuthTokens</text>
-    <text class="mono" x="982" y="760">thread/start -> turn/start</text>
-    <text class="mono" x="982" y="786">notifications -> completed</text>
+    <text class="mono" x="1002" y="641">HTTPS POST + SSE</text>
+    <text class="mono" x="982" y="682">/backend-api/codex/responses</text>
+    <text class="mono" x="982" y="708">Codex CLI identity headers</text>
+    <text class="mono" x="982" y="734">전체 history + 불투명 affinity</text>
+    <text class="mono" x="982" y="760">AbortSignal cancellation</text>
+    <text class="mono" x="982" y="786">transport 중립 (WS 준비)</text>
   </g>
 
   <path class="request" d="M 1164 398 V 450 H 300 V 496"/>
@@ -197,14 +193,14 @@
     <rect class="panel" x="1034" y="1116" width="240" height="116" rx="16"/>
     <text class="h2" x="1062" y="1152">Dispatcher cache</text>
     <text class="body" x="1062" y="1180">토큰 upsert/remove</text>
-    <text class="body" x="1062" y="1204">worker pool 갱신</text>
+    <text class="body" x="1062" y="1204">token permit 갱신</text>
   </g>
 
   <g>
     <rect class="panel" x="1334" y="1116" width="202" height="116" rx="16"/>
     <text class="h2" x="1362" y="1152">서버 시작</text>
     <text class="body" x="1362" y="1180">migration, trigger</text>
-    <text class="body" x="1362" y="1204">worker spawn</text>
+    <text class="body" x="1362" y="1204">capacity 갱신</text>
   </g>
 
   <path class="sync" d="M 294 1174 H 354"/>

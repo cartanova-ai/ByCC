@@ -64,14 +64,13 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 | Env | Default | Meaning |
 |---|---:|---|
-| `QGRID_OPENAI_AUTOSCALE` | enabled | Set to `"false"` or `"0"` to disable demand expansion and scale-down, keeping capacity fixed at the minimum. Fixed-mode health maintenance still replaces missing or terminal workers. |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | `1` | Steady-state minimum worker slots maintained for each active OpenAI token. Transient restarts keep their slot; terminal or missing slots are replaced. Clamped to 1..20. |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `3` when autoscaling | Maximum workers per active OpenAI token. It cannot be lower than the resolved minimum and is hard-capped at 20. When autoscaling is disabled, the maximum equals the minimum. |
-| `QGRID_OPENAI_SCALE_INTERVAL_MS` | `5000` | OpenAI pool health, idle-thread cleanup, and demand autoscaling evaluation interval. Clamped to 250..300000 ms. |
-| `QGRID_OPENAI_SCALE_DOWN_IDLE_MS` | `600000` | Idle time before an excess worker becomes eligible for scale-down. Clamped to 1000 ms..24 hours. |
-| `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Refuse scale-up when estimated qgrid worker RSS would exceed this value. Estimate: `0.71 + 0.157 * totalWorkerCount` GiB. Clamped to 1..32 GiB; the upper bound is an operator-typo guard, not an OOM-safety guarantee. |
-| `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Refuse scale-up when current host available memory is below this value. Clamped to 0..64 GiB. |
-| `QGRID_OPENAI_THREAD_REUSE` | enabled | Set to `"false"` to disable OpenAI thread reuse and force cold thread behavior. |
+| `QGRID_OPENAI_AUTOSCALE` | enabled | Legacy capacity switch retained by the current configuration parser. It controls whether permit capacity resolves from the minimum or maximum value. |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | `1` | Minimum concurrent permits per active OpenAI token. The legacy env name is retained. Clamped to 1..20. |
+| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `3` when autoscaling | Maximum concurrent permits per active OpenAI token. The legacy env name is retained and hard-capped at 20. |
+| `QGRID_OPENAI_SCALE_INTERVAL_MS` | `5000` | Legacy parsed setting retained for configuration compatibility; it does not schedule child-process health checks in the direct runtime. |
+| `QGRID_OPENAI_SCALE_DOWN_IDLE_MS` | `600000` | Legacy parsed setting retained for compatibility; direct requests do not own idle child processes. |
+| `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Legacy parsed memory setting; the direct runtime does not estimate Codex child-process RSS. |
+| `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Legacy parsed host-memory setting; the direct runtime does not gate child-process spawn. |
 | `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic streaming calls | Claude Code structured-output retry count for streaming only, clamped to at least 1 by qgrid. Non-streaming `generate` leaves the variable unset and uses Claude Code's default retry budget. |
 
 ## Server boot lifecycle
@@ -90,11 +89,11 @@ On shutdown, it stops provider dispatchers and the token subscriber.
 
 ### Runtime settings
 
-Some env values are editable at runtime through the dashboard's Settings page, backed by the `settings` table (key-value). Resolution order is DB → env → code default: env stays as a fallback so a deploy that has not written any setting yet keeps working exactly as before. `loadSettings()` runs in `onStart` before the dispatchers are constructed, since the OpenAI pool reads its worker counts in its constructor.
+Some env values are editable at runtime through the dashboard's Settings page, backed by the `settings` table (key-value). Resolution order is DB → env → code default: env stays as a fallback so a deploy that has not written any setting yet keeps working exactly as before. `loadSettings()` runs in `onStart` before the dispatchers are constructed, since the OpenAI dispatcher reads its legacy-named capacity settings in its constructor.
 
-- Editable: OpenAI autoscale and min/max workers per token, the worker memory guards, Slack delivery control (master switch, reminder on/off, reminder interval, quiet-hours window, weekend behaviour), and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.constant.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart. The `settings` table itself (`setting.entity.json`) only stores `(key, value)` strings; everything the UI needs to render and validate a key lives in that constant, not in the schema.
+- Editable: OpenAI autoscale and legacy-named min/max permit capacity, the retained memory settings, Slack delivery control (master switch, reminder on/off, reminder interval, quiet-hours window, weekend behaviour), and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.constant.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart. The `settings` table itself (`setting.entity.json`) only stores `(key, value)` strings; everything the UI needs to render and validate a key lives in that constant, not in the schema.
 - Not editable: anything needed before the server can read its own database (`QGRID_DB_*`, `HOST`, `PORT`, `NODE_ENV`). These are exposed read-only on the same page so an operator can confirm which environment they are looking at; the DB password is masked.
-- Worker settings are marked `restart` because `resolveOpenAIWorkerPoolConfig` is called once in the dispatcher constructor. Changing them writes to the DB but does not resize a running pool. `POST /api/setting/restartServer` is how those land without an SSH session.
+- OpenAI capacity settings are marked `restart` because `resolveOpenAIPermitConfig` resolves the permit capacity once in the dispatcher constructor. Changing them writes to the DB but does not resize the running permit capacity. `POST /api/setting/restartServer` is how those land without an SSH session.
 
 ### Restart from the dashboard
 
@@ -136,7 +135,7 @@ This allowlist preserves anonymous inference and logger database writes for SDK 
 
 ### Readiness during startup
 
-HTTP listening opens before the dispatchers finish starting, so requests can arrive while a provider is still unavailable. On dev0 that window is 1–2 minutes: 25 OpenAI workers spawn at `SPAWN_INTERVAL_MS` apart, plus codex process init.
+HTTP listening opens before the dispatchers finish starting, so requests can arrive while a provider is still unavailable. OpenAI startup loads token metadata and creates no Codex child processes.
 
 - `QgridDispatcher.startupState` tracks each provider as `starting` → `ready` or `failed`. A request for an unready provider throws `ServiceUnavailableException` (503, with a `Retry-After` header) while starting, and `InternalServerErrorException` (500) once initialization has failed — retrying helps in the first case and never in the second. Both used to be `QuotaError`, which told callers their tokens were exhausted and gave them nothing to act on.
 - `GET /api/qgrid/health` reports `ready` plus per-provider state. A 200 alone does not mean requests will succeed; read `providers` for that.
@@ -145,4 +144,4 @@ HTTP listening opens before the dispatchers finish starting, so requests can arr
 ## OAuth callbacks
 
 - Anthropic OAuth: loopback dashboards use `/callback` on the qgrid server (base derived per request from `Origin`, falling back to `X-Forwarded-Host`/`Host`). Remote dashboards cannot use a public callback (client redirect-URI allowlist), so `oauthStart` returns `mode: "code"` with the console callback and the user pastes the shown `code#state` into the dashboard (`oauthComplete`). No env configuration either way; direct non-HTTP calls fall back to localhost and `PORT`.
-- OpenAI OAuth is handled by Codex app-server's own callback flow and completed through qgrid's OpenAI OAuth APIs.
+- OpenAI OAuth uses qgrid's direct PKCE authorize/callback flow and direct token exchange.

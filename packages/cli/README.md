@@ -107,7 +107,6 @@ Server behavior variables:
 - Node.js >= 20
 - PostgreSQL
 - Docker (if running PostgreSQL locally as a container)
-- [Codex CLI](https://github.com/openai/codex) (for OpenAI models)
 - [Claude Code](https://www.anthropic.com/claude-code) (for Anthropic models)
 
 ## How it works
@@ -117,11 +116,13 @@ The CLI ships the Sonamu-based server as a built-in bundle. On launch:
 1. Verify the DB connection
 2. Start the server (API + dashboard web UI)
 3. Load registered tokens from the DB. Later token additions/changes propagate to the running server in real time via PostgreSQL LISTEN/NOTIFY
-4. **OpenAI tokens**: use a persistent codex app-server worker pool over JSON-RPC. Qgrid manages capacity, queueing, and thread retention internally. Multi-turn requests carrying a `sessionKey` are routed back to the same thread for prompt-cache hits
+4. **OpenAI tokens**: call `https://chatgpt.com/backend-api/codex/responses` directly over HTTPS and decode SSE. Token-level concurrent permits use smooth weighted routing; a 50-item queue waits at most 60 seconds. Full history is replayed with opaque `sessionKey`-derived prompt-cache affinity, and `AbortSignal` cancels queued or active work
 5. **Anthropic tokens**: spawn a fresh, isolated claude process per request (`stream-json` in/out). Tokens are selected least-used-first. OAuth tokens are refreshed automatically
 6. Tokens over their quota threshold (default 80%) are excluded from routing (usage-lookup failures fail open)
 
 The Qgrid app itself does not depend on Docker, but PostgreSQL is required. If you don't run PostgreSQL locally, running it in Docker is the simplest setup.
+
+OpenAI login uses direct PKCE OAuth, and quota checks call the private `wham/usage` endpoint directly with Codex CLI identity headers. These ChatGPT backend interfaces are undocumented and may change without notice. Mocked tests do not establish live-provider compatibility.
 
 ## SDK integration
 

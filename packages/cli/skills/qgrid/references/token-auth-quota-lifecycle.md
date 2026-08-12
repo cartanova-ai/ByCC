@@ -20,7 +20,7 @@ Use this reference before changing token storage, OAuth flows, token activation,
 - Anthropic OAuth utilities and usage API: `packages/api/src/application/qgrid/oauth.ts`.
 - Token DB trigger setup: `packages/api/src/application/qgrid/token-trigger-setup.ts`.
 - Token subscriber: `packages/api/src/application/qgrid/token-subscriber.ts`.
-- OpenAI refresh/quota: `packages/api/src/utils/providers/openai/openai-refresh.ts`, `openai-quota.ts`.
+- OpenAI direct OAuth/refresh/quota: `packages/api/src/utils/providers/openai/openai-oauth.ts`, `openai-refresh.ts`, `openai-quota.ts`.
 - Anthropic quota: `packages/api/src/utils/providers/anthropic/anthropic-quota.ts`.
 - Provider token event handlers: `openai-dispatcher.ts`, `anthropic-dispatcher.ts`.
 
@@ -116,36 +116,27 @@ Usage/quota:
 
 ## OpenAI OAuth And Refresh Flow
 
-OpenAI OAuth is delegated to Codex app-server.
+OpenAI OAuth is implemented directly with authorization-code PKCE.
 
 Browser registration:
 
-1. `oauthStartOpenAI(name)` calls `OpenAIDispatcher.startBrowserLogin(name)`.
-2. Dispatcher creates a temporary `CodexAppServerWorker`.
-3. Worker spawns `codex app-server` and calls `account/login/start` with `type: "chatgpt"`.
-4. qgrid returns Codex's `authUrl`.
-5. In the background, dispatcher waits for `account/login/completed`.
-6. Worker reads managed credentials from its `auth.json`.
-7. Existing OpenAI tokens with the same `accountId` are deleted.
-8. qgrid saves a new `provider: "openai"` token.
-9. Temporary worker is killed; pending browser login times out after 5 minutes.
-
-Worker login:
-
-- Normal OpenAI workers call `account/login/start` with `type: "chatgptAuthTokens"`, `accessToken`, `chatgptAccountId`, and optional `chatgptPlanType`.
+1. `oauthStartOpenAI(name)` generates verifier, SHA-256 challenge, and state.
+2. qgrid stores pending state and builds the OpenAI authorize URL with Codex CLI-compatible client, scope, simplified-flow, and originator fields.
+3. The callback validates state and exchanges the code directly at `https://auth.openai.com/oauth/token`.
+4. qgrid parses account id and plan claims from the returned JWTs.
+5. Existing OpenAI tokens with the same `accountId` are deleted.
+6. qgrid saves the access, refresh, and id tokens as a new `provider: "openai"` token.
 
 Refresh:
 
-- Codex can send server-request `account/chatgptAuthTokens/refresh`.
-- qgrid handles it through `handleChatgptAuthTokensRefresh(tokenId)`.
+- qgrid posts the stored refresh token directly to the OpenAI token endpoint through `handleChatgptAuthTokensRefresh(tokenId)`.
 - Refresh is deduplicated per token with an in-flight promise.
 - Refresh has a 5-second minimum interval; too-soon calls read current DB credentials.
 - Refresh token rotation is saved immediately. If DB save fails after rotation, treat it as token-death risk because the old refresh token may already be invalid.
 
 Usage/quota:
 
-- OpenAI quota threshold uses Codex `account/rateLimits/read`.
-- qgrid reads rate limits through a ready worker.
+- OpenAI quota threshold uses direct `GET https://chatgpt.com/backend-api/wham/usage` with Codex CLI identity headers.
 - Rate limit data is cached for 60 seconds.
 - Threshold uses primary `usedPercent`.
 - Usage lookup failure is fail-open for routing.
@@ -192,12 +183,11 @@ Anthropic row changes:
 
 ## Provider Runtime Consequences
 
-OpenAI token changes can create, update, deactivate, or kill persistent Codex workers.
+OpenAI token changes create, update, deactivate, or remove in-memory credential and permit metadata.
 
-- In-place OpenAI worker update is allowed only when account id and plan type match.
-- Otherwise workers are killed and respawned.
-- Weight-only changes never respawn workers; they update token metadata and reset the weighted selector's scores.
-- If no ready active OpenAI workers remain, queued OpenAI requests are rejected.
+- Weight-only changes update token metadata and reset the weighted selector's scores.
+- Credential changes replace the direct client's credentials without spawning a process.
+- If no active OpenAI tokens remain, queued OpenAI requests are rejected.
 
 Anthropic token changes only affect the in-memory token pool because every request fresh-spawns Claude Code.
 

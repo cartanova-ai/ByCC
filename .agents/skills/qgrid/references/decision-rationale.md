@@ -74,26 +74,18 @@ Key decisions:
   behavior, never to leaked envelope text. See
   `references/tool-calling-and-multiturn.md` (Streaming With Tools).
 
-## OpenAI/Codex Runtime
-
-Sources:
-
-- `docs/plans/2026-05-18-feat-codex-app-server-backend-pivot-plan.md`
-- `docs/plans/2026-05-30-feat-codex-builtin-tool-suppression-plan.md`
-- `docs/plans/2026-06-06-feat-codex-thread-reuse-prompt-cache-plan.md`
-- `docs/solutions/logic-errors/qgrid-prompt-cache-hit-rate-metric-miscalculation.md`
+## OpenAI Direct Codex Runtime
 
 Key decisions:
 
-- OpenAI uses Codex `app-server` directly over stdio, not `codex exec`. The app-server path gives qgrid OAuth login, persistent workers, and thread handles.
-- Workers are persistent and token-scoped. qgrid can spawn multiple workers per token, but each worker is single-flight for turns. This differs from Anthropic, which fresh-spawns per request.
-- qgrid unsets normal OpenAI API-key paths and logs in with ChatGPT/OAuth credentials. This keeps the runtime aligned with subscription-token pooling rather than API billing.
-- Built-in Codex tools, apps, skills, web search, shell, and large instruction blocks are suppressed. The primary reason is tool-call correctness: Codex built-ins can steal calls that qgrid expects to represent as emulated AI SDK tool calls. Token savings are secondary.
-- Thread reuse exists because Codex/OpenAI prompt cache keys are tied to the Codex conversation/thread. New `thread/start` calls miss cache even with identical prefixes.
-- Reuse must be explicit through a server-issued coordinate such as `threadCoord`. Do not use content hashes or hidden closures; same-looking prompts from different sessions can cross-contaminate.
-- Reuse fallback should be cold and correct. Invalid worker id, epoch mismatch, missing thread, busy worker timeout, or over-threshold token should not corrupt a conversation.
-- Cache and usage metrics use per-turn usage. For Codex, `tokenUsage.total` is conversation cumulative; request logs must use `tokenUsage.last`.
-- OpenAI/Codex cached tokens are included in `input_tokens`. Cache-hit denominator is `input_tokens`, not `input + cache_read + cache_creation`.
+- OpenAI uses direct HTTPS `POST` to the private ChatGPT Codex Responses backend and decodes SSE. It does not spawn Codex child processes.
+- Direct PKCE OAuth, refresh, and `wham/usage` quota lookup replace delegated runtime calls. Generation and quota requests send Codex CLI identity headers.
+- Token-level concurrent permits retain bounded capacity. Smooth weighted routing chooses among active, quota-eligible tokens with free permits; the shared queue is capped at 50 items and 60 seconds.
+- Every turn sends full Responses-format history. A model-scoped opaque value derived from `sessionKey` is forwarded as `prompt_cache_key`; it is not a provider thread address.
+- `AbortSignal` cancellation covers queue wait, retry delay, and active HTTPS transport.
+- The transport interface is independent of HTTPS so a future WebSocket implementation can preserve dispatcher behavior.
+- The backend is private and unstable. Mocked protocol tests do not establish live provider compatibility.
+- OpenAI cached tokens are included in `input_tokens`. Cache-hit denominator is `input_tokens`, not `input + cache_read + cache_creation`.
 
 ## Anthropic/Claude Code Runtime
 
@@ -111,7 +103,7 @@ Sources:
 Key decisions:
 
 - Anthropic is an internal Claude subscription OAuth path. The API-key provider was not pursued because it does not serve qgrid's subscription-pooling value.
-- Anthropic is cold-only. It does not use Codex-style thread reuse because Claude Code prompt cache is prefix-based and AI SDK consumers already send full message history for each step.
+- Anthropic is cold-only. It does not use OpenAI `sessionKey` affinity because Claude Code prompt cache is prefix-based and AI SDK consumers already send full message history for each step.
 - The shared `threadCoord` response shape may still appear for provider symmetry, but AI SDK storage/replay is disabled for `anthropic/*` models.
 - Claude Code `stream-json` drops structural assistant role replay in the outbound API payload. qgrid flattens prior history into text because structural role replay through the CLI is not reliable.
 - **qgrid does not pass `--json-schema` to Claude Code (SON-532, 2026-08).** CC's mode is not
@@ -151,7 +143,7 @@ Key decisions:
 - Provider criteria differ by primary window: Anthropic uses `five_hour.utilization`; OpenAI uses `primary.usedPercent`.
 - Threshold gates are by token id, not token name. Names are display/logging labels and can change.
 - Lookup failure is fail-open with logs/metrics. Hard failure happens only when usage was read successfully and the token is over threshold.
-- OpenAI needs the gate in reuse, idle selection, and queue drain paths. A reusable but over-threshold worker must fall back cold to another eligible token when possible.
+- OpenAI applies the gate during permit selection and queue drain. An affinity-preferred token over threshold must fall back to another eligible token when possible.
 
 ## Weighted Token Routing
 
@@ -165,8 +157,8 @@ Key decisions:
 - `tokens.weight` is a per-token integer from 1 to 100 defaulting to 1. It is a relative routing share for new requests, not an enable/disable switch. Weight 0 is invalid; disabling a token stays on `active`.
 - Both providers share one smooth weighted round-robin selector in the provider common layer. The selector knows only token ids, weights, and current scores. Dispatchers own quota, lifecycle, and worker availability, and pass in only the eligible token id set per selection. Do not teach the selector about credentials, workers, or queues.
 - The quota threshold gate runs before weighted selection. An over-threshold token receives no weighted assignment regardless of weight, and the schedule is computed from the remaining eligible tokens.
-- OpenAI thread reuse stays pinned to its original worker and neither reads nor mutates weighted-selector state. Cache affinity intentionally beats weight distribution; only cold requests are weighted.
-- OpenAI routing is work-conserving. A token whose workers are all busy is omitted from the current selection round instead of making requests wait for the heavy-weight token. Queue drain re-runs weighted selection for the head item; the previous released-worker shortcut was removed because it bypassed weighting.
+- OpenAI cache affinity may prefer its prior token when that token remains eligible and has a free permit; otherwise routing remains work-conserving and uses weighted selection.
+- A token whose permits are all busy is omitted from the current selection round. Queue drain re-runs weighted selection for the head item.
 - Candidate collection, selector mutation, and worker acquisition must run without an intervening `await`. A weighted score is consumed only when the dispatcher can commit the assignment synchronously; this is what keeps concurrent Anthropic selections spread correctly.
 - Selector scores reset when token topology or configured weights change. Temporary ineligibility from quota or busy workers only excludes the token from that selection's candidate set and does not reset schedule state.
 - Weight-change notification is owned by the versioned migration trigger (`tokens_weight_changed_upd`); the boot-time trigger setup SQL intentionally excludes `weight` from its WHEN clause, and a test pins this so exactly one trigger fires per weight-only change.
@@ -228,7 +220,7 @@ Key decisions:
 
 - Image generation is OpenAI/Codex-only and request-level opt-in. It is essentially a Codex-hosted `image_generation` tool call, not qgrid directly calling the OpenAI Images API. Always-on image tools would change every turn's tool configuration and threaten prompt-cache stability.
 - It is non-stream only. Codex returns completed base64 image payloads, not useful image deltas.
-- Image turns are cold one-shot threads and are excluded from thread reuse. This prevents base64 payloads from entering reusable conversation state and cache prefixes.
+- Image turns send full input directly and retain no provider conversation state. This prevents base64 payloads from entering reusable state.
 - qgrid performs preflight capability/model gates and postflight "image count must be greater than zero" checks. Codex can otherwise silently return text when image generation is unavailable or unused.
 - Returned images are inline base64 content parts for consumers and AI SDK `file` parts. Reference images are accepted through AI SDK multimodal message parts only on the `imageGeneration` path, and are transported as JSON data URLs with SDK-side size guarding.
 - `imageGenerationOptions` currently supports quality and size. The worker instruction and request-log pricing assumption use `gpt-image-2`, with defaults `medium` and `1536x1024`.

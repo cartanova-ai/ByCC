@@ -4,7 +4,7 @@
 
 AI SDK v6 custom `LanguageModelV3` provider for [qgrid](https://github.com/cartanova-ai/Qgrid).
 
-**Without changing your existing AI SDK code, swap a single `model` line to get subscription-token pooling (N tokens × parallel workers) + the request log dashboard.**
+**Without changing your existing AI SDK code, swap a single `model` line to get subscription-token pooling (N tokens × concurrent permits) + the request log dashboard.**
 
 ```diff
  import { generateText } from "ai";
@@ -49,6 +49,8 @@ const { text } = await generateText({
 ```
 
 A qgrid server (`http://localhost:44900`) must be running.
+
+The OpenAI server route calls the private ChatGPT Codex Responses backend directly over HTTPS/SSE. That backend is undocumented and may change without notice; qgrid's mocked protocol tests are not live-provider verification.
 
 ## Usage
 > Before you start: all client-side usage is identical to the [AI SDK](https://ai-sdk.dev/docs/ai-sdk-core).
@@ -209,7 +211,7 @@ const { text } = await generateText({
 | Option | Values | Applies to | Description |
 |---|---|---|---|
 | `logger` | `boolean` | both providers | qgrid request logging. Defaults to `true`; `false` disables request-log persistence for this generation without disabling client tools or multi-step continuation |
-| `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier. The same key routes to the same codex thread for prompt-cache hits (see [below](#multi-turn-prompt-cache-sessionkey)) |
+| `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier used to derive opaque prompt-cache affinity while replaying full history (see [below](#multi-turn-prompt-cache-sessionkey)) |
 | `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | both providers (supported values are model-dependent, e.g. `"max"` is GPT-5.6+) | Reasoning depth. Defaults to the config's `defaultEffort` (`"low"`) |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI only | Response text verbosity |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI only | Reasoning summary output mode |
@@ -227,7 +229,7 @@ provider execution.
 
 ### Multi-turn prompt cache (sessionKey)
 
-For multi-turn conversations, pass a single caller-side domain ID (game session ID, chat room ID, ...) as `sessionKey` and the provider routes the same conversation to the same codex thread, hitting the prompt cache. Thread coordinate issuance/storage/replay is handled inside the provider — the caller only passes the key.
+For multi-turn conversations, pass a caller-side domain ID (game session ID, chat room ID, ...) as `sessionKey`. The SDK derives a model-scoped opaque affinity key; qgrid sends it as `prompt_cache_key` and replays the complete conversation history on every request. No provider thread or process session is retained.
 
 ```typescript
 const { text } = await generateText({
@@ -237,8 +239,8 @@ const { text } = await generateText({
 });
 ```
 
-- Threads expire after 10 minutes idle. On expiry or worker restart, the request automatically starts a cold thread instead of failing.
-- Ignored for `anthropic/*` models (Claude Code spawns a fresh process per request, so there is no thread reuse).
+- The SDK's internal affinity-coordinate entry expires after 10 minutes idle; deriving the same affinity key does not depend on that entry.
+- Ignored for `anthropic/*` models; Claude Code uses its own prefix-cache behavior.
 
 ### Image Generation
 
@@ -278,7 +280,7 @@ const result = await generateText({
 ```
 
 - Rejected in `streamText` (non-stream only).
-- Image-generation requests always run on a cold one-shot thread and are excluded from thread reuse.
+- Image-generation requests do not retain provider conversation state. Their full input is sent directly.
 - Reference images are sent as JSON data URLs. Compress or resize large photos before passing them in; oversized base64 inputs are rejected by the SDK. WebP/JPEG is recommended for photos.
 - The image cost is an **estimate** based on the public `gpt-image-2` price table, recorded separately as `image_cost_usd` on the request log (codex does not expose exact image-tool usage).
 
@@ -351,7 +353,7 @@ The `qgrid()` provider has its own lifecycle, so the logger automatically suppre
 
 ```typescript
 type QgridSupportedModel =
-  // OpenAI (based on codex app-server)
+  // OpenAI (direct private Codex Responses backend)
   | "openai/gpt-5.6-sol"
   | "openai/gpt-5.6-terra"
   | "openai/gpt-5.6-luna"
@@ -380,13 +382,13 @@ type QgridSupportedModel =
 
 ### GPT-5.6 specifications
 
-| Model | Context (qgrid/codex runtime) | Max output | Input / cached input / output per 1M tokens |
+| Model | Context (qgrid OpenAI route) | Max output | Input / cached input / output per 1M tokens |
 |---|---:|---:|---:|
 | `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
 | `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
 | `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
 
-All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec is a 1.05M context window with 128K max output, but qgrid runs on the codex app-server subscription path, where all three models report a 372K context window (95% effective — about 353K of usable input) that cannot be raised by configuration. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
+All GPT-5.6 models support reasoning through `max`. Qgrid retains the observed subscription-route limits used by its model configuration: a 372K context window (95% effective — about 353K of usable input) and 128K maximum output. This is narrower than the 1.05M context listed for the public OpenAI API and is not attributed to a local runtime. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
 
 `anthropic/claude-fable-5` has a 1M context window and 128K max output. Its standard prices per 1M tokens are $10 input, $1 cache read, $12.50 five-minute cache write, $20 one-hour cache write, and $50 output. qgrid preserves Claude's 5m/1h cache-creation breakdown and prices each TTL separately; only legacy responses without that breakdown fall back to the one-hour TTL automatically selected by Claude Code on subscription OAuth. Fable requires always-on adaptive thinking, so qgrid preserves adaptive thinking for this model.
 
@@ -417,7 +419,7 @@ If multiple projects/workflows share one qgrid server, set `QGRID_PROJECT_NAME`.
 
 ## Notes
 
-- Sampling parameters such as `temperature` and `maxOutputTokens` are ignored — the CLI runtimes (OpenAI: codex app-server, Anthropic: Claude Code) do not support them.
+- Sampling parameters such as `temperature` and `maxOutputTokens` are ignored because the OpenAI private Codex route and the Anthropic Claude Code route do not accept them through qgrid.
 - Structured output is server-enforced only for top-level `object` schemas. Top-level `array` falls back to client-side parsing.
 - Combining `tools` with `Output.object` requires qgrid server and AI SDK 2.5.4 or later.
 - AI SDK/Zod positional tuples emitted as Draft-7 `items: [...]` are normalized

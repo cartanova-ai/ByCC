@@ -12,9 +12,9 @@
 
 기존 구독 토큰 프록시(claude-proxy 등)는 CLI를 한 번 호출하고 텍스트를 반환하는 **single-turn 텍스트 프록시**입니다. 구독 토큰은 공식 API가 아니라 CLI/앱을 통해서만 사용 가능하고, 단순 CLI 호출로는 tool-call, structured output, multi-turn agent loop 같은 API 기능을 쓸 수 없기 때문입니다.
 
-Qgrid는 두 개의 CLI 런타임 위에 AI SDK `LanguageModelV3` custom provider를 구현하여 이 문제를 해결합니다:
+Qgrid는 두 구독 기반 런타임 위에 AI SDK `LanguageModelV3` custom provider를 구현하여 이 문제를 해결합니다:
 
-- **OpenAI** — [codex app-server](https://github.com/openai/codex). 구독 토큰으로 Responses API를 쓸 수 있는 JSON-RPC 서버입니다. Qgrid는 토큰당 persistent worker 프로세스를 유지하고, 대화 thread를 재사용해 prompt cache를 적중시킵니다.
+- **OpenAI** — `https://chatgpt.com/backend-api/codex/responses`에 HTTPS로 직접 요청하고 SSE 응답을 해석합니다. Qgrid는 Codex CLI identity header를 보내고 매 turn 전체 대화 history를 재전송합니다. `sessionKey`에서 파생한 불투명 key로 provider thread를 보관하지 않고 prompt-cache affinity를 유지합니다.
 - **Anthropic** — Claude Code `stream-json` 모드. 요청마다 격리된 프로세스를 fresh spawn하고 전체 대화 히스토리를 재주입하므로, persistent session 없이도 multi-turn이 동작합니다.
 
 덕분에:
@@ -22,7 +22,7 @@ Qgrid는 두 개의 CLI 런타임 위에 AI SDK `LanguageModelV3` custom provide
 - **Tool Calling** — AI SDK의 `tools` 옵션이 양쪽 provider 모두에서 그대로 동작. 서버가 structured output emulation으로 tool-call 형태를 만들고, AI SDK가 tool 실행을 관리.
 - **Multi-step Agent Loop** — `stopWhen`, `maxSteps`로 tool-call → tool 실행 → 다음 턴을 자동 반복. 구독 토큰으로 agent를 만들 수 있음.
 - **Structured Output** — `Output.object({ schema })` 로 JSON schema 강제. OpenAI는 codex structured output으로, Anthropic은 Claude Code `--json-schema` + 후검증으로 처리하며 검증 실패 시 깨진 JSON 대신 명시적 에러 반환.
-- **Prompt Caching** — `sessionKey`만 넘기면 멀티턴 대화가 같은 codex thread로 라우팅되어 prompt cache 적중 (OpenAI).
+- **Prompt Caching** — `sessionKey`를 넘기면 매 요청 전체 history를 재전송하면서 안정적인 불투명 OpenAI prompt-cache affinity를 사용합니다.
 - **Streaming** — [Sonamu Framework](https://github.com/cartanova-ai/sonamu)의 SSE 기반 실시간 텍스트 스트리밍.
 
 ---
@@ -35,7 +35,7 @@ Qgrid는 두 개의 CLI 런타임 위에 AI SDK `LanguageModelV3` custom provide
   ```ts
   model: qgrid("openai/gpt-5.4-mini")  // 이것만 바꾸면 됨
   ```
-- **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. 토큰당 worker N개로 동시 요청 분산. 토큰별 quota threshold로 사용률 초과 토큰은 라우팅에서 자동 제외.
+- **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. 토큰 단위 concurrent permit과 smooth weighted routing으로 요청을 분산. 토큰별 quota threshold로 사용률 초과 토큰은 라우팅에서 자동 제외.
 - **Request Log 대시보드** — 매 요청의 토큰 사용량, 비용, 캐시 적중, TTFT, tool-call 내역, reasoning을 웹 UI에서 실시간 확인.
 - **이미지 생성** — 요청 단위로 codex `image_generation` tool을 켜고 표준 AI SDK 응답으로 PNG 파일 수신.
 - **OpenAI + Anthropic** — 양쪽 구독 토큰 모두 등록 가능. OAuth 원클릭 로그인.
@@ -110,12 +110,12 @@ pnpm add @cartanova/qgrid-ai-sdk
 
 ![Qgrid architecture](./assets/qgrid-architecture.ko.svg)
 
-- **OpenAI** — persistent codex app-server 프로세스를 토큰당 N개 spawn. JSON-RPC로 통신. idle worker에 round-robin 라우팅, 전부 busy면 큐 대기(60초 타임아웃). `sessionKey`가 있는 멀티턴 대화는 같은 thread로 재라우팅되어 prompt cache 적중.
+- **OpenAI** — `https://chatgpt.com/backend-api/codex/responses`를 직접 호출합니다. 기본값인 `QGRID_OPENAI_TRANSPORT=https`는 HTTPS/SSE를 사용하고, `QGRID_OPENAI_TRANSPORT=websocket`은 같은 URL의 scheme을 `wss`로 바꿔 요청마다 Responses WebSocket 하나를 엽니다. WebSocket은 `response.create` 메시지 하나를 보내고 terminal Responses event를 받아야 합니다. Connection multiplexing과 ambiguous request replay는 하지 않습니다. Handshake가 401로 거부됐음이 확정된 경우에만 credential을 갱신하고 한 번 다시 연결합니다. 잘못된 selector 값은 dispatcher 설정 시 즉시 실패합니다.
 - **Anthropic** — 요청마다 격리된 Claude Code 프로세스를 fresh spawn (`stream-json` 입출력, 토큰별 config 격리). 대화 히스토리는 매 턴 재주입. OAuth 토큰 자동 refresh.
 - **Quota threshold** — 토큰별 사용률 임계값(기본 80%). 임계값을 넘은 토큰은 rolling window가 회복될 때까지 라우팅에서 제외.
 - **Request Log** — 매 요청의 generate step, tool-call step, reasoning, 토큰 사용량, 캐시 지표, TTFT, 비용을 DB에 기록. 대시보드에서 확인.
 
-> **codex 내장 하네스 제거:** codex app-server는 매 요청마다 내장 tool(shell, web_search, apply_patch 등 14개)과 instruction 블록(permissions, environment_context, skills, ~10KB)을 자동 주입합니다. Qgrid는 worker의 `config.toml`로 이를 전부 비활성화하고 최소 system prompt + no environment로 실행합니다. 덕분에 codex가 **coding agent가 아니라 순수 텍스트 생성 엔드포인트**처럼 동작하며, 불필요한 input token 오버헤드와 엉뚱한 내장 tool 호출이 없습니다. 모델이 보는 tool은 AI SDK로 넘긴 것뿐입니다.
+> **Private backend 주의:** OpenAI 경로는 문서화된 public API가 아니라 ChatGPT의 private Codex backend를 사용합니다. URL, request field, identity header 요구사항, SSE event, quota 응답, 가용성은 예고 없이 바뀔 수 있습니다. 이 migration은 mock 기반 protocol/transport test로 검사했으며, 실제 provider 계정에 대한 live 검증을 주장하지 않습니다.
 
 ---
 
@@ -182,7 +182,7 @@ const { text } = await generateText({
 ### Prompt Caching (sessionKey)
 
 ```typescript
-// 멀티턴 대화를 같은 codex thread로 라우팅 → prompt cache 적중 (OpenAI)
+// 전체 history를 재전송하고 불투명 prompt-cache affinity 유지 (OpenAI)
 const { text } = await generateText({
   model: qgrid("openai/gpt-5.4-mini"),
   prompt: nextTurn,
@@ -324,15 +324,14 @@ packages/
 - Node.js >= 20
 - PostgreSQL
 - Docker (로컬 PostgreSQL을 컨테이너로 실행할 경우)
-- [Codex CLI](https://github.com/openai/codex) (OpenAI 모델 사용 시)
 - [Claude Code](https://www.anthropic.com/claude-code) (Anthropic 모델 사용 시)
 
 ---
 
 ## 주의사항
 
-- **OpenAI 모델**: codex app-server 기반. `temperature`, `maxOutputTokens` 등 sampling 파라미터는 지원하지 않습니다.
-- **Anthropic 모델**: Claude Code 기반. OAuth 로그인 필요. tool calling과 object structured output을 지원하지만, 요청마다 fresh process로 실행되므로 `sessionKey` thread reuse는 적용되지 않습니다.
+- **OpenAI 모델**: private Codex Responses backend를 직접 사용합니다. 이 경로는 `temperature`, `maxOutputTokens` 등 sampling 파라미터를 지원하지 않습니다.
+- **Anthropic 모델**: Claude Code 기반. OAuth 로그인 필요. tool calling과 object structured output을 지원하지만, 요청마다 fresh process로 실행되므로 OpenAI 방식의 `sessionKey` cache affinity는 적용되지 않습니다.
 - **Anthropic structured output**: codex(constrained decoding)와 달리 Claude Code의 `--json-schema`는 `StructuredOutput` 도구로 생성을 유도하고 사후 검증하므로, 복잡한 schema는 간헐적으로 검증에 실패할 수 있습니다. qgrid는 stream 지연을 제한하기 위해 structured streaming만 1회 시도로 고정하고, non-stream `generate`는 Claude Code의 기본 retry 예산을 유지합니다. 검증 실패는 깨진 JSON 대신 명시적 에러로 반환합니다.
 - **위치 기반 tuple**: OpenAI는 지원되는 positive schema 위치에서 tuple의 위치별 제약을 정규화해 강제합니다. negative, conditional 등 안전하게 정규화할 수 없는 위치의 tuple은 의미가 바뀌는 변환 대신 HTTP 400으로 거부합니다. definition은 전역 정규화되므로 해당 위치에서 참조하는 경우도 같은 이유로 거부합니다. Anthropic 위치 기반 tuple schema도 Claude Code가 위치 의미를 보존할 수 없어 HTTP 400으로 거부됩니다. tuple node는 `type: "array"`를 명시하며 nullable tuple은 `anyOf`로 표현합니다.
 - **Schema reference**: structured schema에서는 문서 root 또는 `$defs`/`definitions` entry root만 연속으로 가리키는 로컬 root-relative JSON Pointer `$ref`를 허용합니다. property, tuple 내부, conditional, literal 값을 가리키는 ref는 정규화 중 target이 이동하거나 다시 작성될 수 있어 HTTP 400으로 거부합니다. resource ID, anchor, 외부 ref, dynamic ref, recursive ref도 허용하지 않습니다.

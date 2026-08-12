@@ -18,12 +18,12 @@ Use this map to orient qgrid work quickly.
 ## Runtime hot spots
 
 - Provider router: `packages/api/src/application/qgrid/qgrid.dispatcher.ts`.
-- Conversation/thread reuse: `packages/api/src/application/qgrid/conv-routing.ts`.
+- Full-history and prompt-cache-affinity routing: `packages/api/src/application/qgrid/conv-routing.ts`.
 - Query API and SSE stream: `packages/api/src/application/qgrid/qgrid.frame.ts`.
 - Request logging lifecycle: `packages/api/src/application/qgrid/qgrid-run-lifecycle.ts`.
 - Token LISTEN/NOTIFY sync: `packages/api/src/application/qgrid/token-subscriber.ts`.
 - Token trigger setup: `packages/api/src/application/qgrid/token-trigger-setup.ts`.
-- OpenAI Codex runtime: `packages/api/src/utils/providers/openai/*`.
+- OpenAI direct backend transport, OAuth, quota, and dispatcher: `packages/api/src/utils/providers/openai/*`.
 - Anthropic Claude Code runtime: `packages/api/src/utils/providers/anthropic/*`.
 - Cost/usage accounting: `packages/api/src/utils/providers/common/model-cost.ts`.
 - Weighted token selection: `packages/api/src/utils/providers/common/smooth-weighted-round-robin.ts`.
