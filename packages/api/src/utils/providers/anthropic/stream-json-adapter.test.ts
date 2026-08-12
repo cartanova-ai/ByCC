@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
-import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import { type JsonValue, type UserInput } from "../common/provider-types";
 import {
   buildStreamJsonInput,
   type ClaudeStreamJsonState,

@@ -11,7 +11,6 @@
  *   → "Composing Tools With A User Output Schema"
  */
 
-import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
 import {
   SCHEMA_ARRAY_KEYWORDS,
   SCHEMA_DEPENDENCIES_KEYWORD,
@@ -19,6 +18,7 @@ import {
   SCHEMA_SINGLE_KEYWORDS,
   UNSUPPORTED_REFERENCE_KEYWORDS,
 } from "../../utils/providers/common/json-schema-keywords";
+import { type JsonValue } from "../../utils/providers/common/provider-types";
 import { type QgridTool } from "./qgrid.types";
 
 const USER_OUTPUT_DEFINITION = "__qgrid_user_output";

@@ -8,12 +8,11 @@
  * The only executable user line is the current input.
  */
 
-import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
-import { type UserInput } from "../../../codex-protocol/v2/UserInput";
 import {
   type ModelFallback,
   type ProviderTokenUsageBreakdown,
 } from "../common/provider-dispatcher";
+import { type JsonValue, type UserInput } from "../common/provider-types";
 import { stripFences } from "./fence-strip";
 
 // ── 입력 어댑터 ────────────────────────────────────────────────────
