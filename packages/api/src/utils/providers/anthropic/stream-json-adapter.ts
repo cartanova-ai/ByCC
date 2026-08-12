@@ -10,6 +10,7 @@
 
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import { stripFences } from "./fence-strip";
 import {
   type ModelFallback,
   type ProviderTokenUsageBreakdown,
@@ -193,13 +194,6 @@ function toUsageBreakdown(u: ClaudeUsage): ProviderTokenUsageBreakdown {
     outputTokens: output,
     reasoningOutputTokens: 0,
   };
-}
-
-function stripCodeFence(s: string): string {
-  return s
-    .trim()
-    .replace(/^```(?:json)?\s*\n?/i, "")
-    .replace(/\n?```\s*$/i, "");
 }
 
 function structuredOutputToolUseText(j: ResponseItem): string | undefined {
@@ -424,7 +418,7 @@ export function handleStreamJsonLine(
     } else if (j.structured_output !== undefined) {
       text = JSON.stringify(j.structured_output);
     } else {
-      text = stripCodeFence(typeof j.result === "string" ? j.result : "");
+      text = stripFences(typeof j.result === "string" ? j.result : "");
     }
 
     const rawUsage = asObject(j.usage) ?? {};

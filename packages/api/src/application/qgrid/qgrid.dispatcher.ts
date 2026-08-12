@@ -18,6 +18,7 @@ import {
   type GenerateResult,
   type StreamCallbacks,
 } from "../../utils/providers/common/provider-dispatcher";
+import { createFenceStripTransform } from "../../utils/providers/anthropic/fence-strip";
 import {
   parseAndValidateCallerSchemas,
   serializeAndValidateDispatchSchema,
@@ -150,9 +151,10 @@ export class QgridDispatcherClass {
       const result = await this.anthropicDispatcher.generate({
         // AnthropicDispatcher 내부에서 알아서 provider prefix 를 canonical model 로 정규화함
         model: input.model,
-        // 스키마/envelope 계약은 --json-schema 대신 system 말미의 텍스트로 안내한다(SON-532)
+        // 스키마/envelope 계약은 --json-schema 대신 system 말미의 텍스트로 안내한다(SON-532).
+        // outputSchema 는 전달하지 않는다 — anthropic 에서 항상 undefined(U1)이며,
+        // CC 로 가는 --json-schema 채널 자체가 닫혀 있음을 여기서 명시한다.
         systemPrompt: composeSystemWithSchemaContract(input.system, input),
-        outputSchema,
         effort: input.effort,
         timeoutMs: input.timeout,
         abortSignal,
@@ -222,13 +224,24 @@ export class QgridDispatcherClass {
     } else if (route.provider === "anthropic") {
       if (!this.anthropicDispatcher) throw this.notReadyError("anthropic");
 
+      // 계약(스키마/envelope)이 주입된 요청의 델타에서 코드펜스를 벗긴다(SON-532).
+      // 비스트림 최종 텍스트는 stream-json-adapter 의 stripFences 가 같은 시맨틱으로
+      // 처리하므로 델타 연결과 done.text 가 어긋나지 않는다. 일반 텍스트 요청은 무변경.
+      const hasSchemaContract = input.jsonSchema !== undefined || Boolean(input.tools?.length);
+      const fenceStrip = hasSchemaContract ? createFenceStripTransform() : undefined;
+      const emitDelta = fenceStrip
+        ? (text: string) => {
+            const safe = fenceStrip.push(text);
+            if (safe) cb.onDelta(safe);
+          }
+        : cb.onDelta;
+
       const decision = decideConvRouting(input);
       await this.anthropicDispatcher.generateStream(
         {
           model: input.model,
           // 스키마/envelope 계약은 --json-schema 대신 system 말미의 텍스트로 안내한다(SON-532)
           systemPrompt: composeSystemWithSchemaContract(input.system, input),
-          outputSchema,
           effort: input.effort,
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
@@ -238,9 +251,14 @@ export class QgridDispatcherClass {
           imageGenerationOptions: input.imageGenerationOptions,
         },
         {
-          onDelta: cb.onDelta,
+          onDelta: emitDelta,
           onThreadId: cb.onThreadId,
           onComplete: (turnResult) => {
+            // 홀드백 잔여(닫는 펜스가 아니었던 tail)를 done 전에 마저 방출한다 —
+            // 델타를 조립하는 클라이언트(EnvelopeStreamParser 등)의 무손실 보장.
+            const rest = fenceStrip?.flush();
+            if (rest) cb.onDelta(rest);
+
             const issuedCoord = issueConvContext(turnResult.threadCoord, decision);
             cb.onComplete(
               applyToolCallEmulation(toEmulationResult(turnResult), input.tools, {

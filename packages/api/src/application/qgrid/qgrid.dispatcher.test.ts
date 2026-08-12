@@ -545,6 +545,83 @@ describe("QgridDispatcherClass", () => {
     expect(generate.mock.calls[0]![0].systemPrompt).toBe("plain");
   });
 
+  // SON-532: 계약 주입 스트림의 델타에서 펜스를 벗긴다. 클라이언트(EnvelopeStreamParser,
+  // partialOutputStream)는 펜스를 처리하지 못하므로 서버 책임이다.
+  it("Anthropic 스트림은 계약 주입 시 델타의 코드펜스를 벗겨 방출한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generateStream = vi.fn(async (_req: GenerateRequest, cb: GenerateStreamCallbacks) => {
+      cb.onDelta("```json\n");
+      cb.onDelta('{"a"');
+      cb.onDelta(":1}");
+      cb.onDelta("\n```");
+      cb.onComplete(providerResult({ text: '{"a":1}' }));
+    });
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    const deltas: string[] = [];
+    let completed: QueryOutput | undefined;
+    await dispatcher.queryStream(
+      {
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        jsonSchema: JSON.stringify({ type: "object", properties: { a: { type: "number" } } }),
+      },
+      {
+        onDelta: (t) => deltas.push(t),
+        onComplete: (output) => {
+          completed = output;
+        },
+        onError: vi.fn(),
+      },
+    );
+
+    // 델타 연결 == 펜스 벗긴 전체 텍스트 == done.text (adapter 의 stripFences 와 동일 시맨틱)
+    expect(deltas.join("")).toBe('{"a":1}');
+    expect(completed?.text).toBe('{"a":1}');
+  });
+
+  it("Anthropic 스트림의 홀드백 잔여는 done 전에 방출된다 (내용 무손실)", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const events: string[] = [];
+    const generateStream = vi.fn(async (_req: GenerateRequest, cb: GenerateStreamCallbacks) => {
+      cb.onDelta('{"a":1}\n``'); // 미완성 펜스로 종료 — 닫는 펜스가 아니다
+      cb.onComplete(providerResult({ text: '{"a":1}\n``' }));
+    });
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    await dispatcher.queryStream(
+      {
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        jsonSchema: JSON.stringify({ type: "object" }),
+      },
+      {
+        onDelta: (t) => events.push(`delta:${t}`),
+        onComplete: () => events.push("complete"),
+        onError: vi.fn(),
+      },
+    );
+
+    expect(events.join("|")).toBe('delta:{"a":1}|delta:\n``|complete');
+  });
+
+  it("계약 없는 Anthropic 스트림 델타는 무변경 통과한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generateStream = vi.fn(async (_req: GenerateRequest, cb: GenerateStreamCallbacks) => {
+      cb.onDelta("```python\ncode\n```");
+      cb.onComplete(providerResult({ text: "```python\ncode\n```" }));
+    });
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    const deltas: string[] = [];
+    await dispatcher.queryStream(
+      { prompt: "hi", model: "anthropic/claude-sonnet-4-6" },
+      { onDelta: (t) => deltas.push(t), onComplete: vi.fn(), onError: vi.fn() },
+    );
+
+    expect(deltas.join("")).toBe("```python\ncode\n```");
+  });
+
   it("Anthropic route 는 strict 전용 argv 64KiB 제한을 적용하지 않는다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi.fn(async (): Promise<GenerateResult> => providerResult());
