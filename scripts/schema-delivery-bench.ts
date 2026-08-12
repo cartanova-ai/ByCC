@@ -398,7 +398,10 @@ async function runOne(
           costUsd,
         };
       }
-      if (mode === "stream" && r.finishReason !== "tool-calls") {
+      // 델타==done 검사는 스키마 전용 fixture 에서만 유효하다 — tools 응답의 델타는
+      // envelope 원문(펜스만 벗긴)이고 done.text 는 parseEnvelope 가 추출한 answer 라
+      // 다른 것이 설계다(클라이언트 EnvelopeStreamParser 가 델타에서 직접 파싱).
+      if (mode === "stream" && !fixture.tools && r.finishReason !== "tool-calls") {
         deltaDoneMismatch = (r.deltaText ?? "") !== (r.text ?? "");
       }
 

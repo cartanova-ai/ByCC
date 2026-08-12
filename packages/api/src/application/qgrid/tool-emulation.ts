@@ -124,9 +124,12 @@ function parseEnvelope(text: string, tools: QgridTool[], answerKind: AnswerKind)
     // "예상 가능한 모델 실패"지만, 그래도 구제하지 않는다 — 과거의 텍스트 구제는 퇴화
     // 봉투를 답변으로 흘려보내 조용한 오염을 만들었다(2026-07 medpath, 13.5k 건).
     // 정직한 실패가 보여야 소비자가 재시도하거나 근본 원인을 고친다.
-    logger.warn(`tool envelope parse failed: ${(error as Error).message}`);
+    // 진단에는 위반 원문의 머리가 필요하다(SON-495 전례) — parse 에러 위치만으로는
+    // "프로즈로 답했는지 / 펜스가 남았는지 / JSON 이 잘렸는지"를 구분할 수 없다.
+    const head = JSON.stringify(text.slice(0, 200));
+    logger.warn(`tool envelope parse failed: ${(error as Error).message}; head=${head}`);
     throw new ToolCallEmulationError(
-      `invalid tool envelope (response is not JSON — the model ignored the envelope contract; retry is the caller's decision): ${(error as Error).message}`,
+      `invalid tool envelope (response is not JSON — the model ignored the envelope contract; retry is the caller's decision): ${(error as Error).message}; response head: ${head}`,
     );
   }
 
