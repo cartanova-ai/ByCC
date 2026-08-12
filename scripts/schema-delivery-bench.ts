@@ -168,8 +168,10 @@ function buildFixtures(): Fixture[] {
       name: "tools-only",
       prompt: "사건 파일 'case-1976' 을 조회해서 요약하라.",
       tools: LOOKUP_TOOLS,
-      // 최종 answer 는 평문 — envelope 계약(parseEnvelope) 통과 + 비어있지 않으면 ok
+      // 최종 answer 는 평문 문자열이 설계다 — JSON 판정을 건너뛴다 (envelope 계약은
+      // 서버 parseEnvelope 가 이미 검증했고, 위반이면 여기 도달 전에 실패한다)
       classify: {
+        plainText: true,
         validate: (_parsed, raw) => (raw.trim().length > 0 ? undefined : "empty final answer"),
       },
     },

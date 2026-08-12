@@ -16,6 +16,11 @@ export type BenchMode = "generate" | "stream";
 
 export interface BenchClassifyOptions {
   /**
+   * 응답이 평문 텍스트인 계약 (tools-only 의 최종 answer 등). JSON 문법·형태 축 판정을
+   * 건너뛴다 — 평문 answer 를 JSON.parse 하면 정상 응답이 syntax fail 로 둔갑한다.
+   */
+  plainText?: boolean;
+  /**
    * fixture 의 전체 JSON Schema. 지정하면 validateAgainstSchema 로 **전체 트리**를
    * 검증한다 — top-level 키 존재만 보면 `{"scenes":[{},{},{}]}` 같은 속 빈 응답이
    * 통과한다(SON-495 교훈: 상위 키 판정은 쓰레기를 통과시킨다).
@@ -153,6 +158,16 @@ export function classifyBenchText(
 ): BenchClassification {
   const trimmed = text.trim();
   const fenceResidue = trimmed.startsWith("```") || trimmed.endsWith("```");
+
+  if (options.plainText) {
+    const reason = options.validate?.(text, text);
+    return {
+      syntax: "ok",
+      contract: reason === undefined ? "ok" : "fail",
+      ...(reason === undefined ? {} : { contractDetail: reason }),
+      topLevel: { wrapperKey: false, fenceResidue, prose: false },
+    };
+  }
 
   let parsed: unknown;
   let syntax: "ok" | "fail" = "ok";

@@ -136,6 +136,25 @@ describe("validateAgainstSchema — 전체 트리 검증", () => {
   });
 });
 
+describe("classifyBenchText — plainText 계약", () => {
+  it("평문 answer 를 JSON 실패로 둔갑시키지 않는다 (tools-only 최종 답변)", () => {
+    const c = classifyBenchText("사건 파일 요약: 1976년 단체 사진 사건입니다.", {
+      plainText: true,
+      validate: (_p, raw) => (raw.trim().length > 0 ? undefined : "empty"),
+    });
+    expect(c).toMatchObject({
+      syntax: "ok",
+      contract: "ok",
+      topLevel: { prose: false, fenceResidue: false },
+    });
+  });
+
+  it("펜스 잔존은 평문 계약에서도 잡는다", () => {
+    const c = classifyBenchText("```\n요약\n```", { plainText: true });
+    expect(c.topLevel.fenceResidue).toBe(true);
+  });
+});
+
 describe("classifyBenchText — schema 옵션이 심층 검증을 켠다", () => {
   it("속 빈 nested 응답이 contract fail 로 잡힌다", () => {
     const c = classifyBenchText('{"scenes":[{},{},{}]}', {
