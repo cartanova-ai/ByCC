@@ -9,7 +9,7 @@
   },
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
-    "checksum": "934c43afc09ff3d7ae37a139eb5c506e46449541"
+    "checksum": "5e611bd9fe5b250f688d5e6189891de52ddd33bf"
   },
   {
     "path": "api/src/application/qgrid/qgrid.types.ts",

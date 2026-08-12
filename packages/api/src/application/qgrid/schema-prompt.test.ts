@@ -71,6 +71,21 @@ describe("renderToolEnvelopePrompt", () => {
     expect(rendered).toContain("<answer-json-schema>");
     expect(rendered).toContain(USER_SCHEMA);
     expect(rendered).toContain("conforms to the JSON Schema below");
+    // raw-JSON-only 규칙을 예시가 스스로 어기면 안 된다 — 자리표시자 섞인 비 JSON 예시 금지
+    expect(rendered).not.toContain("<JSON conforming");
+  });
+
+  it("tool_call 예시의 args 가 그 tool 의 required 필드를 채운 유효 JSON 이다", () => {
+    const { toolCallExample } = buildEnvelopeExamples(TOOLS);
+    const envelope = JSON.parse(toolCallExample) as {
+      result: { toolCalls: Array<{ toolName: string; args: string }> };
+    };
+    const call = envelope.result.toolCalls[0]!;
+
+    expect(call.toolName).toBe("lookup");
+    const args = JSON.parse(call.args) as Record<string, unknown>;
+    // lookup inputSchema: required ["key"] (string)
+    expect(typeof args.key).toBe("string");
   });
 
   it("tools 만이면 answer 는 평문 string 안내다", () => {
@@ -101,9 +116,8 @@ describe("envelope 예시 문자열", () => {
 
     expect(renderToolEnvelopePrompt(TOOLS)).toContain(toolCallExample);
     expect(renderToolEnvelopePrompt(TOOLS)).toContain(textAnswerExample);
-    // json answer 예시는 스키마 종속이라 유효 JSON 이 아닌 자리 표시 형태를 쓴다.
-    expect(renderToolEnvelopePrompt(TOOLS, USER_SCHEMA)).toContain(
-      '"answer":<JSON conforming to the answer schema>',
-    );
+    // json answer 변형은 유효한 리터럴 예시를 만들 수 없으므로 예시 없이 프로즈로만 —
+    // text answer 예시(string)가 json 모드 문서에 섞이면 모델이 string 을 베낀다.
+    expect(renderToolEnvelopePrompt(TOOLS, USER_SCHEMA)).not.toContain(textAnswerExample);
   });
 });

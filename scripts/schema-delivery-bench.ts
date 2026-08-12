@@ -7,7 +7,8 @@
  *
  * 기본은 dry-run 이다: 발사할 요청 수와 예상 비용만 출력한다. 실제 발사는 BENCH_LIVE=1.
  * 결과는 JSONL 로 append 되며(checkpoint), 중단 후 재실행하면 완료된 조합은 재발사되지
- * 않는다. 동시성은 BENCH_CONCURRENCY(기본 2)로 낮게 유지한다 — 토큰 풀 보호.
+ * 않는다. checkpoint 동일성에는 fixture 내용 지문이 포함된다 — 프롬프트/스키마/tools 를
+ * 고치면 옛 결과는 무시되고 재발사된다. 동시성은 BENCH_CONCURRENCY(기본 2)로 낮게 유지.
  *
  *   BENCH_LIVE=1 BENCH_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-5" \
  *   BENCH_N=30 pnpm tsx scripts/schema-delivery-bench.ts
@@ -19,26 +20,30 @@
  *   BENCH_FIXTURES     쉼표 구분 필터 (기본 전부)
  *   BENCH_MODES        generate,stream (기본 둘 다)
  *   BENCH_CONCURRENCY  기본 2
+ *   BENCH_TIMEOUT_MS   요청당 마감 (기본 900000 = 15분)
  *   BENCH_OUT          checkpoint JSONL 경로 (기본 scripts/out/schema-delivery-bench.jsonl)
  *   BENCH_SCHEMA_FILE  deti 실물 스키마 JSON 파일 — 지정하면 "deti-real" fixture 추가
  *   BENCH_EST_COST_USD dry-run 의 요청당 예상 비용 (기본 0.10)
  *
- * 한계: tools fixture 의 envelope 위반은 서버(parseEnvelope)가 거절하므로 원문 텍스트가
- * 벤치에 도달하지 않는다 — 에러 메시지로 contract fail 만 집계하고 형태 축(래퍼/펜스)은
- * 서버 로그(request log)로 사후 분류한다.
+ * tools fixture 는 tool-calls 응답에서 멈추지 않는다: 인자를 inputSchema 로 검증하고,
+ * 결정적 tool 결과로 후속 턴을 이어가(최대 3턴) 최종 answer 까지 분류한다 — 첫 tool-calls
+ * 를 성공으로 치면 계약의 절반(최종 답변)이 미검증으로 남고 request log 에 열린 run 이 쌓인다.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import {
   aggregateBench,
+  type BenchClassification,
   type BenchClassifyOptions,
   type BenchMode,
   type BenchRecord,
   checkpointKey,
   classifyBenchText,
+  fingerprintFixture,
   formatAggregateTable,
   parseCheckpointLines,
+  validateAgainstSchema,
 } from "../packages/api/src/testing/schema-bench";
 
 const SERVER = process.env.BENCH_SERVER ?? "http://localhost:44900";
@@ -49,18 +54,26 @@ const MODELS = (process.env.BENCH_MODELS ?? "anthropic/claude-sonnet-4-6")
 const N = Number(process.env.BENCH_N ?? "30");
 const LIVE = process.env.BENCH_LIVE === "1";
 const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY ?? "2");
+const TIMEOUT_MS = Number(process.env.BENCH_TIMEOUT_MS ?? "900000");
 const OUT = process.env.BENCH_OUT ?? "scripts/out/schema-delivery-bench.jsonl";
 const EST_COST = Number(process.env.BENCH_EST_COST_USD ?? "0.10");
 const MODES = (process.env.BENCH_MODES ?? "generate,stream")
   .split(",")
   .map((m) => m.trim())
   .filter((m): m is BenchMode => m === "generate" || m === "stream");
+const MAX_TOOL_TURNS = 3;
+
+interface BenchTool {
+  name: string;
+  description?: string;
+  inputSchema: unknown;
+}
 
 interface Fixture {
   name: string;
   prompt: string;
   jsonSchema?: string;
-  tools?: Array<{ name: string; description?: string; inputSchema: unknown }>;
+  tools?: BenchTool[];
   classify: BenchClassifyOptions;
 }
 
@@ -108,7 +121,7 @@ const NESTED_SCHEMA = {
   required: ["scenes"],
 };
 
-const LOOKUP_TOOLS = [
+const LOOKUP_TOOLS: BenchTool[] = [
   {
     name: "lookup",
     description: "Look up a case file by key",
@@ -120,6 +133,14 @@ const LOOKUP_TOOLS = [
   },
 ];
 
+// tool 실행 결과로 되돌려줄 결정적 응답 (매 턴 동일 — 재현성)
+const LOOKUP_RESULT = JSON.stringify({
+  key: "case-1976",
+  title: "1976년 단체 사진 사건",
+  summary: "백월관 대식당에서 발견된 오래된 극단의 단체 사진. 한 명의 이름이 긁혀 있다.",
+  tags: ["미스터리", "극단", "사진"],
+});
+
 function buildFixtures(): Fixture[] {
   const fixtures: Fixture[] = [
     {
@@ -127,7 +148,7 @@ function buildFixtures(): Fixture[] {
       prompt: "미스터리 단편의 제목과 태그 3개를 한국어로 지어라.",
       jsonSchema: JSON.stringify(SMALL_SCHEMA),
       classify: {
-        requiredTopLevelKeys: ["title", "tags"],
+        schema: SMALL_SCHEMA,
         allowedTopLevelKeys: Object.keys(SMALL_SCHEMA.properties),
       },
     },
@@ -139,21 +160,18 @@ function buildFixtures(): Fixture[] {
       ].join("\n"),
       jsonSchema: JSON.stringify(NESTED_SCHEMA),
       classify: {
-        requiredTopLevelKeys: ["scenes"],
+        schema: NESTED_SCHEMA,
         allowedTopLevelKeys: Object.keys(NESTED_SCHEMA.properties),
-        validate: (parsed) => {
-          const scenes = (parsed as { scenes?: unknown }).scenes;
-          if (!Array.isArray(scenes) || scenes.length < 3) return "scenes must have >= 3 items";
-          return undefined;
-        },
       },
     },
     {
       name: "tools-only",
       prompt: "사건 파일 'case-1976' 을 조회해서 요약하라.",
       tools: LOOKUP_TOOLS,
-      // 서버 parseEnvelope 통과가 계약이다 — 성공 응답이면 contract ok 로 기록된다
-      classify: {},
+      // 최종 answer 는 평문 — envelope 계약(parseEnvelope) 통과 + 비어있지 않으면 ok
+      classify: {
+        validate: (_parsed, raw) => (raw.trim().length > 0 ? undefined : "empty final answer"),
+      },
     },
     {
       name: "tools-with-schema",
@@ -161,7 +179,7 @@ function buildFixtures(): Fixture[] {
       tools: LOOKUP_TOOLS,
       jsonSchema: JSON.stringify(SMALL_SCHEMA),
       classify: {
-        requiredTopLevelKeys: ["title", "tags"],
+        schema: SMALL_SCHEMA,
         allowedTopLevelKeys: Object.keys(SMALL_SCHEMA.properties),
       },
     },
@@ -180,7 +198,7 @@ function buildFixtures(): Fixture[] {
         "미스터리 게임 한 턴을 한국어로 생성하라. 모든 필수 필드를 채우고 모르는 nullable 값은 null 로 두라.",
       jsonSchema: JSON.stringify(raw),
       classify: {
-        requiredTopLevelKeys: raw.required ?? [],
+        schema: raw,
         allowedTopLevelKeys: raw.properties ? Object.keys(raw.properties) : undefined,
       },
     });
@@ -195,31 +213,56 @@ function buildFixtures(): Fixture[] {
   return filter.size > 0 ? fixtures.filter((f) => filter.has(f.name)) : fixtures;
 }
 
+// ── HTTP ──
+
+interface ToolCallContent {
+  type: string;
+  toolCallId?: string;
+  toolName?: string;
+  input?: string;
+}
+
 interface QueryResponse {
   text: string;
   finishReason: string;
   usage?: { output_tokens?: number };
   costUsd?: number;
-  content?: Array<{ type: string; toolName?: string }>;
+  content?: ToolCallContent[];
+  runContext?: unknown;
 }
 
-async function fireGenerate(fixture: Fixture, model: string): Promise<{
+interface TurnArgs {
+  prompt: string;
+  system?: string;
+  model: string;
+  jsonSchema?: string;
+  tools?: BenchTool[];
+  runContext?: unknown;
+  toolResults?: Array<{ toolCallId: string; toolName?: string; output: string }>;
+}
+
+// sonamu @api 규약: 파라미터는 { args: QueryInput } 로 감싼다 (AI SDK 와 동일 wire shape)
+function wireBody(turn: TurnArgs): string {
+  return JSON.stringify({ args: { ...turn, projectName: "schema-delivery-bench" } });
+}
+
+interface TurnResult {
   text?: string;
+  deltaText?: string;
   finishReason?: string;
+  content?: ToolCallContent[];
+  runContext?: unknown;
   outputTokens?: number;
   costUsd?: number;
   transportError?: string;
-}> {
+}
+
+async function fireGenerate(turn: TurnArgs): Promise<TurnResult> {
   const res = await fetch(`${SERVER}/api/qgrid/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      prompt: fixture.prompt,
-      model,
-      projectName: "schema-delivery-bench",
-      ...(fixture.jsonSchema ? { jsonSchema: fixture.jsonSchema } : {}),
-      ...(fixture.tools ? { tools: fixture.tools } : {}),
-    }),
+    body: wireBody(turn),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) {
     return { transportError: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` };
@@ -228,36 +271,30 @@ async function fireGenerate(fixture: Fixture, model: string): Promise<{
   return {
     text: data.text,
     finishReason: data.finishReason,
+    content: data.content,
+    runContext: data.runContext,
     outputTokens: data.usage?.output_tokens,
     costUsd: data.costUsd,
   };
 }
 
-async function fireStream(fixture: Fixture, model: string): Promise<{
-  deltaText?: string;
-  doneText?: string;
-  finishReason?: string;
-  outputTokens?: number;
-  costUsd?: number;
-  transportError?: string;
-}> {
+async function fireStream(turn: TurnArgs): Promise<TurnResult> {
   const prep = await fetch(`${SERVER}/api/qgrid/prepareStream`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      prompt: fixture.prompt,
-      model,
-      projectName: "schema-delivery-bench",
-      ...(fixture.jsonSchema ? { jsonSchema: fixture.jsonSchema } : {}),
-      ...(fixture.tools ? { tools: fixture.tools } : {}),
-    }),
+    body: wireBody(turn),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!prep.ok) {
-    return { transportError: `prepareStream HTTP ${prep.status}: ${(await prep.text()).slice(0, 300)}` };
+    return {
+      transportError: `prepareStream HTTP ${prep.status}: ${(await prep.text()).slice(0, 300)}`,
+    };
   }
   const { streamId } = (await prep.json()) as { streamId: string };
 
-  const res = await fetch(`${SERVER}/api/qgrid/queryStream?streamId=${streamId}`);
+  const res = await fetch(`${SERVER}/api/qgrid/queryStream?streamId=${streamId}`, {
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
   if (!res.ok || !res.body) {
     return { transportError: `queryStream HTTP ${res.status}` };
   }
@@ -290,79 +327,195 @@ async function fireStream(fixture: Fixture, model: string): Promise<{
   }
 
   if (streamError !== undefined) return { transportError: `stream error: ${streamError}` };
+  // done 없이 닫힌 스트림은 서버/네트워크 실패다 — 빈 문자열을 스키마 실패로 분류하면
+  // 전송 문제가 모델 준수 문제로 둔갑한다.
+  if (done === undefined) {
+    return { transportError: "premature EOF: stream closed without done event" };
+  }
   return {
+    text: done.text,
     deltaText,
-    doneText: done?.text,
-    finishReason: done?.finishReason,
-    outputTokens: done?.usage?.output_tokens,
-    costUsd: done?.costUsd,
+    finishReason: done.finishReason,
+    content: done.content,
+    runContext: done.runContext,
+    outputTokens: done.usage?.output_tokens,
+    costUsd: done.costUsd,
+  };
+}
+
+// ── 실행 (tool 연속턴 포함) ──
+
+function contractOk(): BenchClassification {
+  return {
+    syntax: "ok",
+    contract: "ok",
+    topLevel: { wrapperKey: false, fenceResidue: false, prose: false },
+  };
+}
+
+function contractFail(detail: string): BenchClassification {
+  return {
+    syntax: "ok",
+    contract: "fail",
+    contractDetail: detail,
+    topLevel: { wrapperKey: false, fenceResidue: false, prose: false },
   };
 }
 
 async function runOne(
   fixture: Fixture,
+  fixtureHash: string,
   model: string,
   mode: BenchMode,
   iteration: number,
 ): Promise<BenchRecord> {
   const start = Date.now();
-  const base = { fixture: fixture.name, model, mode, iteration };
+  const base = { fixture: fixture.name, fixtureHash, model, mode, iteration };
+  const fire = mode === "generate" ? fireGenerate : fireStream;
+
+  let outputTokens = 0;
+  let costUsd = 0;
+  let deltaDoneMismatch: boolean | undefined;
 
   try {
-    if (mode === "generate") {
-      const r = await fireGenerate(fixture, model);
+    let turn: TurnArgs = {
+      prompt: fixture.prompt,
+      model,
+      ...(fixture.jsonSchema ? { jsonSchema: fixture.jsonSchema } : {}),
+      ...(fixture.tools ? { tools: fixture.tools } : {}),
+    };
+
+    for (let turnIndex = 0; ; turnIndex += 1) {
+      const r = await fire(turn);
+      outputTokens += r.outputTokens ?? 0;
+      costUsd += r.costUsd ?? 0;
       if (r.transportError !== undefined) {
-        return { ...base, transportError: r.transportError, durationMs: Date.now() - start };
+        return {
+          ...base,
+          transportError: r.transportError,
+          durationMs: Date.now() - start,
+          outputTokens,
+          costUsd,
+        };
       }
-      return {
-        ...base,
-        // tool_call 로 끝난 tools fixture 는 envelope 계약 통과 자체가 성공이다
-        classification:
-          r.finishReason === "tool-calls"
-            ? {
-                syntax: "ok",
-                contract: "ok",
-                topLevel: { wrapperKey: false, fenceResidue: false, prose: false },
-              }
-            : classifyBenchText(r.text ?? "", fixture.classify),
-        durationMs: Date.now() - start,
-        outputTokens: r.outputTokens,
-        costUsd: r.costUsd,
+      if (mode === "stream" && r.finishReason !== "tool-calls") {
+        deltaDoneMismatch = (r.deltaText ?? "") !== (r.text ?? "");
+      }
+
+      if (r.finishReason !== "tool-calls") {
+        // 최종 answer — fixture 계약 전체로 분류
+        return {
+          ...base,
+          classification: classifyBenchText(r.text ?? "", fixture.classify),
+          deltaDoneMismatch,
+          durationMs: Date.now() - start,
+          outputTokens,
+          costUsd,
+        };
+      }
+
+      // tool-calls: 인자를 inputSchema 로 검증하고 결정적 결과로 후속 턴을 잇는다
+      if (turnIndex + 1 >= MAX_TOOL_TURNS) {
+        return {
+          ...base,
+          classification: contractFail(`tool loop exceeded ${MAX_TOOL_TURNS} turns`),
+          durationMs: Date.now() - start,
+          outputTokens,
+          costUsd,
+        };
+      }
+
+      const calls = (r.content ?? []).filter((c) => c.type === "tool-call");
+      if (calls.length === 0) {
+        return {
+          ...base,
+          classification: contractFail("finishReason=tool-calls but no tool-call content"),
+          durationMs: Date.now() - start,
+          outputTokens,
+          costUsd,
+        };
+      }
+      for (const call of calls) {
+        const tool = fixture.tools?.find((t) => t.name === call.toolName);
+        if (!tool) {
+          return {
+            ...base,
+            classification: contractFail(`unknown tool in call: ${call.toolName}`),
+            durationMs: Date.now() - start,
+            outputTokens,
+            costUsd,
+          };
+        }
+        let parsedArgs: unknown;
+        try {
+          parsedArgs = JSON.parse(call.input ?? "");
+        } catch {
+          return {
+            ...base,
+            classification: contractFail(`tool args are not JSON: ${call.toolName}`),
+            durationMs: Date.now() - start,
+            outputTokens,
+            costUsd,
+          };
+        }
+        const violations = validateAgainstSchema(parsedArgs, tool.inputSchema);
+        if (violations.length > 0) {
+          return {
+            ...base,
+            classification: contractFail(
+              `tool args violate inputSchema (${call.toolName}): ${violations.slice(0, 3).join("; ")}`,
+            ),
+            durationMs: Date.now() - start,
+            outputTokens,
+            costUsd,
+          };
+        }
+      }
+
+      turn = {
+        prompt: fixture.prompt,
+        model,
+        ...(fixture.jsonSchema ? { jsonSchema: fixture.jsonSchema } : {}),
+        ...(fixture.tools ? { tools: fixture.tools } : {}),
+        runContext: r.runContext,
+        toolResults: calls.map((call) => ({
+          toolCallId: call.toolCallId ?? "",
+          toolName: call.toolName,
+          output: LOOKUP_RESULT,
+        })),
       };
     }
-
-    const r = await fireStream(fixture, model);
-    if (r.transportError !== undefined) {
-      return { ...base, transportError: r.transportError, durationMs: Date.now() - start };
-    }
-    return {
-      ...base,
-      classification:
-        r.finishReason === "tool-calls"
-          ? {
-              syntax: "ok",
-              contract: "ok",
-              topLevel: { wrapperKey: false, fenceResidue: false, prose: false },
-            }
-          : classifyBenchText(r.doneText ?? "", fixture.classify),
-      // 펜스 transform 불변식의 실전 검증 — 델타 연결과 done.text 는 같아야 한다
-      deltaDoneMismatch:
-        r.finishReason !== "tool-calls" && (r.deltaText ?? "") !== (r.doneText ?? ""),
-      durationMs: Date.now() - start,
-      outputTokens: r.outputTokens,
-      costUsd: r.costUsd,
-    };
   } catch (error) {
     return {
       ...base,
       transportError: (error as Error).message.slice(0, 300),
       durationMs: Date.now() - start,
+      outputTokens,
+      costUsd,
     };
+  }
+}
+
+// ── main ──
+
+/** 중단으로 잘린 마지막 줄이 있으면 개행으로 봉인 — 다음 append 가 그 조각에 붙어
+ * 두 레코드가 한 줄로 뭉치면, 유효했던 레코드까지 스킵돼 유료 요청이 반복된다. */
+function repairCheckpointTail(path: string): void {
+  if (!existsSync(path)) return;
+  const content = readFileSync(path, "utf8");
+  if (content.length > 0 && !content.endsWith("\n")) {
+    appendFileSync(path, "\n");
   }
 }
 
 async function main(): Promise<void> {
   const fixtures = buildFixtures();
+  const hashes = new Map(
+    fixtures.map((f) => [
+      f.name,
+      fingerprintFixture({ prompt: f.prompt, jsonSchema: f.jsonSchema, tools: f.tools }),
+    ]),
+  );
   const tasks: Array<{ fixture: Fixture; model: string; mode: BenchMode; iteration: number }> = [];
   for (const model of MODELS) {
     for (const fixture of fixtures) {
@@ -372,18 +525,28 @@ async function main(): Promise<void> {
     }
   }
 
+  repairCheckpointTail(OUT);
   const completed = existsSync(OUT)
     ? parseCheckpointLines(readFileSync(OUT, "utf8"))
     : new Map<string, BenchRecord>();
   const pending = tasks.filter(
-    (t) => !completed.has(checkpointKey({ ...t, fixture: t.fixture.name })),
+    (t) =>
+      !completed.has(
+        checkpointKey({
+          fixture: t.fixture.name,
+          fixtureHash: hashes.get(t.fixture.name),
+          model: t.model,
+          mode: t.mode,
+          iteration: t.iteration,
+        }),
+      ),
   );
 
   console.log(
     [
       `server=${SERVER}`,
       `models=${MODELS.join(",")}`,
-      `fixtures=${fixtures.map((f) => f.name).join(",")}`,
+      `fixtures=${fixtures.map((f) => `${f.name}@${hashes.get(f.name)}`).join(",")}`,
       `modes=${MODES.join(",")}`,
       `N=${N}`,
       `total=${tasks.length}`,
@@ -406,7 +569,13 @@ async function main(): Promise<void> {
     for (;;) {
       const task = queue.shift();
       if (!task) return;
-      const record = await runOne(task.fixture, task.model, task.mode, task.iteration);
+      const record = await runOne(
+        task.fixture,
+        hashes.get(task.fixture.name)!,
+        task.model,
+        task.mode,
+        task.iteration,
+      );
       appendFileSync(OUT, `${JSON.stringify(record)}\n`);
       fired += 1;
       const status = record.transportError
@@ -419,8 +588,11 @@ async function main(): Promise<void> {
   });
   await Promise.all(workers);
 
-  const all = parseCheckpointLines(readFileSync(OUT, "utf8"));
-  console.log(`\n${formatAggregateTable(aggregateBench([...all.values()]))}`);
+  // 집계는 현재 fixture 지문과 일치하는 레코드만 — 옛 지문의 잔재는 표에서 제외
+  const all = [...parseCheckpointLines(readFileSync(OUT, "utf8")).values()].filter(
+    (r) => hashes.get(r.fixture) === r.fixtureHash,
+  );
+  console.log(`\n${formatAggregateTable(aggregateBench(all))}`);
 }
 
 main().catch((error) => {

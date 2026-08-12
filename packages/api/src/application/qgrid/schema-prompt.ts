@@ -62,24 +62,69 @@ export function renderOutputSchemaPrompt(jsonSchema: string): string {
 /**
  * envelope 예시 JSON. 렌더 문구와 parseEnvelope 계약의 드리프트를 교차 테스트로 잡기
  * 위해 분리 export 한다 — 예시가 실제 파서를 통과하지 못하면 안내문이 틀린 것이다.
+ *
+ * 예시는 스스로 계약을 지켜야 한다: args 는 첫 tool 의 inputSchema required 필드를 채운
+ * JSON string 으로 합성한다 — `args:"{}"` 같은 계약 위반 예시는 모델이 그대로 베낀다.
  */
 export function buildEnvelopeExamples(tools: QgridTool[]): {
   toolCallExample: string;
   textAnswerExample: string;
 } {
-  const firstToolName = tools[0]?.name ?? "toolName";
+  const firstTool = tools[0];
   return {
     toolCallExample: JSON.stringify({
       result: {
         action: "tool_call",
         answer: null,
-        toolCalls: [{ toolName: firstToolName, args: "{}" }],
+        toolCalls: [
+          {
+            toolName: firstTool?.name ?? "toolName",
+            args: JSON.stringify(exampleValueForSchema(firstTool?.inputSchema)),
+          },
+        ],
       },
     }),
     textAnswerExample: JSON.stringify({
       result: { action: "answer", answer: "your final answer", toolCalls: null },
     }),
   };
+}
+
+/** inputSchema 의 required 필드를 타입에 맞는 더미 값으로 채운 예시 인스턴스. */
+function exampleValueForSchema(schema: unknown): unknown {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return {};
+  const node = schema as Record<string, unknown>;
+
+  if (Array.isArray(node.enum) && node.enum.length > 0) return node.enum[0];
+  if ("const" in node) return node.const;
+
+  const type = Array.isArray(node.type) ? node.type[0] : node.type;
+  switch (type) {
+    case "string":
+      return "example";
+    case "number":
+    case "integer":
+      return 0;
+    case "boolean":
+      return false;
+    case "null":
+      return null;
+    case "array": {
+      const items = node.items;
+      const min = typeof node.minItems === "number" ? node.minItems : 0;
+      return min > 0 ? [exampleValueForSchema(items)] : [];
+    }
+    default: {
+      const properties =
+        node.properties && typeof node.properties === "object" && !Array.isArray(node.properties)
+          ? (node.properties as Record<string, unknown>)
+          : {};
+      const required = Array.isArray(node.required)
+        ? node.required.filter((k): k is string => typeof k === "string")
+        : [];
+      return Object.fromEntries(required.map((k) => [k, exampleValueForSchema(properties[k])]));
+    }
+  }
 }
 
 // envelope 계약 문구는 buildToolCallSchema 의 description 들과 같은 표현을 쓴다
@@ -95,21 +140,26 @@ export function renderToolEnvelopePrompt(tools: QgridTool[], jsonSchema?: string
     })
     .join("\n");
 
-  const answerShape =
+  // 예시가 raw-JSON-only 규칙을 스스로 어기면 안 된다: json answer 는 스키마 종속이라
+  // 유효한 리터럴 예시를 만들 수 없으므로 예시 없이 프로즈로만 서술한다 (자리표시자가
+  // 섞인 비 JSON 예시를 모델이 그대로 베끼는 것 방지).
+  const answerVariant =
     jsonSchema === undefined
-      ? ['- "answer" must be a plain string with your final answer.']
+      ? [
+          "2. Final answer — use only when no further client tool result is needed:",
+          textAnswerExample,
+          '- "toolCalls" must be null.',
+          '- "answer" must be a plain string with your final answer (not null).',
+        ]
       : [
-          '- "answer" must be a JSON value that conforms to the JSON Schema below.',
+          "2. Final answer — use only when no further client tool result is needed:",
+          '- Set "action" to "answer" and "toolCalls" to null.',
+          '- "answer" must be a JSON value (not null, and not a string of JSON) that conforms to the JSON Schema below.',
           "",
           "<answer-json-schema>",
           jsonSchema,
           "</answer-json-schema>",
         ];
-
-  const answerExample =
-    jsonSchema === undefined
-      ? textAnswerExample
-      : '{"result":{"action":"answer","answer":<JSON conforming to the answer schema>,"toolCalls":null}}';
 
   return [
     "## Client Tool Protocol",
@@ -121,18 +171,14 @@ export function renderToolEnvelopePrompt(tools: QgridTool[], jsonSchema?: string
     "raw JSON only, no code fences, no prose before or after the JSON.",
     'The "result" value is exactly one of the two variants:',
     "",
-    "1. Request client-side tool execution:",
+    "1. Request client-side tool execution, for example:",
     toolCallExample,
     '- "toolCalls" must contain at least one entry.',
     '- "toolName" must be one of the client tool names listed below.',
     '- "args" must be the tool arguments encoded as a JSON string (not an object), conforming to that tool\'s inputSchema.',
     '- "answer" must be null.',
     "",
-    "2. Final answer — use only when no further client tool result is needed:",
-    answerExample,
-    '- "toolCalls" must be null.',
-    '- "answer" must not be null.',
-    ...answerShape,
+    ...answerVariant,
     "",
     "Available client tools:",
     toolList,

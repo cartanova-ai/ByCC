@@ -5,8 +5,10 @@ import {
   type BenchRecord,
   checkpointKey,
   classifyBenchText,
+  fingerprintFixture,
   formatAggregateTable,
   parseCheckpointLines,
+  validateAgainstSchema,
 } from "./schema-bench";
 
 describe("classifyBenchText — 3계층 배타 분류", () => {
@@ -70,6 +72,100 @@ describe("classifyBenchText — 3계층 배타 분류", () => {
     const c = classifyBenchText('{"anything":{"nested":1}}', {});
     expect(c.topLevel.wrapperKey).toBe(false);
     expect(c.contract).toBe("ok");
+  });
+});
+
+describe("validateAgainstSchema — 전체 트리 검증", () => {
+  const nested = {
+    type: "object",
+    properties: {
+      scenes: {
+        type: "array",
+        minItems: 3,
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            advance: { type: "string", enum: ["next", "choice"] },
+          },
+          required: ["id", "advance"],
+        },
+      },
+    },
+    required: ["scenes"],
+  };
+
+  it("top-level 키만 있고 속이 빈 응답을 거부한다 (SON-495 교훈)", () => {
+    // 상위 키 판정만 하면 이게 통과한다 — 심층 검증의 존재 이유
+    const errs = validateAgainstSchema({ scenes: [{}, {}, {}] }, nested);
+    expect(errs.length).toBeGreaterThanOrEqual(6); // 각 scene 의 id·advance 누락
+    expect(errs[0]).toContain("missing required");
+  });
+
+  it("타입·enum·minItems 위반을 경로와 함께 보고한다", () => {
+    expect(
+      validateAgainstSchema({ scenes: [{ id: 1, advance: "next" }] }, nested),
+    ).toEqual(expect.arrayContaining([expect.stringContaining("$.scenes: fewer than minItems")]));
+    const deep = validateAgainstSchema(
+      { scenes: [{ id: "s1", advance: "jump" }, { id: "s2", advance: "next" }, { id: "s3", advance: "next" }] },
+      nested,
+    );
+    expect(deep).toEqual([expect.stringContaining("$.scenes[0].advance: enum violation")]);
+  });
+
+  it("anyOf/oneOf/const/nullable union 을 지원한다 (deti 실물 keyword)", () => {
+    const sch = {
+      type: "object",
+      properties: {
+        mood: { type: ["string", "null"] },
+        kind: { anyOf: [{ const: "a" }, { const: "b" }] },
+      },
+      required: ["mood", "kind"],
+    };
+    expect(validateAgainstSchema({ mood: null, kind: "a" }, sch)).toEqual([]);
+    expect(validateAgainstSchema({ mood: 3, kind: "c" }, sch)).toHaveLength(2);
+  });
+
+  it("정상 인스턴스는 위반 0", () => {
+    expect(
+      validateAgainstSchema(
+        { scenes: [{ id: "1", advance: "next" }, { id: "2", advance: "choice" }, { id: "3", advance: "next" }] },
+        nested,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("classifyBenchText — schema 옵션이 심층 검증을 켠다", () => {
+  it("속 빈 nested 응답이 contract fail 로 잡힌다", () => {
+    const c = classifyBenchText('{"scenes":[{},{},{}]}', {
+      schema: {
+        type: "object",
+        properties: {
+          scenes: { type: "array", items: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
+        },
+        required: ["scenes"],
+      },
+    });
+    expect(c.contract).toBe("fail");
+    expect(c.contractDetail).toContain("schema violations");
+  });
+});
+
+describe("fingerprintFixture", () => {
+  it("내용이 다르면 지문이 다르고, 같으면 같다 — checkpoint 동일성의 근거", () => {
+    const a = fingerprintFixture({ prompt: "p", jsonSchema: "{}" });
+    expect(fingerprintFixture({ prompt: "p", jsonSchema: "{}" })).toBe(a);
+    expect(fingerprintFixture({ prompt: "p2", jsonSchema: "{}" })).not.toBe(a);
+    expect(fingerprintFixture({ prompt: "p", jsonSchema: '{"a":1}' })).not.toBe(a);
+    expect(fingerprintFixture({ prompt: "p", jsonSchema: "{}", tools: [{ name: "t" }] })).not.toBe(a);
+  });
+
+  it("지문이 checkpoint 키에 반영돼 fixture 수정 후 옛 결과가 재사용되지 않는다", () => {
+    const base = { fixture: "f", model: "m", mode: "generate" as const, iteration: 0 };
+    expect(checkpointKey({ ...base, fixtureHash: "aaaa" })).not.toBe(
+      checkpointKey({ ...base, fixtureHash: "bbbb" }),
+    );
   });
 });
 

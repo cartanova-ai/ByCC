@@ -145,9 +145,12 @@ Payload responsibilities:
 - Send AI SDK multimodal image/file message parts as qgrid `input` only when `imageGeneration` is enabled. Normal non-image-generation calls keep `user_prompt` text-only and do not forward image input.
 - Reject oversized reference-image data URLs before the request leaves the SDK. Reference images travel as JSON data URLs; callers should compress/resize large photos, preferably to WebP/JPEG.
 
-Tools and `jsonSchema` can be used together as of qgrid 2.5.4. The server composes
-them into one strict action envelope for every provider turn. `toolChoice` is not
-part of the current qgrid wire contract and must not be described as supported.
+Tools and `jsonSchema` can be used together as of qgrid 2.5.4. On OpenAI the
+server composes them into one strict action envelope enforced by constrained
+decoding; on Anthropic (SON-532) the same envelope contract is rendered as text
+at the end of the system prompt and the reply is validated by `parseEnvelope`.
+`toolChoice` is not part of the current qgrid wire contract and must not be
+described as supported.
 
 Before provider dispatch, qgrid validates caller output schemas and every tool
 input schema with an iterative preflight. Output/tool schema serialization, tool
@@ -155,24 +158,26 @@ names, descriptions, JSON escaping, and composition framing share an aggregate
 512 KiB UTF-8 budget. Schema JSON values are limited to 20,000 in aggregate, and
 each schema is limited to depth 128. Malformed, unsupported top-level output, or
 over-budget schemas fail with HTTP 400 before request-log creation or stream ID
-allocation. The fully composed and strictified schema is checked again against
-the 512 KiB budget. Anthropic routes additionally enforce a 64 KiB UTF-8 ceiling
-because Claude Code receives that schema as one `--json-schema` argv value.
+allocation. On OpenAI the fully composed and strictified schema is checked again
+against the 512 KiB budget. Anthropic performs only this syntax/complexity
+preflight — no strictify, no argv ceiling (the old 64 KiB `--json-schema` limit
+is gone; large schema contracts ride the system-prompt file branch).
 
 OpenAI normalizes positional tuple schemas in supported positive schema
 positions and enforces their positional constraints. Tuples in negative,
 conditional, or otherwise non-normalizable schema positions fail with HTTP 400
 instead of being rewritten with changed semantics. References from those
 positions fail for the same reason because definitions are normalized globally.
-Anthropic positional tuple schemas fail with HTTP 400 because Claude Code cannot
-preserve positional semantics. Tuple nodes must explicitly declare
-`type: "array"`; express nullable tuples with an `anyOf` array/null branch.
+Tuple nodes must explicitly declare `type: "array"`; express nullable tuples
+with an `anyOf` array/null branch. These normalization restrictions are
+OpenAI-only: the Anthropic route injects the schema verbatim as prompt text, so
+positional tuples and arbitrary `$ref` forms pass through unchanged.
 
-Structured schemas accept only local root-relative JSON Pointer `$ref` values
-targeting the document root or a chain of `$defs`/`definitions` entry roots.
-References into properties, tuple internals, conditionals, or literal values
-fail with HTTP 400 because normalization can move or rewrite those targets.
-Resource IDs, anchors, external refs, dynamic refs, and recursive refs are also
+On OpenAI, structured schemas accept only local root-relative JSON Pointer
+`$ref` values targeting the document root or a chain of `$defs`/`definitions`
+entry roots. References into properties, tuple internals, conditionals, or
+literal values fail with HTTP 400 because normalization can move or rewrite
+those targets. Resource IDs, anchors, external refs, dynamic refs, and recursive refs are also
 rejected.
 
 When tools are present, qgrid sends tool definitions to the server as `tools`; it does not send them to OpenAI or Anthropic as native provider tools. The server converts them into a strict structured-output schema and maps the model's structured result back into AI SDK `tool-call` content.

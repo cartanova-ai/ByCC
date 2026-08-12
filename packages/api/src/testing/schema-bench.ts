@@ -15,12 +15,119 @@
 export type BenchMode = "generate" | "stream";
 
 export interface BenchClassifyOptions {
-  /** 최상위에 반드시 있어야 하는 키 (schema fixture 의 required) */
+  /**
+   * fixture 의 전체 JSON Schema. 지정하면 validateAgainstSchema 로 **전체 트리**를
+   * 검증한다 — top-level 키 존재만 보면 `{"scenes":[{},{},{}]}` 같은 속 빈 응답이
+   * 통과한다(SON-495 교훈: 상위 키 판정은 쓰레기를 통과시킨다).
+   */
+  schema?: unknown;
+  /** 최상위에 반드시 있어야 하는 키 (schema 미지정 시의 최소 검증) */
   requiredTopLevelKeys?: string[];
   /** 허용되는 최상위 키 전체 — 래퍼 키 판정에 사용 */
   allowedTopLevelKeys?: string[];
   /** fixture 별 추가 계약 검증. 실패 사유 문자열을 반환하면 contract fail. */
   validate?: (parsed: unknown, rawText: string) => string | undefined;
+}
+
+/**
+ * 미니 JSON Schema 검증기 — 벤치 fixture(deti 실물 포함)가 실제로 쓰는 keyword 를
+ * 전부 지원한다: type/enum/const/required/properties/additionalProperties/items/
+ * minItems/maxItems/minLength/maxLength/anyOf/oneOf. 위반 경로 목록을 반환한다.
+ * 여기 없는 keyword 는 무시된다(검증 누락은 있어도 오탐은 없다).
+ */
+export function validateAgainstSchema(node: unknown, schema: unknown, path = "$"): string[] {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return [];
+  const sch = schema as Record<string, unknown>;
+  const errors: string[] = [];
+
+  const branches = (kw: "anyOf" | "oneOf") =>
+    Array.isArray(sch[kw]) ? (sch[kw] as unknown[]) : undefined;
+  for (const kw of ["anyOf", "oneOf"] as const) {
+    const list = branches(kw);
+    if (list && !list.some((b) => validateAgainstSchema(node, b, path).length === 0)) {
+      errors.push(`${path}: no ${kw} branch matched`);
+    }
+  }
+
+  const type = sch.type;
+  if (type !== undefined) {
+    const types = Array.isArray(type) ? type : [type];
+    const matches = types.some(
+      (t) =>
+        (t === "object" && node !== null && typeof node === "object" && !Array.isArray(node)) ||
+        (t === "array" && Array.isArray(node)) ||
+        (t === "string" && typeof node === "string") ||
+        (t === "number" && typeof node === "number") ||
+        (t === "integer" && typeof node === "number" && Number.isInteger(node)) ||
+        (t === "boolean" && typeof node === "boolean") ||
+        (t === "null" && node === null),
+    );
+    if (!matches) {
+      errors.push(`${path}: expected type ${JSON.stringify(type)}`);
+      return errors; // 타입이 틀리면 하위 검증은 무의미
+    }
+  }
+
+  if (Array.isArray(sch.enum) && !sch.enum.some((v) => deepEqual(v, node))) {
+    errors.push(`${path}: enum violation`);
+  }
+  if ("const" in sch && !deepEqual(sch.const, node)) {
+    errors.push(`${path}: const violation`);
+  }
+
+  if (typeof node === "string") {
+    if (typeof sch.minLength === "number" && node.length < sch.minLength) {
+      errors.push(`${path}: shorter than minLength ${sch.minLength}`);
+    }
+    if (typeof sch.maxLength === "number" && node.length > sch.maxLength) {
+      errors.push(`${path}: longer than maxLength ${sch.maxLength}`);
+    }
+  }
+
+  if (Array.isArray(node)) {
+    if (typeof sch.minItems === "number" && node.length < sch.minItems) {
+      errors.push(`${path}: fewer than minItems ${sch.minItems}`);
+    }
+    if (typeof sch.maxItems === "number" && node.length > sch.maxItems) {
+      errors.push(`${path}: more than maxItems ${sch.maxItems}`);
+    }
+    if (sch.items && typeof sch.items === "object" && !Array.isArray(sch.items)) {
+      node.forEach((item, i) => {
+        errors.push(...validateAgainstSchema(item, sch.items, `${path}[${i}]`));
+      });
+    }
+  }
+
+  if (node !== null && typeof node === "object" && !Array.isArray(node)) {
+    const record = node as Record<string, unknown>;
+    const properties =
+      sch.properties && typeof sch.properties === "object" && !Array.isArray(sch.properties)
+        ? (sch.properties as Record<string, unknown>)
+        : {};
+    if (Array.isArray(sch.required)) {
+      for (const key of sch.required) {
+        if (typeof key === "string" && !Object.hasOwn(record, key)) {
+          errors.push(`${path}.${key}: missing required`);
+        }
+      }
+    }
+    for (const [key, value] of Object.entries(record)) {
+      if (Object.hasOwn(properties, key)) {
+        errors.push(...validateAgainstSchema(value, properties[key], `${path}.${key}`));
+      } else if (sch.additionalProperties === false) {
+        errors.push(`${path}.${key}: additional property`);
+      }
+    }
+  }
+
+  return errors;
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (typeof a !== "object") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export interface TopLevelViolations {
@@ -81,6 +188,12 @@ export function classifyBenchText(
     if (record === undefined) {
       contract = "fail";
       contractDetail = "top-level is not an object";
+    } else if (options.schema !== undefined) {
+      const violations = validateAgainstSchema(parsed, options.schema);
+      if (violations.length > 0) {
+        contract = "fail";
+        contractDetail = `${violations.length} schema violations: ${violations.slice(0, 5).join("; ")}`;
+      }
     } else {
       const missing = (options.requiredTopLevelKeys ?? []).filter(
         (key) => !Object.hasOwn(record, key),
@@ -88,12 +201,13 @@ export function classifyBenchText(
       if (missing.length > 0) {
         contract = "fail";
         contractDetail = `missing required keys: ${missing.join(", ")}`;
-      } else if (options.validate) {
-        const reason = options.validate(parsed, text);
-        if (reason !== undefined) {
-          contract = "fail";
-          contractDetail = reason;
-        }
+      }
+    }
+    if (contract === "ok" && options.validate) {
+      const reason = options.validate(parsed, text);
+      if (reason !== undefined) {
+        contract = "fail";
+        contractDetail = reason;
       }
     }
   }
@@ -105,6 +219,12 @@ export function classifyBenchText(
 
 export interface BenchRecord {
   fixture: string;
+  /**
+   * fixture 내용(prompt·schema·tools)의 지문. checkpoint 동일성에 포함된다 —
+   * 이름만으로 식별하면 fixture 를 고친 뒤 재실행할 때 옛 결과가 현재 데이터로
+   * 둔갑한다(pending=0). 지문이 다르면 다른 조합으로 취급돼 재발사된다.
+   */
+  fixtureHash?: string;
   model: string;
   mode: BenchMode;
   iteration: number;
@@ -118,10 +238,24 @@ export interface BenchRecord {
   costUsd?: number;
 }
 
+/** fixture 내용 지문 — djb2 (의존성 없이 충분: 충돌해 봐야 옛 레코드 하나가 스킵될 뿐). */
+export function fingerprintFixture(content: {
+  prompt: string;
+  jsonSchema?: string;
+  tools?: unknown;
+}): string {
+  const text = `${content.prompt} ${content.jsonSchema ?? ""} ${JSON.stringify(content.tools ?? null)}`;
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 export function checkpointKey(
-  record: Pick<BenchRecord, "fixture" | "model" | "mode" | "iteration">,
+  record: Pick<BenchRecord, "fixture" | "fixtureHash" | "model" | "mode" | "iteration">,
 ): string {
-  return `${record.model}|${record.fixture}|${record.mode}|${record.iteration}`;
+  return `${record.model}|${record.fixture}|${record.fixtureHash ?? "-"}|${record.mode}|${record.iteration}`;
 }
 
 /** JSONL checkpoint 파일 파싱. 깨진 줄(중단 시 부분 기록)은 건너뛴다. */

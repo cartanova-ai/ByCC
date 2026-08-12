@@ -16,9 +16,9 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 | `sessionKey` | AI SDK stores and replays `threadCoord` for thread reuse | AI SDK intentionally disables storage/replay |
 | Multi-turn | Reuse sends delta input to existing Codex thread; cold fallback injects full history | Fresh spawn receives flattened full history through stream-json |
 | Cache key | Codex conversation/thread id is prompt-cache affinity | Anthropic prefix cache via Claude Code; fresh spawn still can cache stable prefixes |
-| Built-in tools | Codex tools/apps/plugins/skills disabled by worker config | Claude tools disabled via `--tools ""`; `StructuredOutput` allowed only for schema |
-| AI SDK tools | Emulated via qgrid structured output schema, then mapped to AI SDK `tool-call` content | Same emulation path; not native Claude Code tools |
-| Structured output | Codex `outputSchema` passed to `turn/start`; schema changes can affect prefix cache | Claude `--json-schema` through `StructuredOutput` tool; strict schemas required |
+| Built-in tools | Codex tools/apps/plugins/skills disabled by worker config | Claude tools disabled via `--tools ""` on every call |
+| AI SDK tools | Emulated via qgrid structured output schema, then mapped to AI SDK `tool-call` content | Emulated via envelope contract rendered as prompt text (SON-532); reply parsed by `parseEnvelope`; not native Claude Code tools |
+| Structured output | Codex `outputSchema` passed to `turn/start` (strictified, constrained decoding); schema changes can affect prefix cache | Schema delivered as prompt text appended to the system prompt (no `--json-schema`, no strictify); server strips fences; validation is the consumer's |
 | Usage accounting | Codex usage already reports `inputTokens` including cached input | Native Anthropic categories are mutually exclusive; qgrid sums them into total input |
 | Cost source | qgrid model price fallback | Prefer Claude Code `total_cost_usd`, else qgrid price fallback |
 | Settings isolation | Per-worker `CODEX_HOME` and config.toml | Shared project cwd plus per-token `CLAUDE_CONFIG_DIR` |
