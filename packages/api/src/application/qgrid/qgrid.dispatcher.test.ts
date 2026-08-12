@@ -458,6 +458,93 @@ describe("QgridDispatcherClass", () => {
     ).rejects.toThrow("exceeds depth limit");
   });
 
+  // SON-532: 계약은 --json-schema 대신 system 말미에 텍스트로 주입된다.
+  it.each(["query", "queryStream"] as const)(
+    "Anthropic %s 는 스키마 계약을 system prompt 말미에 합성해 전달한다",
+    async (method) => {
+      const dispatcher = new QgridDispatcherClass();
+      let request: GenerateRequest | undefined;
+
+      if (method === "query") {
+        const generate = vi.fn(async (req: GenerateRequest) => {
+          request = req;
+          return providerResult();
+        });
+        dispatcher.anthropicDispatcher = { generate } as never;
+        await dispatcher.query({
+          prompt: "hi",
+          system: "You are helpful.",
+          model: "anthropic/claude-sonnet-4-6",
+          jsonSchema: JSON.stringify({ type: "object", properties: { a: { type: "string" } } }),
+        });
+      } else {
+        const generateStream = vi.fn(async (req: GenerateRequest, cb: GenerateStreamCallbacks) => {
+          request = req;
+          cb.onComplete(providerResult());
+        });
+        dispatcher.anthropicDispatcher = { generateStream } as never;
+        await dispatcher.queryStream(
+          {
+            prompt: "hi",
+            system: "You are helpful.",
+            model: "anthropic/claude-sonnet-4-6",
+            jsonSchema: JSON.stringify({ type: "object", properties: { a: { type: "string" } } }),
+          },
+          { onDelta: vi.fn(), onComplete: vi.fn(), onError: vi.fn() },
+        );
+      }
+
+      // 원래 system 이 앞, 계약이 말미 — 스키마 원문이 그대로 들어간다.
+      expect(request?.systemPrompt).toMatch(/^You are helpful\.\n\n## Output Format/);
+      expect(request?.systemPrompt).toContain('"a":{"type":"string"}');
+    },
+  );
+
+  it("Anthropic tools 요청은 envelope 계약을 system 에 합성한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (req: GenerateRequest) => {
+      void req;
+      return providerResult({
+        text: '{"result":{"action":"answer","answer":{"payload":"ok"},"toolCalls":null}}',
+      });
+    });
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    await dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6", ...toolsAndSchema });
+
+    const request = generate.mock.calls[0]![0];
+    expect(request.systemPrompt).toContain("## Client Tool Protocol");
+    expect(request.systemPrompt).toContain('{"result": ...}');
+    expect(request.systemPrompt).toContain("- lookup");
+  });
+
+  it("스키마 없는 Anthropic 요청은 system 을 그대로 둔다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async () => providerResult());
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    await dispatcher.query({ prompt: "hi", system: "plain", model: "anthropic/claude-sonnet-4-6" });
+    expect(generate.mock.calls[0]![0].systemPrompt).toBe("plain");
+
+    await dispatcher.query({ prompt: "hi", model: "anthropic/claude-sonnet-4-6" });
+    expect(generate.mock.calls[1]![0].systemPrompt).toBeUndefined();
+  });
+
+  it("OpenAI 요청의 system 에는 계약을 합성하지 않는다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async () => providerResult({ text: '{"a":"ok"}' }));
+    dispatcher.openaiDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "hi",
+      system: "plain",
+      model: "openai/gpt-5.5",
+      jsonSchema: JSON.stringify({ type: "object", properties: { a: { type: "string" } } }),
+    });
+
+    expect(generate.mock.calls[0]![0].systemPrompt).toBe("plain");
+  });
+
   it("Anthropic route 는 strict 전용 argv 64KiB 제한을 적용하지 않는다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi.fn(async (): Promise<GenerateResult> => providerResult());

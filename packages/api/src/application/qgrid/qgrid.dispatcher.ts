@@ -34,6 +34,7 @@ import {
   type QueryOutput,
   type TokenStats,
 } from "./qgrid.types";
+import { composeSystemWithSchemaContract } from "./schema-prompt";
 import { type TokenSubscriber } from "./token-subscriber";
 import { applyToolCallEmulation } from "./tool-emulation";
 import { buildToolCallSchema } from "./tool-emulation-schema";
@@ -149,7 +150,8 @@ export class QgridDispatcherClass {
       const result = await this.anthropicDispatcher.generate({
         // AnthropicDispatcher 내부에서 알아서 provider prefix 를 canonical model 로 정규화함
         model: input.model,
-        systemPrompt: input.system,
+        // 스키마/envelope 계약은 --json-schema 대신 system 말미의 텍스트로 안내한다(SON-532)
+        systemPrompt: composeSystemWithSchemaContract(input.system, input),
         outputSchema,
         effort: input.effort,
         timeoutMs: input.timeout,
@@ -224,7 +226,8 @@ export class QgridDispatcherClass {
       await this.anthropicDispatcher.generateStream(
         {
           model: input.model,
-          systemPrompt: input.system,
+          // 스키마/envelope 계약은 --json-schema 대신 system 말미의 텍스트로 안내한다(SON-532)
+          systemPrompt: composeSystemWithSchemaContract(input.system, input),
           outputSchema,
           effort: input.effort,
           coldInput: decision.coldInput,

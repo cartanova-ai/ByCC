@@ -17,6 +17,20 @@
  */
 import { type QgridTool, type QueryInput } from "./qgrid.types";
 
+/**
+ * system prompt 말미에 계약을 덧붙인다. anthropic 은 cold-only(매 턴 CC 재스폰 + system
+ * 재전송)라 멀티턴에도 계약이 매 턴 일관되게 주입된다. system 이 argv 64KB 를 넘으면
+ * claude-session 의 --system-prompt-file 분기가 흡수한다.
+ */
+export function composeSystemWithSchemaContract(
+  system: string | undefined,
+  input: Pick<QueryInput, "tools" | "jsonSchema">,
+): string | undefined {
+  const contract = renderSchemaContractPrompt(input);
+  if (contract === undefined) return system;
+  return system ? `${system}\n\n${contract}` : contract;
+}
+
 /** 요청에 스키마/tools 가 없으면 undefined — 계약 주입 없이 평범한 텍스트 요청이다. */
 export function renderSchemaContractPrompt(
   input: Pick<QueryInput, "tools" | "jsonSchema">,
