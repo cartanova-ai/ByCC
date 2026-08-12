@@ -12,15 +12,20 @@ import {
   getRefreshToken,
 } from "../../utils/providers/common/credentials";
 import { CallerSchemaValidationError } from "../../utils/providers/common/schema-validation";
+import {
+  buildOpenAIAuthUrl,
+  exchangeOpenAICode,
+  generateOpenAIPKCE,
+} from "../../utils/providers/openai/openai-oauth";
 import { MICRO_USD, RequestLogModel } from "../request-log/request-log.model";
 import { type RequestLogListParams } from "../request-log/request-log.types";
 import { type TokenSubsetA } from "../sonamu.generated";
 import { TokenModel, type TokenUpdateFields } from "../token/token.model";
 import { TokenCredentials } from "../token/token.types";
 import {
+  CONSOLE_CALLBACK_URL,
   type AnthropicUsageRaw,
   buildAuthUrl,
-  CONSOLE_CALLBACK_URL,
   exchangeCodeForTokens,
   fetchUsage,
   generatePKCE,
@@ -53,7 +58,12 @@ import { ToolSchemaCompositionError } from "./tool-emulation-schema";
 
 const pendingStreams = new Map<string, QueryInput>();
 
-type PendingOAuth = { codeVerifier: string; name: string; redirectUri: string };
+type PendingOAuth = {
+  codeVerifier: string;
+  name: string;
+  redirectUri: string;
+  provider: "anthropic" | "openai";
+};
 const OAUTH_STATE_PREFIX = "oauth:state:";
 const OAUTH_STATE_TTL = "5m";
 
@@ -85,50 +95,23 @@ async function deleteOAuthState(state: string): Promise<void> {
   await cache.delete({ key: `${OAUTH_STATE_PREFIX}${state}` });
 }
 
-// OAuth 접속 주소는 브라우저가 보낸 Origin(우선) 또는 Host 헤더에서 파생한다.
-// HTTP context 가 없는 직접 호출(테스트 등)은 null 을 반환한다.
-function deriveRequestBaseUrl(): string | null {
-  try {
-    const { headers, request } = Sonamu.getContext();
-    const origin = headers.origin;
-    if (typeof origin === "string" && /^https?:\/\//.test(origin)) {
-      return origin.replace(/\/+$/, "");
-    }
-    const forwardedHost = headers["x-forwarded-host"];
-    const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) ?? headers.host;
-    if (host) {
-      const forwardedProto = headers["x-forwarded-proto"];
-      const proto =
-        (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto)?.split(",")[0] ??
-        request.protocol;
-      return `${proto}://${host}`;
-    }
-  } catch {
-    // direct frame call — HTTP context 없음
-  }
-  return null;
-}
+const trustedLoopbackBase = () => `http://localhost:${process.env.PORT ?? "44900"}`;
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
-
-function isLoopbackBase(base: string): boolean {
-  try {
-    return LOOPBACK_HOSTNAMES.has(new URL(base).hostname);
-  } catch {
-    return false;
-  }
-}
-
-// Anthropic OAuth client 는 redirect_uri 허용 목록을 강제한다: 루프백(localhost)과
-// 콘솔 콜백만 허용된다. 따라서 루프백 접속은 자동 리다이렉트 플로우를,
-// 원격 접속은 콘솔 콜백 + 코드 붙여넣기 플로우(Claude Code CLI 와 동일)를 쓴다.
+// Anthropic's remote/manual flow uses its fixed console callback. Headers may select between two
+// allowlisted URIs, but never contribute authority or path bytes to either URI.
 function resolveOAuthRedirect(): { redirectUri: string; mode: "redirect" | "code" } {
-  const base = deriveRequestBaseUrl();
-  if (base && !isLoopbackBase(base)) {
-    return { redirectUri: CONSOLE_CALLBACK_URL, mode: "code" };
-  }
-  const loopbackBase = base ?? `http://localhost:${process.env.PORT ?? "44900"}`;
-  return { redirectUri: `${loopbackBase}/callback`, mode: "redirect" };
+  try {
+    const { headers } = Sonamu.getContext();
+    const origin = typeof headers.origin === "string" ? headers.origin : undefined;
+    const forwarded = headers["x-forwarded-host"];
+    const host = origin
+      ? new URL(origin).hostname
+      : String(forwarded ?? headers.host ?? "localhost");
+    if (!new Set(["localhost", "127.0.0.1", "::1", "[::1]"]).has(host)) {
+      return { redirectUri: CONSOLE_CALLBACK_URL, mode: "code" };
+    }
+  } catch {}
+  return { redirectUri: `${trustedLoopbackBase()}/callback`, mode: "redirect" };
 }
 
 function rejectImageGenerationStream(args: QueryInput): void {
@@ -283,23 +266,14 @@ class QgridFrameClass extends BaseFrameClass {
 
     const ctx = Sonamu.getContext();
     const sse = ctx.createSSE(StreamEvents);
-    let threadId: string | undefined;
-    let turnId: string | undefined;
     let streamResult: QueryOutput | undefined;
     let streamError: Error | undefined;
     let clientClosed = false;
     const abortController = new AbortController();
 
-    const interruptOpenAI = () => {
-      if (threadId && turnId) {
-        QgridDispatcher.openaiDispatcher?.interruptWorkerTurn(threadId, turnId).catch(() => {});
-      }
-    };
-
     sse.onClose(() => {
       clientClosed = true;
       abortController.abort();
-      interruptOpenAI();
     });
 
     let runInfo: { requestLogId: number; stepIndex: number } | undefined;
@@ -321,18 +295,6 @@ class QgridFrameClass extends BaseFrameClass {
         {
           onDelta: (text) => {
             if (!clientClosed && !sse.closed) sse.publish("delta", { text });
-          },
-          onThreadId: (id) => {
-            threadId = id;
-            if ((clientClosed || sse.closed) && turnId) {
-              interruptOpenAI();
-            }
-          },
-          onTurnId: (id) => {
-            turnId = id;
-            if ((clientClosed || sse.closed) && threadId) {
-              interruptOpenAI();
-            }
           },
           onComplete: (result) => {
             streamResult = result;
@@ -577,7 +539,7 @@ class QgridFrameClass extends BaseFrameClass {
     const { redirectUri, mode } = resolveOAuthRedirect();
     const authUrl = buildAuthUrl(codeChallenge, state, redirectUri);
 
-    await setOAuthState(state, { codeVerifier, name, redirectUri });
+    await setOAuthState(state, { codeVerifier, name, redirectUri, provider: "anthropic" });
 
     return { authUrl, mode };
   }
@@ -602,6 +564,10 @@ class QgridFrameClass extends BaseFrameClass {
       );
     }
     await deleteOAuthState(state);
+
+    if (pending.provider !== "anthropic") {
+      throw new BadRequestException("login session is not for Anthropic" as LocalizedString);
+    }
 
     await this.completeAnthropicLogin(code, state, pending);
     return { added: true, name: pending.name };
@@ -643,40 +609,34 @@ class QgridFrameClass extends BaseFrameClass {
     await deleteOAuthState(state);
 
     try {
-      await this.completeAnthropicLogin(code, state, pending);
+      if (pending.provider === "openai") {
+        const creds = await exchangeOpenAICode(code, pending.codeVerifier, pending.redirectUri);
+        await TokenModel.replaceByAccount("openai", creds.accountId, {
+          provider: "openai",
+          credentials: creds,
+          name: pending.name,
+        });
+        logger.info(`OpenAI token saved for ${pending.name}`);
+        notifyTokenAdded(pending.name, "openai");
+      } else {
+        await this.completeAnthropicLogin(code, state, pending);
+      }
       return reply.redirect(`/?oauth=success&name=${encodeURIComponent(pending.name)}`);
-    } catch (e) {
-      return reply.redirect(`/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`);
+    } catch {
+      logger.warn("oauth callback failed", {
+        provider: pending.provider,
+        reason: "exchange_failed",
+      });
+      return reply.redirect("/?oauth=error&reason=exchange_failed");
     }
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
-    if (!QgridDispatcher.openaiDispatcher) throw new Error("OpenAI dispatcher not initialized");
-    const { authUrl } = await QgridDispatcher.openaiDispatcher.startBrowserLogin(name);
-
-    // fire-and-forget: codex login 완료 대기 → 토큰 저장
-    QgridDispatcher.openaiDispatcher
-      .completeBrowserLogin()
-      .then(async (creds) => {
-        await TokenModel.replaceByAccount("openai", creds.accountId, {
-          provider: "openai",
-          credentials: {
-            accessToken: creds.accessToken,
-            refreshToken: creds.refreshToken,
-            idToken: creds.idToken,
-            accessTokenExpiresAt: Date.now() + 10 * 24 * 3600 * 1000,
-            accountId: creds.accountId,
-          },
-          name,
-        });
-        logger.info(`OpenAI token saved for ${name}`);
-        notifyTokenAdded(name, "openai");
-      })
-      .catch((e) => {
-        logger.warn(`OpenAI browser login failed: ${(e as Error).message}`);
-      });
-
+    const { codeVerifier, codeChallenge, state } = generateOpenAIPKCE();
+    const redirectUri = `${trustedLoopbackBase()}/auth/callback`;
+    const authUrl = buildOpenAIAuthUrl(codeChallenge, state, redirectUri);
+    await setOAuthState(state, { codeVerifier, name, redirectUri, provider: "openai" });
     return { authUrl, mode: "redirect" };
   }
 

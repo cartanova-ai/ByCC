@@ -4,11 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONSOLE_CALLBACK_URL } from "./oauth";
 import { QgridFrame } from "./qgrid.frame";
 
-const { exchangeMock, tokenSaveMock, tokenDelMock, findByAccountMock } = vi.hoisted(() => ({
+const { exchangeMock, openAIExchangeMock, tokenSaveMock, tokenDelMock, findByAccountMock, notifyMock } =
+  vi.hoisted(() => ({
   exchangeMock: vi.fn(),
+  openAIExchangeMock: vi.fn(),
   tokenSaveMock: vi.fn(async () => [1]),
   tokenDelMock: vi.fn(async () => 1),
   findByAccountMock: vi.fn(async () => []),
+  notifyMock: vi.fn(),
 }));
 
 // oauthStart 는 PKCE 상태를 cache 에 저장한다 — Map 스텁으로 왕복만 지원한다.
@@ -30,6 +33,11 @@ vi.mock("sonamu/cache", () => {
 vi.mock("./oauth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./oauth")>()),
   exchangeCodeForTokens: exchangeMock,
+}));
+
+vi.mock("../../utils/providers/openai/openai-oauth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/providers/openai/openai-oauth")>()),
+  exchangeOpenAICode: openAIExchangeMock,
 }));
 
 vi.mock("../token/token.model", () => ({
@@ -56,7 +64,7 @@ vi.mock("../token/token.model", () => ({
 // isolate:false 워커의 token-death 전용 테스트로 새지 않게 실제 모듈 로드를 막는다.
 vi.mock("./token-death", () => ({
   deactivateAuthDeadToken: vi.fn(),
-  notifyTokenAdded: vi.fn(),
+  notifyTokenAdded: notifyMock,
 }));
 
 function authUrlParam(authUrl: string, key: string): string | null {
@@ -166,5 +174,79 @@ describe("QgridFrame.oauthComplete code flow", () => {
       /not found or expired/,
     );
     expect(exchangeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("QgridFrame direct OpenAI OAuth", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    openAIExchangeMock.mockReset();
+    tokenSaveMock.mockClear();
+    tokenDelMock.mockClear();
+    findByAccountMock.mockClear().mockResolvedValue([]);
+    notifyMock.mockClear();
+  });
+
+  it("uses the pinned loopback callback despite hostile forwarding headers", async () => {
+    mockHttpContext({ origin: "https://qgrid.example.com" });
+
+    const result = await QgridFrame.oauthStartOpenAI("openai-token");
+    const url = new URL(result.authUrl);
+    expect(result.mode).toBe("redirect");
+    expect(url.origin + url.pathname).toBe("https://auth.openai.com/oauth/authorize");
+    expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:44900/auth/callback");
+    expect(url.searchParams.get("state")).toBeTruthy();
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("exchanges an OpenAI callback, replaces the duplicate account, and notifies", async () => {
+    mockHttpContext({ origin: "https://qgrid.example.com" });
+    const { authUrl } = await QgridFrame.oauthStartOpenAI("openai-token");
+    const state = authUrlParam(authUrl, "state")!;
+    findByAccountMock.mockResolvedValueOnce([{ id: 9, active: true }] as never);
+    openAIExchangeMock.mockResolvedValueOnce({
+      accessToken: "access",
+      refreshToken: "refresh",
+      idToken: "id",
+      accessTokenExpiresAt: 123,
+      idTokenExpiresAt: 456,
+      accountId: "account-1",
+      planType: "pro",
+    });
+    const reply = { redirect: vi.fn() };
+
+    await QgridFrame.handleOAuthCallback("the-code", state, reply as never);
+
+    expect(openAIExchangeMock).toHaveBeenCalledWith(
+      "the-code",
+      expect.any(String),
+      "http://localhost:44900/auth/callback",
+    );
+    expect(tokenDelMock).toHaveBeenCalledOnce();
+    expect(tokenSaveMock).toHaveBeenCalledWith([
+      {
+        provider: "openai",
+        credentials: expect.objectContaining({ accountId: "account-1", planType: "pro" }),
+        name: "openai-token",
+      },
+    ]);
+    expect(notifyMock).toHaveBeenCalledWith("openai-token", "openai");
+    expect(reply.redirect).toHaveBeenCalledWith("/?oauth=success&name=openai-token");
+  });
+
+  it("consumes OpenAI state before a failed exchange", async () => {
+    mockHttpContext({ origin: "https://qgrid.example.com" });
+    const { authUrl } = await QgridFrame.oauthStartOpenAI("openai-token");
+    const state = authUrlParam(authUrl, "state")!;
+    openAIExchangeMock.mockRejectedValueOnce(new Error("exchange rejected"));
+    const firstReply = { redirect: vi.fn() };
+    const secondReply = { redirect: vi.fn() };
+
+    await QgridFrame.handleOAuthCallback("bad-code", state, firstReply as never);
+    await QgridFrame.handleOAuthCallback("bad-code", state, secondReply as never);
+
+    expect(firstReply.redirect).toHaveBeenCalledWith("/?oauth=error&reason=exchange_failed");
+    expect(secondReply.redirect).toHaveBeenCalledWith("/?oauth=error&reason=invalid_state");
+    expect(openAIExchangeMock).toHaveBeenCalledOnce();
   });
 });
