@@ -22,23 +22,29 @@ const {
   finishRunWithErrorMock,
   finishRunAbortedMock,
   getRateLimitsByTokenIdMock,
-} = vi.hoisted(() => ({
-  findOneMock: vi.fn(),
-  findManyMock: vi.fn(),
-  saveMock: vi.fn(),
-  updateFieldsMock: vi.fn(),
-  requestLogSaveMock: vi.fn(),
-  requestLogCreateRunMock: vi.fn(),
-  appendStepMock: vi.fn(),
-  dispatcherQueryMock: vi.fn(),
-  dispatcherQueryStreamMock: vi.fn(),
-  beforeQueryMock: vi.fn(),
-  afterQueryMock: vi.fn(),
-  assertNativeRunAdmissionMock: vi.fn(),
-  finishRunWithErrorMock: vi.fn(),
-  finishRunAbortedMock: vi.fn(),
-  getRateLimitsByTokenIdMock: vi.fn(),
-}));
+} = vi.hoisted(() => {
+  // isolate:false 공유 레지스트리 방어: 같은 fork 에서 앞선 파일이 request-log/token/
+  // run-lifecycle 실모듈을 캐시해 두면 아래 vi.mock 들이 조용히 무시된다(실 DB 호출로
+  // 폭발). import 보다 먼저 레지스트리를 비워 이 파일은 항상 mock 그래프로 시작한다.
+  vi.resetModules();
+  return {
+    findOneMock: vi.fn(),
+    findManyMock: vi.fn(),
+    saveMock: vi.fn(),
+    updateFieldsMock: vi.fn(),
+    requestLogSaveMock: vi.fn(),
+    requestLogCreateRunMock: vi.fn(),
+    appendStepMock: vi.fn(),
+    dispatcherQueryMock: vi.fn(),
+    dispatcherQueryStreamMock: vi.fn(),
+    beforeQueryMock: vi.fn(),
+    afterQueryMock: vi.fn(),
+    assertNativeRunAdmissionMock: vi.fn(),
+    finishRunWithErrorMock: vi.fn(),
+    finishRunAbortedMock: vi.fn(),
+    getRateLimitsByTokenIdMock: vi.fn(),
+  };
+});
 
 vi.mock("../request-log/request-log.model", () => ({
   MICRO_USD: 1_000_000,
