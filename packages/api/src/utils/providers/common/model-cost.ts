@@ -4,7 +4,7 @@
  * claude code 와 동일 패턴: 클라이언트에서 가격 테이블로 직접 계산.
  * 가격 단위: USD per 1M tokens.
  *
- * OpenAI 모델 목록: codex app-server model/list RPC 로 실측 (2026-05-18)
+ * OpenAI 모델 목록은 OpenAI 모델 문서와 현재 지원 목록을 기준으로 관리한다.
  *
  * @see https://platform.openai.com/docs/pricing
  * @see https://platform.claude.com/docs/en/about-claude/pricing
@@ -30,7 +30,7 @@ export interface ModelCosts {
   };
 }
 
-// ── OpenAI — codex app-server 에서 사용 가능한 모델 ─────────────────
+// ── OpenAI ─────────────────────────────────────────────────────────
 //
 // 가격 출처: https://developers.openai.com/api/docs/models (2026-07-18 확인)
 // 신모델 출시마다 단가가 바뀌므로(5.2→5.4→5.5) 모델 추가 시 반드시 공식 페이지 재확인해야함
@@ -46,13 +46,8 @@ const LONG_CONTEXT_272K: NonNullable<ModelCosts["longContext"]> = {
 };
 
 const OPENAI_COSTS: Record<string, ModelCosts> = {
-  // GPT-5.6 Sol, Terra, Luna. OpenAI native API 는 1.05M context / 128K max output 이지만,
-  // qgrid 의 codex app-server 경로는 context_window=372K (max_context_window 도 372K,
-  // effective 95% ≈ 353K) 로 제한된다 — codex 0.144.1 models_cache 실측 (2026-07-10).
-  // cache write 는 uncached input 의 1.25x 로 과금되지만, codex app-server usage
-  // (TokenUsageBreakdown) 에 cache write 토큰 필드가 없어 현재 OpenAI 실행 경로의
-  // cost 계산에서는 항상 0 으로 잡힌다 → 그만큼 과소집계. 단가는 외부 logger/manual
-  // usage 입력과 향후 프로토콜 확장을 위해 유지한다.
+  // GPT-5.6 Sol, Terra, Luna. cache write 단가는 외부 logger/manual usage 입력을 위해
+  // 유지한다. 현재 OpenAI 응답 usage 에 cache write 토큰 필드가 없으면 비용은 0으로 계산된다.
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-sol
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-terra
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-luna

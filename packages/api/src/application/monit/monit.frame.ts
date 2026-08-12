@@ -6,7 +6,7 @@
  */
 import { api, BaseFrameClass, DB } from "sonamu";
 
-import { resolveOpenAIWorkerPoolConfig } from "../../utils/providers/openai/openai-worker-pool-config";
+import { resolveOpenAIPermitConfig } from "../../utils/providers/openai/openai-permit-config";
 import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
 import { monitLogBuffer } from "./log-buffer";
 import { type MonitLogChunk, type MonitServerInfo, type MonitVitals } from "./monit.types";
@@ -31,7 +31,7 @@ class MonitFrameClass extends BaseFrameClass {
   // 프로세스 정적 정보 — 폴링 불필요, 페이지당 1회 조회.
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async monitInfo(): Promise<MonitServerInfo> {
-    const pool = resolveOpenAIWorkerPoolConfig();
+    const permits = resolveOpenAIPermitConfig();
     const host = process.env.HOST ?? "localhost";
     const port = process.env.PORT ?? "44900";
     const conn = activeDbConnection();
@@ -40,9 +40,9 @@ class MonitFrameClass extends BaseFrameClass {
       dbHost: conn.host ?? "localhost",
       dbName: conn.database ?? "qgrid",
       openai: {
-        minWorkersPerToken: pool.minWorkersPerToken,
-        maxWorkersPerToken: pool.maxWorkersPerToken,
-        autoscale: pool.autoscale,
+        minWorkersPerToken: permits.permitsPerToken,
+        maxWorkersPerToken: permits.permitsPerToken,
+        autoscale: false,
       },
     };
   }
