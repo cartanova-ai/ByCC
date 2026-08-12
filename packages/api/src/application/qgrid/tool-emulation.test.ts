@@ -161,6 +161,29 @@ describe("applyToolCallEmulation envelope validation", () => {
     expect(() => applyEnvelope(result, "text")).toThrowError(ToolCallEmulationError);
   });
 
+  // 렌더 문구와 parseEnvelope 계약의 드리프트 방지(SON-532): schema-prompt 안내문에 실린
+  // 예시가 실제 공개 진입점을 통과해야 한다. 예시가 실패하면 안내문이 틀린 것이다.
+  // (schema-prompt.test.ts 가 아닌 여기 두는 이유: 이 파일은 이미 실모듈을 로드한다 —
+  // isolate:false 공유 레지스트리에서 mock 파일 오염을 피한다.)
+  it("schema-prompt 예시 ↔ envelope 교차 계약: tool_call 예시가 해석된다", async () => {
+    const { buildEnvelopeExamples } = await import("./schema-prompt");
+    const { toolCallExample, textAnswerExample } = buildEnvelopeExamples(tools);
+
+    for (const answerKind of ["text", "json"] as const) {
+      const out = applyToolCallEmulation({ ...baseResult, text: toolCallExample }, tools, {
+        answerKind,
+      });
+      expect(out.finishReason).toBe("tool-calls");
+      expect(out.content[0]).toMatchObject({ type: "tool-call", toolName: "lookup" });
+    }
+
+    const answered = applyToolCallEmulation({ ...baseResult, text: textAnswerExample }, tools, {
+      answerKind: "text",
+    });
+    expect(answered.finishReason).toBe("stop");
+    expect(answered.text).toBe("your final answer");
+  });
+
   // SON-532: anthropic 은 envelope 을 프롬프트로만 안내하므로 프로즈 응답이 "예상 가능한
   // 모델 실패"가 됐다. 그래도 구제하지 않는다 — 정직한 실패가 소비자 재시도를 안내한다.
   it("rejects a prose response with a message that guides the caller", () => {

@@ -6,7 +6,6 @@ import {
   renderSchemaContractPrompt,
   renderToolEnvelopePrompt,
 } from "./schema-prompt";
-import { applyToolCallEmulation } from "./tool-emulation";
 
 const TOOLS = [
   {
@@ -30,22 +29,6 @@ const USER_SCHEMA = JSON.stringify({
   },
   required: ["title"],
 });
-
-function emulationResult(text: string) {
-  return {
-    text,
-    usage: {
-      input_tokens: 1,
-      output_tokens: 1,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    },
-    durationMs: 1,
-    ttftMs: 0,
-    costUsd: 0,
-    costSource: "pricing_table" as const,
-  };
-}
 
 describe("renderOutputSchemaPrompt", () => {
   it("스키마 원문을 재작성 없이 포함하고 raw JSON 지시를 담는다", () => {
@@ -109,31 +92,10 @@ describe("renderSchemaContractPrompt", () => {
   });
 });
 
-// 렌더 문구와 parseEnvelope 계약의 드리프트 방지: 안내문에 실린 예시가 실제 공개
-// 진입점(applyToolCallEmulation)을 통과해야 한다. 예시가 실패하면 안내문이 틀린 것이다.
-describe("envelope 예시 ↔ parseEnvelope 교차 계약", () => {
-  it("tool_call 예시는 text/json 양쪽 answerKind 에서 toolCall 로 해석된다", () => {
-    const { toolCallExample } = buildEnvelopeExamples(TOOLS);
-
-    for (const answerKind of ["text", "json"] as const) {
-      const output = applyToolCallEmulation(emulationResult(toolCallExample), TOOLS, {
-        answerKind,
-      });
-      expect(output.finishReason).toBe("tool-calls");
-      expect(output.content[0]).toMatchObject({ type: "tool-call", toolName: "lookup" });
-    }
-  });
-
-  it("answer 예시(text)는 answer 로 해석된다", () => {
-    const { textAnswerExample } = buildEnvelopeExamples(TOOLS);
-
-    const output = applyToolCallEmulation(emulationResult(textAnswerExample), TOOLS, {
-      answerKind: "text",
-    });
-    expect(output.finishReason).toBe("stop");
-    expect(output.text).toBe("your final answer");
-  });
-
+// 예시 JSON 이 실제 parseEnvelope 를 통과하는 교차 계약 테스트는 tool-emulation.test.ts 에
+// 있다("schema-prompt 예시 ↔ envelope 교차 계약") — 이 파일은 렌더러만 import 해 가볍게
+// 유지한다(isolate:false 공유 레지스트리에서 실모듈 로드가 mock 파일을 오염시키는 것 방지).
+describe("envelope 예시 문자열", () => {
   it("렌더 문서에 실리는 예시 문자열이 실제로 그 문서 안에 있다", () => {
     const { toolCallExample, textAnswerExample } = buildEnvelopeExamples(TOOLS);
 
