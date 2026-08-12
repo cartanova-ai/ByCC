@@ -237,6 +237,8 @@ interface TurnArgs {
   model: string;
   jsonSchema?: string;
   tools?: BenchTool[];
+  /** AI SDK 계약: 연속턴은 전체 대화 history 를 함께 보낸다 (anthropic cold 주입) */
+  history?: string;
   runContext?: unknown;
   toolResults?: Array<{ toolCallId: string; toolName?: string; output: string }>;
 }
@@ -384,6 +386,16 @@ async function runOne(
       ...(fixture.jsonSchema ? { jsonSchema: fixture.jsonSchema } : {}),
       ...(fixture.tools ? { tools: fixture.tools } : {}),
     };
+    // AI SDK 와 동일한 history 원장 — 연속턴에서 모델이 원 질문과 자신의 tool call 을
+    // 다시 보게 한다. 이것 없이 toolResults 만 보내면 모델은 맥락 없는 tool 결과만
+    // 받아 envelope 계약을 잊는다 (실측: tools-only 연속턴 프로즈 응답).
+    const historyItems: unknown[] = [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: fixture.prompt }],
+      },
+    ];
 
     for (let turnIndex = 0; ; turnIndex += 1) {
       const r = await fire(turn);
@@ -475,11 +487,26 @@ async function runOne(
         }
       }
 
+      for (const call of calls) {
+        historyItems.push({
+          type: "function_call",
+          name: call.toolName,
+          arguments: call.input ?? "",
+          call_id: call.toolCallId ?? "",
+        });
+        historyItems.push({
+          type: "function_call_output",
+          call_id: call.toolCallId ?? "",
+          output: LOOKUP_RESULT,
+        });
+      }
+
       turn = {
         prompt: fixture.prompt,
         model,
         ...(fixture.jsonSchema ? { jsonSchema: fixture.jsonSchema } : {}),
         ...(fixture.tools ? { tools: fixture.tools } : {}),
+        history: JSON.stringify(historyItems),
         runContext: r.runContext,
         toolResults: calls.map((call) => ({
           toolCallId: call.toolCallId ?? "",
