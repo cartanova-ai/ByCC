@@ -95,9 +95,11 @@ function resolveLeadingOffset(text: string): number {
 /**
  * 아직 방출하면 안 되는 suffix 길이. 닫는 펜스 후보는 "(개행?)(백틱 1~3)(공백*)" 또는
  * 순수 trailing 공백 — stripFences 의 trim + /\n?```\s*$/ 가 지울 수 있는 모든 형태를
- * 덮는다. 미방출 구간에만 적용하므로 정규식 비용은 (보류분 + delta) 크기에 비례한다.
+ * 덮는다. 공백 클래스는 반드시 `\s`(+BOM) — trim() 은 NBSP·VT·FF·U+2028·U+2029 까지
+ * 지우므로 ASCII 만 보류하면 그 문자들이 먼저 방출돼 "방출 == strip(전체)" 불변식이
+ * 깨진다(2차 검토 #8 실측). 미방출 구간에만 적용하므로 비용은 (보류분+delta)에 비례.
  */
 function trailingHoldLength(unemitted: string): number {
-  const match = /(?:\n?`{1,3})?[ \t\r\n]*$/.exec(unemitted);
+  const match = /(?:\n?`{1,3})?[\s﻿]*$/.exec(unemitted);
   return match ? match[0].length : 0;
 }

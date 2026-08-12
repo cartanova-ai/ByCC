@@ -75,9 +75,52 @@ describe("renderToolEnvelopePrompt", () => {
     expect(rendered).not.toContain("<JSON conforming");
   });
 
+  it("생성기가 다루지 못하는 inputSchema 는 예시를 생략하고 구조 서술로 대체한다 (fail-closed)", () => {
+    const patternTool = [
+      {
+        name: "search",
+        inputSchema: {
+          type: "object",
+          properties: { query: { type: "string", pattern: "^[a-z]+$" } },
+          required: ["query"],
+        },
+      },
+    ];
+
+    // pattern 은 지원 집합 밖 — 위반 가능성이 있는 예시를 싣지 않는다
+    expect(buildEnvelopeExamples(patternTool).toolCallExample).toBeUndefined();
+    const rendered = renderToolEnvelopePrompt(patternTool);
+    expect(rendered).toContain('"toolCalls" is an array of objects');
+    expect(rendered).not.toContain('"args": "{'); // 리터럴 예시 부재
+  });
+
+  it("minLength·numeric bound·enum 을 반영한 예시가 실제 스키마를 만족한다 (ajv 교차검증)", async () => {
+    const { default: Ajv2020 } = await import("ajv/dist/2020");
+    const inputSchema = {
+      type: "object",
+      properties: {
+        key: { type: "string", minLength: 10 },
+        limit: { type: "integer", minimum: 5, maximum: 20 },
+        kind: { type: "string", enum: ["book", "film"] },
+        tags: { type: "array", items: { type: "string" }, minItems: 2 },
+      },
+      required: ["key", "limit", "kind", "tags"],
+    };
+    const { toolCallExample } = buildEnvelopeExamples([{ name: "lookup", inputSchema }]);
+    expect(toolCallExample).toBeDefined();
+
+    const envelope = JSON.parse(toolCallExample!) as {
+      result: { toolCalls: Array<{ args: string }> };
+    };
+    const args = JSON.parse(envelope.result.toolCalls[0]!.args) as unknown;
+    const validate = new Ajv2020({ strict: false }).compile(inputSchema);
+    expect(validate(args), JSON.stringify(validate.errors)).toBe(true);
+  });
+
   it("tool_call 예시의 args 가 그 tool 의 required 필드를 채운 유효 JSON 이다", () => {
     const { toolCallExample } = buildEnvelopeExamples(TOOLS);
-    const envelope = JSON.parse(toolCallExample) as {
+    expect(toolCallExample).toBeDefined();
+    const envelope = JSON.parse(toolCallExample!) as {
       result: { toolCalls: Array<{ toolName: string; args: string }> };
     };
     const call = envelope.result.toolCalls[0]!;
@@ -114,7 +157,7 @@ describe("envelope 예시 문자열", () => {
   it("렌더 문서에 실리는 예시 문자열이 실제로 그 문서 안에 있다", () => {
     const { toolCallExample, textAnswerExample } = buildEnvelopeExamples(TOOLS);
 
-    expect(renderToolEnvelopePrompt(TOOLS)).toContain(toolCallExample);
+    expect(renderToolEnvelopePrompt(TOOLS)).toContain(toolCallExample!);
     expect(renderToolEnvelopePrompt(TOOLS)).toContain(textAnswerExample);
     // json answer 변형은 유효한 리터럴 예시를 만들 수 없으므로 예시 없이 프로즈로만 —
     // text answer 예시(string)가 json 모드 문서에 섞이면 모델이 string 을 베낀다.

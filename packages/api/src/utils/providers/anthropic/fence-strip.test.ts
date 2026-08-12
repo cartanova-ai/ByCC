@@ -108,4 +108,15 @@ describe("createFenceStripTransform", () => {
     ];
     for (const sample of samples) runAllSplits(sample);
   });
+
+  it("불변식: 유니코드 공백(NBSP·VT·FF·LS·PS·BOM)에서도 성립 (2차 검토 #8)", () => {
+    // trim() 이 지우는 비 ASCII 공백이 tail 에 있으면 홀드백이 함께 보류해야 한다
+    const ws = [" ", "\v", "\f", " ", " ", "﻿"];
+    for (const w of ws) {
+      runAllSplits(`{"a":1}${w}`);
+      runAllSplits(`${w}{"a":1}${w}${w}`);
+      runAllSplits(`\`\`\`json\n{"a":1}\n\`\`\`${w}`);
+      runAllSplits(`{"a":1}${w}\n\`\`\``);
+    }
+  });
 });

@@ -168,9 +168,10 @@ describe("applyToolCallEmulation envelope validation", () => {
   it("schema-prompt 예시 ↔ envelope 교차 계약: tool_call 예시가 해석된다", async () => {
     const { buildEnvelopeExamples } = await import("./schema-prompt");
     const { toolCallExample, textAnswerExample } = buildEnvelopeExamples(tools);
+    expect(toolCallExample).toBeDefined(); // lookup inputSchema 는 생성 가능 집합 안이다
 
     for (const answerKind of ["text", "json"] as const) {
-      const out = applyToolCallEmulation({ ...baseResult, text: toolCallExample }, tools, {
+      const out = applyToolCallEmulation({ ...baseResult, text: toolCallExample! }, tools, {
         answerKind,
       });
       expect(out.finishReason).toBe("tool-calls");

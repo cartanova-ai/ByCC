@@ -48,7 +48,8 @@ export function validateAgainstSchema(node: unknown, schema: unknown): string[] 
   const validate = compileSchema(schema as Record<string, unknown>);
   if (validate(node)) return [];
   return (validate.errors ?? []).map(
-    (e) => `${e.instancePath || "$"}: ${e.message ?? e.keyword}${e.keyword === "enum" ? ` (${JSON.stringify((e.params as { allowedValues?: unknown[] }).allowedValues?.slice(0, 8))})` : ""}`,
+    (e) =>
+      `${e.instancePath || "$"}: ${e.message ?? e.keyword}${e.keyword === "enum" ? ` (${JSON.stringify((e.params as { allowedValues?: unknown[] }).allowedValues?.slice(0, 8))})` : ""}`,
   );
 }
 

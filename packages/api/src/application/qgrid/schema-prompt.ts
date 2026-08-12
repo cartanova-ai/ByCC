@@ -63,58 +63,144 @@ export function renderOutputSchemaPrompt(jsonSchema: string): string {
  * envelope 예시 JSON. 렌더 문구와 parseEnvelope 계약의 드리프트를 교차 테스트로 잡기
  * 위해 분리 export 한다 — 예시가 실제 파서를 통과하지 못하면 안내문이 틀린 것이다.
  *
- * 예시는 스스로 계약을 지켜야 한다: args 는 첫 tool 의 inputSchema required 필드를 채운
- * JSON string 으로 합성한다 — `args:"{}"` 같은 계약 위반 예시는 모델이 그대로 베낀다.
+ * 예시는 스스로 계약을 지켜야 한다: args 는 첫 tool 의 inputSchema 를 실제로 만족하는
+ * 인스턴스여야 한다. 생성기가 다루지 못하는 keyword(pattern/$ref/allOf 등)가 스키마에
+ * 있으면 **fail-closed** — 위반 가능성이 있는 예시를 싣는 대신 예시 자체를 생략하고
+ * 렌더러가 프로즈 서술로 대체한다 (`toolCallExample: undefined`).
  */
 export function buildEnvelopeExamples(tools: QgridTool[]): {
-  toolCallExample: string;
+  toolCallExample?: string;
   textAnswerExample: string;
 } {
   const firstTool = tools[0];
+  const args = firstTool ? exampleValueForSchema(firstTool.inputSchema) : { ok: true, value: {} };
   return {
-    toolCallExample: JSON.stringify({
-      result: {
-        action: "tool_call",
-        answer: null,
-        toolCalls: [
-          {
-            toolName: firstTool?.name ?? "toolName",
-            args: JSON.stringify(exampleValueForSchema(firstTool?.inputSchema)),
-          },
-        ],
-      },
-    }),
+    ...(args.ok
+      ? {
+          toolCallExample: JSON.stringify({
+            result: {
+              action: "tool_call",
+              answer: null,
+              toolCalls: [
+                { toolName: firstTool?.name ?? "toolName", args: JSON.stringify(args.value) },
+              ],
+            },
+          }),
+        }
+      : {}),
     textAnswerExample: JSON.stringify({
       result: { action: "answer", answer: "your final answer", toolCalls: null },
     }),
   };
 }
 
-/** inputSchema 의 required 필드를 타입에 맞는 더미 값으로 채운 예시 인스턴스. */
-function exampleValueForSchema(schema: unknown): unknown {
-  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return {};
+type ExampleResult = { ok: true; value: unknown } | { ok: false };
+
+/** 생성기가 값 선택에 반영하는 keyword. 어노테이션(description 등)은 값과 무관해 무시한다. */
+const EXAMPLE_ANNOTATION_KEYWORDS = new Set([
+  "description",
+  "title",
+  "default",
+  "examples",
+  "$comment",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
+const EXAMPLE_HANDLED_KEYWORDS = new Set([
+  "type",
+  "enum",
+  "const",
+  "properties",
+  "required",
+  "additionalProperties",
+  "items",
+  "minItems",
+  "maxItems",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "anyOf",
+  "oneOf",
+]);
+
+/**
+ * inputSchema 를 만족하는 예시 인스턴스 생성. 지원 keyword 집합 밖의 제약
+ * (pattern/format/$ref/allOf/not/if/multipleOf/uniqueItems/...)을 만나면 값을
+ * 지어내지 않고 { ok: false } 를 돌려준다 — 계약 위반 예시는 모델이 베낀다.
+ */
+function exampleValueForSchema(schema: unknown): ExampleResult {
+  if (schema === true || schema === undefined) return { ok: true, value: {} };
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return { ok: false };
   const node = schema as Record<string, unknown>;
 
-  if (Array.isArray(node.enum) && node.enum.length > 0) return node.enum[0];
-  if ("const" in node) return node.const;
+  for (const keyword of Object.keys(node)) {
+    if (!EXAMPLE_HANDLED_KEYWORDS.has(keyword) && !EXAMPLE_ANNOTATION_KEYWORDS.has(keyword)) {
+      return { ok: false };
+    }
+  }
+
+  if (Array.isArray(node.enum) && node.enum.length > 0) return { ok: true, value: node.enum[0] };
+  if ("const" in node) return { ok: true, value: node.const };
+
+  for (const kw of ["anyOf", "oneOf"] as const) {
+    if (Array.isArray(node[kw])) {
+      // oneOf 는 "정확히 하나"라 첫 브랜치 값이 다른 브랜치에도 매칭될 수 있다 —
+      // 검증기 없이 확신할 수 없으므로 브랜치가 하나일 때만 생성한다.
+      const list = node[kw] as unknown[];
+      if (kw === "oneOf" && list.length > 1) return { ok: false };
+      for (const branch of list) {
+        const result = exampleValueForSchema(branch);
+        if (result.ok) return result;
+      }
+      return { ok: false };
+    }
+  }
 
   const type = Array.isArray(node.type) ? node.type[0] : node.type;
   switch (type) {
-    case "string":
-      return "example";
-    case "number":
-    case "integer":
-      return 0;
-    case "boolean":
-      return false;
-    case "null":
-      return null;
-    case "array": {
-      const items = node.items;
-      const min = typeof node.minItems === "number" ? node.minItems : 0;
-      return min > 0 ? [exampleValueForSchema(items)] : [];
+    case "string": {
+      const min = typeof node.minLength === "number" ? node.minLength : 0;
+      if (min > 64) return { ok: false };
+      const base = "example";
+      const value = base.length >= min ? base : base.padEnd(min, "x");
+      if (typeof node.maxLength === "number" && value.length > node.maxLength) {
+        if (node.maxLength < min) return { ok: false };
+        return { ok: true, value: value.slice(0, node.maxLength) };
+      }
+      return { ok: true, value };
     }
-    default: {
+    case "number":
+    case "integer": {
+      let value = 0;
+      if (typeof node.minimum === "number") value = node.minimum;
+      else if (typeof node.exclusiveMinimum === "number") value = node.exclusiveMinimum + 1;
+      if (typeof node.maximum === "number" && value > node.maximum) return { ok: false };
+      if (typeof node.exclusiveMaximum === "number" && value >= node.exclusiveMaximum) {
+        return { ok: false };
+      }
+      return { ok: true, value };
+    }
+    case "boolean":
+      return { ok: true, value: false };
+    case "null":
+      return { ok: true, value: null };
+    case "array": {
+      const min = typeof node.minItems === "number" ? node.minItems : 0;
+      if (min > 8) return { ok: false };
+      if (typeof node.maxItems === "number" && node.maxItems < min) return { ok: false };
+      if (min === 0) return { ok: true, value: [] };
+      const item = exampleValueForSchema(node.items);
+      if (!item.ok) return { ok: false };
+      // 같은 값 반복이라 uniqueItems 와 충돌하지만, uniqueItems 는 지원 집합 밖이라
+      // 위의 keyword 검사에서 이미 fail-closed 된다.
+      return { ok: true, value: Array.from({ length: min }, () => item.value) };
+    }
+    case undefined:
+    case "object": {
       const properties =
         node.properties && typeof node.properties === "object" && !Array.isArray(node.properties)
           ? (node.properties as Record<string, unknown>)
@@ -122,8 +208,16 @@ function exampleValueForSchema(schema: unknown): unknown {
       const required = Array.isArray(node.required)
         ? node.required.filter((k): k is string => typeof k === "string")
         : [];
-      return Object.fromEntries(required.map((k) => [k, exampleValueForSchema(properties[k])]));
+      const entries: Array<[string, unknown]> = [];
+      for (const key of required) {
+        const child = exampleValueForSchema(properties[key]);
+        if (!child.ok) return { ok: false };
+        entries.push([key, child.value]);
+      }
+      return { ok: true, value: Object.fromEntries(entries) };
     }
+    default:
+      return { ok: false };
   }
 }
 
@@ -161,6 +255,24 @@ export function renderToolEnvelopePrompt(tools: QgridTool[], jsonSchema?: string
           "</answer-json-schema>",
         ];
 
+  // 예시 생성기가 다루지 못하는 inputSchema(fail-closed)면 구조 서술로 대체한다 —
+  // 스키마를 위반할 수 있는 예시를 싣는 것보다 예시가 없는 편이 안전하다.
+  const toolCallVariant = [
+    toolCallExample !== undefined
+      ? "1. Request client-side tool execution, for example:"
+      : "1. Request client-side tool execution:",
+    ...(toolCallExample !== undefined
+      ? [toolCallExample]
+      : [
+          '- Set "action" to "tool_call" and "answer" to null.',
+          '- "toolCalls" is an array of objects, each {"toolName": ..., "args": ...}.',
+        ]),
+    '- "toolCalls" must contain at least one entry.',
+    '- "toolName" must be one of the client tool names listed below.',
+    '- "args" must be the tool arguments encoded as a JSON string (not an object), conforming to that tool\'s inputSchema.',
+    '- "answer" must be null.',
+  ];
+
   return [
     "## Client Tool Protocol",
     "",
@@ -171,12 +283,7 @@ export function renderToolEnvelopePrompt(tools: QgridTool[], jsonSchema?: string
     "raw JSON only, no code fences, no prose before or after the JSON.",
     'The "result" value is exactly one of the two variants:',
     "",
-    "1. Request client-side tool execution, for example:",
-    toolCallExample,
-    '- "toolCalls" must contain at least one entry.',
-    '- "toolName" must be one of the client tool names listed below.',
-    '- "args" must be the tool arguments encoded as a JSON string (not an object), conforming to that tool\'s inputSchema.',
-    '- "answer" must be null.',
+    ...toolCallVariant,
     "",
     ...answerVariant,
     "",

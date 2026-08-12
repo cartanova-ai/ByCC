@@ -140,8 +140,13 @@ function parseEnvelope(text: string, tools: QgridTool[], answerKind: AnswerKind)
     const issue = validation.error.issues[0];
     const path = issue && issue.path.length > 0 ? ` at ${issue.path.join(".")}` : "";
     const detail = issue?.message ?? "unknown validation issue";
-    logger.warn(`tool envelope validation failed${path}: ${detail}`);
-    throw new ToolCallEmulationError(`invalid tool envelope${path}: ${detail}`);
+    // valid JSON 이지만 계약 위반인 경우에도 원문 머리를 남긴다 — zod 경로만으로는
+    // "키 생략인지 / 래퍼로 감쌌는지 / 타입이 틀렸는지"의 실물을 볼 수 없다.
+    const head = JSON.stringify(text.slice(0, 200));
+    logger.warn(`tool envelope validation failed${path}: ${detail}; head=${head}`);
+    throw new ToolCallEmulationError(
+      `invalid tool envelope${path}: ${detail}; response head: ${head}`,
+    );
   }
 
   // Zod clones JSON objects and drops own "__proto__" keys. The parsed JSON is safe to return
