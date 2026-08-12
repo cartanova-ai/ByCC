@@ -208,7 +208,9 @@ export function aggregateBench(records: BenchRecord[]): BenchAggregateRow[] {
         totalCostUsd: bucket.reduce((sum, r) => sum + (r.costUsd ?? 0), 0),
       };
     })
-    .sort((a, b) => `${a.model}${a.fixture}${a.mode}`.localeCompare(`${b.model}${b.fixture}${b.mode}`));
+    .toSorted((a, b) =>
+      `${a.model}${a.fixture}${a.mode}`.localeCompare(`${b.model}${b.fixture}${b.mode}`),
+    );
 }
 
 export function formatAggregateTable(rows: BenchAggregateRow[]): string {

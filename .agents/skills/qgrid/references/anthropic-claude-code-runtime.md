@@ -61,7 +61,7 @@ Refresh is attempted through `QgridFrame.refreshToken` with provider set to `ant
 ```text
 claude -p
   --tools ""
-  --allowed-tools StructuredOutput        # only when jsonSchema exists
+  --allowed-tools StructuredOutput        # legacy structured path only — unused since SON-532
   --disallowedTools Monitor PushNotification RemoteTrigger
   --input-format stream-json
   --output-format stream-json
@@ -76,18 +76,22 @@ claude -p
   --effort <effort-or-low>
   --disable-slash-commands
   --session-id <uuid>
-  --json-schema <schema>                  # only when jsonSchema exists
+  --json-schema <schema>                  # legacy structured path only — unused since SON-532
 ```
 
 Important details:
 
-- `--tools ""` blocks normal tools. With structured output, only `StructuredOutput` is allowed.
+- `--tools ""` blocks normal tools on every call.
+- **qgrid no longer passes `--json-schema` (SON-532).** Schema and tool-envelope contracts are
+  rendered as text (`schema-prompt.ts`) and appended to the system prompt; CC runs in plain text
+  mode, qgrid strips code fences (`fence-strip.ts`), and validation belongs to the consumer's zod
+  and qgrid's `parseEnvelope`. The `buildClaudeArgs` structured branch remains in code but is
+  unreachable from qgrid dispatch.
 - `--setting-sources project` plus seeded settings isolates user configuration.
 - `--system-prompt` or `--system-prompt-file` is always supplied. Omitting it would allow Claude Code default system prompt injection.
-- Large system prompts over 64 KiB are written to a temporary file to avoid argv `E2BIG`.
-- Final structured-output schemas are limited to 64 KiB UTF-8 because Claude Code receives each
-  schema as one `--json-schema` argv value. qgrid applies this check before request-log or stream
-  allocation and repeats it at dispatcher/session boundaries.
+- Large system prompts over 64 KiB are written to a temporary file to avoid argv `E2BIG` — this
+  same branch absorbs large injected schema contracts, so the old 64 KiB schema argv limit no
+  longer applies (only the global 512 KiB caller-schema complexity limit remains).
 - `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 requires always-on adaptive thinking. Opus 5 defaults to adaptive thinking and rejects disabled thinking at `xhigh`/`max` effort. qgrid omits all three suppressors for both models and uses `effort` to control depth.
 
 ## Spawn env
@@ -209,13 +213,26 @@ Upstream references:
 
 ## Structured output
 
-qgrid strictifies schemas before provider dispatch. Claude Code `--json-schema` is not grammar-constrained decoding; it is a `StructuredOutput` tool plus post-validation behavior. Keep schemas strict and preserve error signaling for failed structured-output attempts.
+**Since SON-532 the anthropic route delivers schemas by prompt, not by `--json-schema`.** The
+consumer's original schema (no strictify — nullish/optional intent preserved) is rendered as text
+and appended to the system prompt; anthropic is cold-only, so every multi-turn step re-sends the
+contract. Responses are plain text: qgrid strips fences and trims, and validation is the
+consumer's zod (user schema) or qgrid's `parseEnvelope` (tool envelope). Prose or degenerate
+output fails honestly — retry is the caller's decision.
 
-`MAX_STRUCTURED_OUTPUT_RETRIES` defaults to `1` and is clamped to at least 1. Avoid setting it to 0; Claude Code can fail before emitting a useful attempt.
+Why: CC's `--json-schema` is not grammar-constrained decoding — it is a `StructuredOutput` tool
+plus post-hoc AJV scoring with an internal retry loop that cannot be disabled. The strictified
+scoring schema contradicted consumer intent (nullish frozen into required), so the model's
+correct-per-instructions output was rejected and retried invisibly: deti transcripts showed 2–4
+round trips per call, 216–512 s latency, and 4.7–9.1× billed output tokens, all collapsed into
+one request-log row. OpenAI keeps the strictified schema because constrained decoding actually
+enforces it there.
 
-qgrid pins this env var only when the call is **structured and streaming**. The pin exists because a retry inside a stream doubles wall-clock time (SON-495); that reasoning does not apply to non-streaming `generate`, which already waits for completion. Streaming is detected via `includePartialMessages`, which only `generateStream` sets.
-
-Non-streaming structured calls therefore keep Claude Code's default retry budget. This matters because Claude models comply with structured output less reliably than OpenAI models: pinning retries to 1 turns a single rejected attempt into an immediate `error_max_structured_output_retries`. Measured on dev0 before the fix, `deti_production` on Opus 4.8 failed 39.6% of non-streaming structured calls for this reason.
+Legacy notes (structured path, unreachable from qgrid dispatch but still in `claude-session.ts`):
+`MAX_STRUCTURED_OUTPUT_RETRIES` was pinned to 1 only for structured **streaming** calls (SON-495 —
+a retry inside a stream doubles wall-clock); non-streaming kept CC's default budget because
+pinning it caused 39.6% failures on `deti_production` Opus 4.8. Compliance measurement for the
+prompt path lives in `scripts/schema-delivery-bench.ts`.
 
 When a non-streaming retry succeeds, the result event's `structured_output` is the canonical
 schema-validated value. Do not let a previously captured assistant tool input override it. Preserve

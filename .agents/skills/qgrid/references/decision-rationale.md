@@ -114,9 +114,19 @@ Key decisions:
 - Anthropic is cold-only. It does not use Codex-style thread reuse because Claude Code prompt cache is prefix-based and AI SDK consumers already send full message history for each step.
 - The shared `threadCoord` response shape may still appear for provider symmetry, but AI SDK storage/replay is disabled for `anthropic/*` models.
 - Claude Code `stream-json` drops structural assistant role replay in the outbound API payload. qgrid flattens prior history into text because structural role replay through the CLI is not reliable.
-- Claude Code `--json-schema` is not constrained native tool calling. It creates a `StructuredOutput` tool and validates after model generation. Keep schemas strict and fail on non-success subtypes or retry exhaustion.
-- `MAX_STRUCTURED_OUTPUT_RETRIES=1` means one attempt. Do not set it to 0 expecting "no retry but one attempt"; that can mean no useful attempt.
-- The retry pin is scoped to **streaming** structured calls only. SON-495 fixed retries to 1 because a retry inside a stream doubles wall-clock time — a latency argument that does not hold for non-streaming `generate`. Applying the pin to both paths made every non-streaming structured call fail on its first rejected attempt, and since Claude complies with structured output less reliably than OpenAI, that produced a 39.6% `error_max_structured_output_retries` rate for `deti_production` on Opus 4.8 (dev0, 2026-07). Non-streaming now uses Claude Code's default retry budget; `includePartialMessages` is the streaming discriminator.
+- **qgrid does not pass `--json-schema` to Claude Code (SON-532, 2026-08).** CC's mode is not
+  constrained decoding — it creates a `StructuredOutput` tool, scores the free-form output with
+  AJV afterwards, and retries internally on mismatch with no off switch. The strictified scoring
+  schema contradicted consumer intent (nullish frozen into required), so correct-per-instructions
+  outputs were rejected and retried invisibly: deti transcripts showed 2–4 round trips, 216–512 s,
+  and 4.7–9.1× billed output per call, collapsed into one request-log row. Schemas and the tool
+  envelope now travel as text at the end of the system prompt (`schema-prompt.ts`, consumer's
+  original schema, no strictify), the server strips fences only (`fence-strip.ts`), and validation
+  is consumer zod / `parseEnvelope`. Honest failure on violations is unchanged.
+- Legacy (structured path, unreachable from qgrid dispatch): `MAX_STRUCTURED_OUTPUT_RETRIES=1`
+  means one attempt (never set 0), and the retry pin was scoped to **streaming** structured calls
+  only — SON-495's latency argument does not hold for non-streaming `generate`, where pinning
+  produced a 39.6% failure rate for `deti_production` on Opus 4.8 (dev0, 2026-07).
 - 1M context support is measured per model and is a mitigation, not a guarantee. It reduces compaction/hang frequency for huge prompts, but does not make every structured prompt reliable.
 - Spawn env must be whitelisted. Never pass inherited `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_BASE_URL` unless intentionally building an API-key/proxy path.
 - `--setting-sources project` is required for shared-service isolation. User/local Claude settings can load hooks or memory and leak context across requests.

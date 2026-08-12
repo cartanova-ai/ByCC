@@ -102,13 +102,21 @@ The schema explicitly tells the model:
 - do not invoke listed tools as native Claude Code tools;
 - put tool arguments in `args` as a JSON string.
 
-`qgrid.dispatcher.ts` strictifies this schema through `buildStrictOutputSchema` before it reaches provider dispatchers.
+Delivery differs by provider (SON-532). OpenAI: `qgrid.dispatcher.ts` strictifies the composed
+envelope through `buildStrictOutputSchema` and passes it as the response format — constrained
+decoding enforces it. Anthropic: no schema is passed to CC at all; `schema-prompt.ts` renders the
+same envelope contract (the `{"result": ...}` wrapper, mutually exclusive variants, tool list) as
+text appended to the system prompt, the user answer schema stays unstrictified, and the server
+strips code fences before `parseEnvelope` validates the reply.
 
 ## Composing Tools With A User Output Schema
 
 This section explains why `tool-emulation-schema.ts` exists at all. Read it
 before changing schema composition; the mechanics look arbitrary without the
-failure it was built to prevent.
+failure it was built to prevent. Scope note (SON-532): this composition — and
+its `$defs` rebase with the anchor/dynamic-ref rejections below — runs only on
+the OpenAI delivery path now. Anthropic renders the contract as prompt text, so
+there is no document-root `$ref` collision and nothing to rebase or reject.
 
 ### The problem
 
@@ -242,10 +250,12 @@ Anthropic/Claude Code:
 
 - qgrid does not allow client tools as Claude Code native tools.
 - Claude is spawned with `--tools ""`.
-- When a schema exists, qgrid permits only `StructuredOutput` with `--allowed-tools StructuredOutput`.
-- qgrid passes the strict tool-call schema through `--json-schema`.
-- The stream adapter preserves `StructuredOutput` tool input as final structured text.
-- qgrid parses that text and maps it to qgrid `tool-call` content.
+- Since SON-532 qgrid does **not** pass `--json-schema` (no `StructuredOutput` tool either): the
+  envelope contract travels as text at the end of the system prompt (`schema-prompt.ts`), and the
+  answer schema inside it is the consumer's original, unstrictified.
+- The reply is plain text; the server strips code fences (`fence-strip.ts`), then `parseEnvelope`
+  validates the `{"result": ...}` envelope and maps `tool_call` to qgrid `tool-call` content.
+- Violations fail honestly — no tolerant fallback (medpath 13.5k corruption precedent).
 
 In both providers, native provider tools are not the public abstraction. The public abstraction is AI SDK tools plus qgrid structured-output emulation.
 

@@ -12,13 +12,13 @@ import { InternalServerErrorException, ServiceUnavailableException } from "sonam
 import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
 import { SD } from "../../i18n/sd.generated";
 import { type AnthropicDispatcher } from "../../utils/providers/anthropic/anthropic-dispatcher";
+import { createFenceStripTransform } from "../../utils/providers/anthropic/fence-strip";
 import { getAccessToken } from "../../utils/providers/common/credentials";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import {
   type GenerateResult,
   type StreamCallbacks,
 } from "../../utils/providers/common/provider-dispatcher";
-import { createFenceStripTransform } from "../../utils/providers/anthropic/fence-strip";
 import {
   parseAndValidateCallerSchemas,
   serializeAndValidateDispatchSchema,

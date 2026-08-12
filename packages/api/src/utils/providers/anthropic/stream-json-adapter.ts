@@ -10,11 +10,11 @@
 
 import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
 import { type UserInput } from "../../../codex-protocol/v2/UserInput";
-import { stripFences } from "./fence-strip";
 import {
   type ModelFallback,
   type ProviderTokenUsageBreakdown,
 } from "../common/provider-dispatcher";
+import { stripFences } from "./fence-strip";
 
 // ── 입력 어댑터 ────────────────────────────────────────────────────
 
