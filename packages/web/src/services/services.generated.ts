@@ -684,6 +684,7 @@ export namespace QgridService {
           usage: {
             input_tokens: number;
             output_tokens: number;
+            reasoning_tokens: number;
             cache_creation_input_tokens: number;
             cache_creation_5m_input_tokens?: number;
             cache_creation_1h_input_tokens?: number;
@@ -751,6 +752,7 @@ export namespace QgridService {
         usage: {
           input_tokens: number;
           output_tokens: number;
+          reasoning_tokens: number;
           cache_creation_input_tokens: number;
           cache_creation_5m_input_tokens?: number;
           cache_creation_1h_input_tokens?: number;

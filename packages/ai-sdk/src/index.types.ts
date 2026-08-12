@@ -17,8 +17,8 @@ export type QgridProviderOptions = {
   logger?: boolean;
   /**
    * 멀티턴 시 codex thread reuse를 위한 대화 식별자, 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면
-   * provider가 같은 sessionKey 의 thread 좌표를 내부에서 회송해 prompt cache 를 적중시킨다
-   * 좌표는 sessionKey 별로 격리된다.
+   * provider가 model+sessionKey에서 opaque cache affinity를 결정적으로 파생해 회송한다.
+   * 원문 sessionKey는 서버에 전송하지 않으며 좌표는 model+sessionKey 별로 격리된다.
    */
   sessionKey?: string;
   /** reasoning 모델의 추론 깊이. 기본값은 qgrid config의 defaultEffort. */
@@ -58,8 +58,8 @@ export type QgridProviderOptions = {
 
 /**
  * codex thread 좌표
- * 멀티턴 대화에서 같은 대화를 같은 codex thread 로 라우팅 → conversation_id 고정 → 캐시 적중
- * provider 내부 threadCoordStore 가 sessionKey 별로 관리
+ * epoch=-1은 direct provider cache affinity 좌표다. workerId는 preferred token ID이고,
+ * threadId는 opaque cache key다. epoch>=0은 이전 서버와의 wire compatibility를 위해 유지한다.
  */
 export type QgridThreadCoord = {
   workerId: number;
@@ -119,6 +119,7 @@ export type QueryOutput = {
   usage: {
     input_tokens: number;
     output_tokens: number;
+    reasoning_tokens?: number;
     cache_creation_input_tokens: number;
     cache_creation_5m_input_tokens?: number;
     cache_creation_1h_input_tokens?: number;

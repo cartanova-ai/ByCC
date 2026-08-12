@@ -5,6 +5,7 @@ import {
   type GenerateResult,
   type GenerateStreamCallbacks,
 } from "../../utils/providers/common/provider-dispatcher";
+import { systemHash } from "./conv-routing";
 import { buildStrictOutputSchema, QgridDispatcherClass } from "./qgrid.dispatcher";
 import { type QueryOutput } from "./qgrid.types";
 
@@ -176,7 +177,7 @@ describe("QgridDispatcherClass", () => {
     expect(onError).toHaveBeenCalledWith(serverError);
   });
 
-  it("OpenAI query 는 reuse/reuseInput 을 provider 로 계속 전달한다", async () => {
+  it("OpenAI query 는 thread reuse 대신 full-history cache affinity 를 전달한다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi.fn(async (_req: GenerateRequest) => providerResult({ model: "gpt-5.5" }));
     dispatcher.openaiDispatcher = { generate } as never;
@@ -185,19 +186,48 @@ describe("QgridDispatcherClass", () => {
       prompt: "next",
       model: "openai/gpt-5.5",
       system: "same-system",
+      history: JSON.stringify([{ role: "user", content: "first" }]),
+      cacheAffinityKey: "a".repeat(64),
       runContext: {
         threadCoord: {
           workerId: 1,
-          threadId: "thread-1",
-          epoch: 0,
-          systemHash: "800ddd9ba811b821",
+          threadId: "a".repeat(64),
+          epoch: -1,
+          systemHash: systemHash("same-system", "openai/gpt-5.5"),
         },
       },
     });
 
     const req = generate.mock.calls[0]![0];
-    expect(req.reuse).toEqual({ workerId: 1, threadId: "thread-1", epoch: 0 });
-    expect(req.reuseInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
+    expect(req).not.toHaveProperty("reuse");
+    expect(req).not.toHaveProperty("reuseInput");
+    expect(req.coldHistory).toEqual([{ role: "user", content: "first" }]);
+    expect(req.coldInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
+    expect(req.promptCacheKey).toBe("a".repeat(64));
+    expect(req.preferredTokenId).toBe(1);
+  });
+
+  it("OpenAI response issues a four-field epoch=-1 affinity coord", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    dispatcher.openaiDispatcher = {
+      generate: vi.fn(async () =>
+        providerResult({ threadCoord: { workerId: 907, threadId: "ignored", epoch: 2 } }),
+      ),
+    } as never;
+
+    const result = await dispatcher.query({
+      prompt: "first",
+      model: "openai/gpt-5.5",
+      system: "system",
+      cacheAffinityKey: "c".repeat(64),
+    });
+
+    expect(result.runContext?.threadCoord).toEqual({
+      workerId: 9,
+      threadId: "c".repeat(64),
+      epoch: -1,
+      systemHash: expect.any(String),
+    });
   });
 
   it("Anthropic query 는 reuse/reuseInput 을 provider 로 전달하지 않는다", async () => {

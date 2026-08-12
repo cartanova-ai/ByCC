@@ -51,6 +51,7 @@ function queryOutput(overrides: Partial<QueryOutput> = {}): QueryOutput {
     usage: {
       input_tokens: 5,
       output_tokens: 7,
+      reasoning_tokens: 0,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
     },
@@ -601,6 +602,7 @@ describe("qgrid run lifecycle TTFT", () => {
         usage: {
           input_tokens: 100_000,
           output_tokens: 20,
+          reasoning_tokens: 0,
           cache_read_input_tokens: 10_000,
           cache_creation_input_tokens: 80_000,
           cache_creation_5m_input_tokens: 30_000,
