@@ -90,10 +90,18 @@ const { output } = await generateText({
 console.log(output.title, output.authors);
 ```
 
-Schemas with a top-level `object` are forwarded to server-side structured output and enforced.
-If the top level is not an `object` (e.g. array), the AI SDK falls back to client-side parsing and a warning is logged.
+Schemas with a top-level `object` are forwarded to the server. If the top level is not an
+`object` (e.g. array), the AI SDK falls back to client-side parsing and a warning is logged.
 
-> **Note for Anthropic models:** OpenAI/codex structured output constrains decoding to the schema, so this class of failure is rare there. Claude Code's `--json-schema`, however, works as a `StructuredOutput` tool plus post-hoc validation, so the model may fail to honor a complex schema. For structured streaming only, qgrid sets `MAX_STRUCTURED_OUTPUT_RETRIES=1` (one attempt; values below 1 are clamped to 1) to bound stream latency. Non-streaming `generate` leaves that override unset and uses Claude Code's default retry budget. Validation failures after the applicable attempts return an explicit error instead of broken JSON.
+> **Note for Anthropic models:** enforcement differs by provider. OpenAI/codex constrains
+> decoding to the schema, so non-conforming output is rare. The Anthropic route has no
+> enforcement mechanism: qgrid delivers your original schema as prompt guidance at the end of
+> the system prompt, Claude Code generates plain text, and the server only strips code fences.
+> The reply is schema-guided JSON text, **not server-validated JSON** — validation happens in
+> this SDK via your zod schema (`Output.object` does this automatically), and a non-conforming
+> reply surfaces as an explicit validation error on your side instead of hidden server retries.
+> Raw HTTP consumers calling the qgrid API without this SDK must validate the response
+> themselves.
 
 ### Streaming
 

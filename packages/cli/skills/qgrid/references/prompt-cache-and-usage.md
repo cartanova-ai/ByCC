@@ -63,7 +63,10 @@ Prompt cache can still work when prefixes are stable, but:
 - Full history is replayed through stream-json after flattening.
 - Cache write/read can be eventually consistent; immediate next request is not guaranteed to hit.
 - Claude Code OAuth token cache behavior has provider-specific quirks documented in `docs/solutions`.
-- Avoid putting volatile schema text into the system prompt. qgrid uses `--json-schema` / `StructuredOutput` for structured output.
+- Since SON-532, qgrid appends the schema/tool-envelope contract to the end of the system
+  prompt (no `--json-schema`). A stable schema keeps the system prefix stable and cacheable
+  across requests; a schema that changes per request invalidates the prefix cache from the
+  contract onward. Keep caller schemas deterministic (no timestamps or per-request IDs inside).
 
 ## Usage normalization
 
