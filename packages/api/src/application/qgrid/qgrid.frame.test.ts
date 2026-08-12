@@ -467,56 +467,62 @@ describe("QgridFrame.query request logging", () => {
     expect(dispatcherQueryMock).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for an Anthropic positional tuple before logging or dispatch", async () => {
-    await expect(
-      QgridFrame.query({
-        prompt: "hi",
-        model: "anthropic/claude-opus-4-8",
-        jsonSchema: JSON.stringify({
-          type: "object",
-          properties: {
-            tuple: {
-              type: "array",
-              items: [{ type: "string" }, { type: "integer" }],
-            },
+  // SON-532: anthropic 은 strictify 를 거치지 않으므로 strict 변환이 다루지 못하던 형태
+  // (positional tuple 등)도 거절 사유가 아니다 — 원형 그대로 프롬프트에 안내된다.
+  it.each([
+    [
+      "positional tuple",
+      {
+        type: "object",
+        properties: {
+          tuple: { type: "array", items: [{ type: "string" }, { type: "integer" }] },
+        },
+        required: ["tuple"],
+      },
+    ],
+    [
+      "tuple nested under not",
+      { type: "object", not: { type: "array", items: [{ type: "string" }] } },
+    ],
+    [
+      "prefixItems tuple with missing type",
+      {
+        type: "object",
+        properties: { tuple: { prefixItems: [{ type: "string" }, { type: "integer" }] } },
+        required: ["tuple"],
+      },
+    ],
+    [
+      "prefixItems tuple with nullable union type",
+      {
+        type: "object",
+        properties: {
+          tuple: {
+            type: ["array", "null"],
+            prefixItems: [{ type: "string" }, { type: "integer" }],
           },
-          required: ["tuple"],
+        },
+        required: ["tuple"],
+      },
+    ],
+  ] as const)(
+    "accepts an Anthropic schema with %s and proceeds to dispatch (SON-532)",
+    async (_label, schema) => {
+      beforeQueryMock.mockResolvedValueOnce({ requestLogId: 41, stepIndex: 0 });
+      dispatcherQueryMock.mockResolvedValueOnce(queryOutput());
+      afterQueryMock.mockResolvedValueOnce({});
+
+      await expect(
+        QgridFrame.query({
+          prompt: "hi",
+          model: "anthropic/claude-opus-4-8",
+          jsonSchema: JSON.stringify(schema),
         }),
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      message: expect.stringContaining(
-        "positional tuple schemas are not supported on Anthropic",
-      ),
-    });
+      ).resolves.toMatchObject({ text: "hello" });
 
-    expect(beforeQueryMock).not.toHaveBeenCalled();
-    expect(dispatcherQueryMock).not.toHaveBeenCalled();
-  });
-
-  it("returns 400 for an Anthropic tuple nested under not before logging or dispatch", async () => {
-    await expect(
-      QgridFrame.query({
-        prompt: "hi",
-        model: "anthropic/claude-opus-4-8",
-        jsonSchema: JSON.stringify({
-          type: "object",
-          not: {
-            type: "array",
-            items: [{ type: "string" }],
-          },
-        }),
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      message: expect.stringContaining(
-        "positional tuple schemas are not supported on Anthropic",
-      ),
-    });
-
-    expect(beforeQueryMock).not.toHaveBeenCalled();
-    expect(dispatcherQueryMock).not.toHaveBeenCalled();
-  });
+      expect(dispatcherQueryMock).toHaveBeenCalledOnce();
+    },
+  );
 
   it("returns 400 for an OpenAI tuple under not instead of changing negative semantics", async () => {
     await expect(
@@ -654,40 +660,13 @@ describe("QgridFrame.query request logging", () => {
     },
   );
 
-  it.each([
-    ["missing", undefined],
-    ["nullable union", ["array", "null"]],
-  ] as const)(
-    "returns 400 for an Anthropic positional tuple with %s type before logging or dispatch",
-    async (_label, type) => {
-      await expect(
-        QgridFrame.query({
-          prompt: "hi",
-          model: "anthropic/claude-opus-4-8",
-          jsonSchema: JSON.stringify({
-            type: "object",
-            properties: {
-              tuple: {
-                ...(type === undefined ? {} : { type }),
-                prefixItems: [{ type: "string" }, { type: "integer" }],
-              },
-            },
-            required: ["tuple"],
-          }),
-        }),
-      ).rejects.toMatchObject({
-        statusCode: 400,
-        message: expect.stringContaining(
-          "positional tuple schemas are not supported on Anthropic",
-        ),
-      });
+  // SON-532: argv 64KiB 제한은 --json-schema 전용이었다. 프롬프트 전달은 system 크기
+  // 분기(--system-prompt-file)가 흡수하므로 전역 복잡도 한도만 남는다.
+  it("accepts an Anthropic schema that exceeds the old argv size limit (SON-532)", async () => {
+    beforeQueryMock.mockResolvedValueOnce({ requestLogId: 41, stepIndex: 0 });
+    dispatcherQueryMock.mockResolvedValueOnce(queryOutput());
+    afterQueryMock.mockResolvedValueOnce({});
 
-      expect(beforeQueryMock).not.toHaveBeenCalled();
-      expect(dispatcherQueryMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it("returns 400 when the final Anthropic schema exceeds the safe argv size", async () => {
     await expect(
       QgridFrame.query({
         prompt: "hi",
@@ -704,13 +683,9 @@ describe("QgridFrame.query request logging", () => {
           properties: { answer: { type: "string" } },
         }),
       }),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      message: expect.stringContaining("Anthropic dispatch schema exceeds argv"),
-    });
+    ).resolves.toMatchObject({ text: "hello" });
 
-    expect(beforeQueryMock).not.toHaveBeenCalled();
-    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).toHaveBeenCalledOnce();
   });
 
   it("accepts logger: false in the wire schema", () => {
@@ -757,30 +732,22 @@ describe("QgridFrame.prepareStream", () => {
     });
   });
 
-  it("returns 400 for an Anthropic tuple under patternProperties before allocating a stream id", async () => {
-    await expect(
-      QgridFrame.prepareStream({
-        prompt: "hi",
-        model: "anthropic/claude-opus-4-8",
-        jsonSchema: JSON.stringify({
-          type: "object",
-          patternProperties: {
-            "^tuple$": {
-              type: "array",
-              prefixItems: [{ type: "string" }],
-            },
+  it("accepts an Anthropic tuple under patternProperties and allocates a stream id (SON-532)", async () => {
+    const { streamId } = await QgridFrame.prepareStream({
+      prompt: "hi",
+      model: "anthropic/claude-opus-4-8",
+      jsonSchema: JSON.stringify({
+        type: "object",
+        patternProperties: {
+          "^tuple$": {
+            type: "array",
+            prefixItems: [{ type: "string" }],
           },
-        }),
+        },
       }),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      message: expect.stringContaining(
-        "positional tuple schemas are not supported on Anthropic",
-      ),
     });
 
-    expect(requestLogSaveMock).not.toHaveBeenCalled();
-    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    expect(streamId).toEqual(expect.any(String));
   });
 
   it("returns 400 for a deeply nested tool schema before allocating a stream id", async () => {
@@ -796,42 +763,36 @@ describe("QgridFrame.prepareStream", () => {
     });
   });
 
-  it("returns 400 for an unsupported composed-schema reference before allocating a stream id", async () => {
-    await expect(
-      QgridFrame.prepareStream({
-        prompt: "hi",
-        model: "anthropic/claude-sonnet-4-6",
-        tools: [{ name: "lookup", inputSchema: { type: "object" } }],
-        jsonSchema: JSON.stringify({
-          type: "object",
-          properties: { answer: { $ref: "#named-anchor" } },
-        }),
+  // strict 합성 시절엔 $defs rebase 때문에 named anchor $ref 를 거절해야 했다.
+  // 프롬프트 전달은 원문을 그대로 안내하므로 재작성이 없고 거절 사유도 사라진다(SON-532).
+  it("accepts a named-anchor $ref on Anthropic and allocates a stream id (SON-532)", async () => {
+    const { streamId } = await QgridFrame.prepareStream({
+      prompt: "hi",
+      model: "anthropic/claude-sonnet-4-6",
+      tools: [{ name: "lookup", inputSchema: { type: "object" } }],
+      jsonSchema: JSON.stringify({
+        type: "object",
+        properties: { answer: { $ref: "#named-anchor" } },
       }),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      message: expect.stringContaining(
-        "only root-relative JSON Pointer $ref values are supported",
-      ),
     });
+
+    expect(streamId).toEqual(expect.any(String));
   });
 
-  it("returns 400 for an oversized Anthropic argv schema before allocating a stream id", async () => {
-    await expect(
-      QgridFrame.prepareStream({
-        prompt: "hi",
-        model: "anthropic/claude-sonnet-4-6",
-        tools: [
-          {
-            name: "lookup",
-            description: "x".repeat(64 * 1024),
-            inputSchema: { type: "object" },
-          },
-        ],
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      message: expect.stringContaining("Anthropic dispatch schema exceeds argv"),
+  it("accepts an Anthropic schema beyond the old argv limit and allocates a stream id (SON-532)", async () => {
+    const { streamId } = await QgridFrame.prepareStream({
+      prompt: "hi",
+      model: "anthropic/claude-sonnet-4-6",
+      tools: [
+        {
+          name: "lookup",
+          description: "x".repeat(64 * 1024),
+          inputSchema: { type: "object" },
+        },
+      ],
     });
+
+    expect(streamId).toEqual(expect.any(String));
   });
 });
 

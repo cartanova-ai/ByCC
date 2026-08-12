@@ -138,6 +138,8 @@ function rejectImageGenerationStream(args: QueryInput): void {
   );
 }
 
+// anthropic 은 --json-schema 를 쓰지 않으므로(SON-532) strict 변환·argv 제한 없이 원형의
+// 구문·복잡도만 검증된다 — provider 분기는 buildAndValidateStrictOutputSchema 가 소유한다.
 function rejectInvalidCallerSchemas(args: QueryInput): void {
   if (args.jsonSchema === undefined && !args.tools?.length) return;
 

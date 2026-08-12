@@ -294,6 +294,16 @@ export function buildAndValidateStrictOutputSchema(
   input: Pick<QueryInput, "model" | "tools" | "jsonSchema">,
   provider = parseProviderRoute(input.model).provider,
 ): JsonValue | undefined {
+  // anthropic(SON-532): CC 에 --json-schema 를 전달하지 않는다 — 강제 없는 사후 채점이
+  // 소비자 의도(nullish 생략 등)와 충돌해 CC 내부 재시도 루프를 발화시켰다(왕복 2~4회,
+  // 4.7~9.1배 출력 청구 실측). 스키마/envelope 계약은 프롬프트 텍스트로 안내하고 판정은
+  // 소비자(zod)/parseEnvelope 가 맡는다. 따라서 strict 변환·argv 64KiB 제한 없이 수신
+  // 원형의 구문·복잡도(전역 512KiB 한도)만 검증해 caller-fault 를 조기에 돌려준다.
+  if (provider === "anthropic") {
+    parseAndValidateCallerSchemas(input);
+    return undefined;
+  }
+
   const outputSchema = buildStrictOutputSchema(input, provider);
   serializeAndValidateDispatchSchema(outputSchema, provider);
   return outputSchema;

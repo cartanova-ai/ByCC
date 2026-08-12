@@ -397,9 +397,12 @@ describe("QgridDispatcherClass", () => {
     },
   );
 
-  // SON-495: anthropic route 도 strict(required 유지)를 쓴다 — required 를 살려야 모델이 필드를
-  // 빠짐없이 채운다(실측 확정). optionalize 는 제거됨.
-  it("Anthropic route 에 strict(required 유지) outputSchema 를 전달한다", async () => {
+  // SON-532: anthropic route 는 --json-schema 를 쓰지 않는다 — CC 의 강제 없는 사후 채점이
+  // 소비자 의도와 충돌해 내부 재시도 루프를 발화시켰다. 스키마는 프롬프트로 안내되고
+  // 판정은 소비자(zod)가 맡으므로 provider 로는 outputSchema 를 보내지 않는다.
+  // (SON-495 의 "required 유지" 교훈은 채점 전제의 규칙이었다 — 안내문에는 소비자가
+  // 선언한 required 가 원형 그대로 남는다.)
+  it("Anthropic route 는 outputSchema 를 provider 로 전달하지 않는다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi.fn(
       async (_req: GenerateRequest): Promise<GenerateResult> => ({
@@ -429,13 +432,53 @@ describe("QgridDispatcherClass", () => {
       }),
     });
 
-    const outputSchema = generate.mock.calls[0]![0].outputSchema as {
-      required?: string[];
-      additionalProperties?: boolean;
-    };
-    // anthropic 도 OpenAI 와 동일하게 strictify — required 살아있음
-    expect(outputSchema.required).toEqual(["contents"]);
-    expect(outputSchema.additionalProperties).toBe(false);
+    expect(generate.mock.calls[0]![0].outputSchema).toBeUndefined();
+  });
+
+  it("Anthropic route 도 원형 스키마의 구문·복잡도는 계속 검증한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    dispatcher.anthropicDispatcher = { generate: vi.fn() } as never;
+
+    // 구문 오류는 provider 실행 전에 caller-fault 로 거절된다.
+    await expect(
+      dispatcher.query({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        jsonSchema: "{not json",
+      }),
+    ).rejects.toThrow("jsonSchema must contain valid JSON");
+
+    // 복잡도 한도(depth)도 그대로 산다.
+    await expect(
+      dispatcher.query({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        jsonSchema: deeplyNestedOutputSchema(5_000),
+      }),
+    ).rejects.toThrow("exceeds depth limit");
+  });
+
+  it("Anthropic route 는 strict 전용 argv 64KiB 제한을 적용하지 않는다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (): Promise<GenerateResult> => providerResult());
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    // 64KiB(ANTHROPIC_SCHEMA_ARGV_MAX_UTF8_BYTES) 초과, 전역 512KiB 미만 스키마.
+    // structured 시절에는 argv 제한으로 거절됐지만 프롬프트 전달은 system 크기 분기가 흡수한다.
+    const bigSchema = JSON.stringify({
+      type: "object",
+      description: "x".repeat(80 * 1024),
+      properties: { value: { type: "string" } },
+    });
+
+    await expect(
+      dispatcher.query({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        jsonSchema: bigSchema,
+      }),
+    ).resolves.toBeDefined();
+    expect(generate).toHaveBeenCalledOnce();
   });
 
   it("OpenAI route 도 strictify(required 유지)한다", async () => {
@@ -660,7 +703,9 @@ describe("QgridDispatcherClass", () => {
     ["anthropic", "query"],
     ["anthropic", "queryStream"],
   ] as const)(
-    "%s %s 모두 tools + jsonSchema composed outputSchema를 provider에 전달한다",
+    // openai 는 composed strict envelope 를 provider 로 보내고, anthropic 은 보내지 않는다
+    // (SON-532 — envelope 계약은 프롬프트로 안내). 응답 해석(emulation)은 양쪽 동일하다.
+    "%s %s tools + jsonSchema 경로: outputSchema 전달 계약과 envelope 해석",
     async (provider, method) => {
       const dispatcher = new QgridDispatcherClass();
       const model =
@@ -709,33 +754,37 @@ describe("QgridDispatcherClass", () => {
         );
       }
 
-      expect(request?.outputSchema).toMatchObject({
-        properties: {
-          result: {
-            anyOf: [
-              {
-                properties: {
-                  action: { enum: ["answer"] },
-                  answer: { $ref: "#/$defs/__qgrid_user_output" },
+      if (provider === "openai") {
+        expect(request?.outputSchema).toMatchObject({
+          properties: {
+            result: {
+              anyOf: [
+                {
+                  properties: {
+                    action: { enum: ["answer"] },
+                    answer: { $ref: "#/$defs/__qgrid_user_output" },
+                  },
                 },
-              },
-              {
-                properties: {
-                  action: { enum: ["tool_call"] },
-                  toolCalls: { minItems: 1 },
+                {
+                  properties: {
+                    action: { enum: ["tool_call"] },
+                    toolCalls: { minItems: 1 },
+                  },
                 },
-              },
-            ],
+              ],
+            },
           },
-        },
-        $defs: {
-          __qgrid_user_output: {
-            type: "object",
-            required: ["result"],
-            additionalProperties: false,
+          $defs: {
+            __qgrid_user_output: {
+              type: "object",
+              required: ["result"],
+              additionalProperties: false,
+            },
           },
-        },
-      });
+        });
+      } else {
+        expect(request?.outputSchema).toBeUndefined();
+      }
       expect(mappedText).toBe('{"payload":"ok"}');
     },
   );
