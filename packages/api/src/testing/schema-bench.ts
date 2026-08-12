@@ -11,6 +11,7 @@
  *   3. (별도 축) topLevel — 래퍼 키(GEN-359 병리)·펜스 잔존·프로즈. 형태 축이라
  *      syntax/contract 와 겹칠 수 있고, 게이트 계수는 이 축 기준이다.
  */
+import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 
 export type BenchMode = "generate" | "stream";
 
@@ -35,104 +36,42 @@ export interface BenchClassifyOptions {
 }
 
 /**
- * 미니 JSON Schema 검증기 — 벤치 fixture(deti 실물 포함)가 실제로 쓰는 keyword 를
- * 전부 지원한다: type/enum/const/required/properties/additionalProperties/items/
- * minItems/maxItems/minLength/maxLength/anyOf/oneOf. 위반 경로 목록을 반환한다.
- * 여기 없는 keyword 는 무시된다(검증 누락은 있어도 오탐은 없다).
+ * 표준 JSON Schema 검증 (Ajv, Draft 2020-12). 위반 경로 목록을 반환한다.
+ *
+ * 한때 축약 검증기를 썼으나 2차 검토가 기각했다 — 미지원 keyword 를 무시하고 oneOf 를
+ * anyOf 처럼 다뤄 false pass 가 났고, 실제로 e2e 4/4 통과 보고가 Ajv 재검증에서 2/4 로
+ * 뒤집혔다(anyOf 브랜치 내부의 enum 위반을 통째로 건너뜀). 임의 스키마(BENCH_SCHEMA_FILE)
+ * 를 게이트로 쓰려면 표준 검증기가 유일하게 신뢰 가능하다.
  */
-export function validateAgainstSchema(node: unknown, schema: unknown, path = "$"): string[] {
+export function validateAgainstSchema(node: unknown, schema: unknown): string[] {
   if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return [];
-  const sch = schema as Record<string, unknown>;
-  const errors: string[] = [];
-
-  const branches = (kw: "anyOf" | "oneOf") =>
-    Array.isArray(sch[kw]) ? (sch[kw] as unknown[]) : undefined;
-  for (const kw of ["anyOf", "oneOf"] as const) {
-    const list = branches(kw);
-    if (list && !list.some((b) => validateAgainstSchema(node, b, path).length === 0)) {
-      errors.push(`${path}: no ${kw} branch matched`);
-    }
-  }
-
-  const type = sch.type;
-  if (type !== undefined) {
-    const types = Array.isArray(type) ? type : [type];
-    const matches = types.some(
-      (t) =>
-        (t === "object" && node !== null && typeof node === "object" && !Array.isArray(node)) ||
-        (t === "array" && Array.isArray(node)) ||
-        (t === "string" && typeof node === "string") ||
-        (t === "number" && typeof node === "number") ||
-        (t === "integer" && typeof node === "number" && Number.isInteger(node)) ||
-        (t === "boolean" && typeof node === "boolean") ||
-        (t === "null" && node === null),
-    );
-    if (!matches) {
-      errors.push(`${path}: expected type ${JSON.stringify(type)}`);
-      return errors; // 타입이 틀리면 하위 검증은 무의미
-    }
-  }
-
-  if (Array.isArray(sch.enum) && !sch.enum.some((v) => deepEqual(v, node))) {
-    errors.push(`${path}: enum violation`);
-  }
-  if ("const" in sch && !deepEqual(sch.const, node)) {
-    errors.push(`${path}: const violation`);
-  }
-
-  if (typeof node === "string") {
-    if (typeof sch.minLength === "number" && node.length < sch.minLength) {
-      errors.push(`${path}: shorter than minLength ${sch.minLength}`);
-    }
-    if (typeof sch.maxLength === "number" && node.length > sch.maxLength) {
-      errors.push(`${path}: longer than maxLength ${sch.maxLength}`);
-    }
-  }
-
-  if (Array.isArray(node)) {
-    if (typeof sch.minItems === "number" && node.length < sch.minItems) {
-      errors.push(`${path}: fewer than minItems ${sch.minItems}`);
-    }
-    if (typeof sch.maxItems === "number" && node.length > sch.maxItems) {
-      errors.push(`${path}: more than maxItems ${sch.maxItems}`);
-    }
-    if (sch.items && typeof sch.items === "object" && !Array.isArray(sch.items)) {
-      node.forEach((item, i) => {
-        errors.push(...validateAgainstSchema(item, sch.items, `${path}[${i}]`));
-      });
-    }
-  }
-
-  if (node !== null && typeof node === "object" && !Array.isArray(node)) {
-    const record = node as Record<string, unknown>;
-    const properties =
-      sch.properties && typeof sch.properties === "object" && !Array.isArray(sch.properties)
-        ? (sch.properties as Record<string, unknown>)
-        : {};
-    if (Array.isArray(sch.required)) {
-      for (const key of sch.required) {
-        if (typeof key === "string" && !Object.hasOwn(record, key)) {
-          errors.push(`${path}.${key}: missing required`);
-        }
-      }
-    }
-    for (const [key, value] of Object.entries(record)) {
-      if (Object.hasOwn(properties, key)) {
-        errors.push(...validateAgainstSchema(value, properties[key], `${path}.${key}`));
-      } else if (sch.additionalProperties === false) {
-        errors.push(`${path}.${key}: additional property`);
-      }
-    }
-  }
-
-  return errors;
+  const validate = compileSchema(schema as Record<string, unknown>);
+  if (validate(node)) return [];
+  return (validate.errors ?? []).map(
+    (e) => `${e.instancePath || "$"}: ${e.message ?? e.keyword}${e.keyword === "enum" ? ` (${JSON.stringify((e.params as { allowedValues?: unknown[] }).allowedValues?.slice(0, 8))})` : ""}`,
+  );
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === null || b === null || typeof a !== typeof b) return false;
-  if (typeof a !== "object") return false;
-  return JSON.stringify(a) === JSON.stringify(b);
+const compiledSchemas = new WeakMap<object, ValidateFunction>();
+let ajvInstance: Ajv2020 | undefined;
+
+function compileSchema(schema: Record<string, unknown>): ValidateFunction {
+  const cached = compiledSchemas.get(schema);
+  if (cached) return cached;
+  // strict:false — 소비자 스키마의 비표준 어노테이션(description 변형 등)을 컴파일
+  // 에러로 만들지 않는다. 검증 시맨틱은 표준 그대로다.
+  ajvInstance ??= new Ajv2020({ strict: false, allErrors: true });
+  // $id 가 있는 스키마를 두 번 compile 하면 Ajv 가 중복 등록으로 던진다 — WeakMap 캐시가
+  // 같은 객체의 재컴파일을 막고, 다른 객체로 온 같은 $id 는 인스턴스를 새로 만들어 회피한다.
+  let validate: ValidateFunction;
+  try {
+    validate = ajvInstance.compile(schema);
+  } catch {
+    ajvInstance = new Ajv2020({ strict: false, allErrors: true });
+    validate = ajvInstance.compile(schema);
+  }
+  compiledSchemas.set(schema, validate);
+  return validate;
 }
 
 export interface TopLevelViolations {
@@ -325,11 +264,18 @@ export function aggregateBench(records: BenchRecord[]): BenchAggregateRow[] {
       const transportErrors = bucket.filter((r) => r.transportError !== undefined).length;
       const syntaxFails = bucket.filter((r) => r.classification?.syntax === "fail").length;
       const contractFails = bucket.filter((r) => r.classification?.contract === "fail").length;
+      // pass = 모든 축이 깨끗한 응답 — 형태 위반(래퍼/펜스/프로즈)과 스트림 델타≠done 도
+      // 실패다. syntax/contract 만 보면 "통과인데 펜스가 남은" 응답이 성공으로 집계된다
+      // (2차 검토 #7).
       const passes = bucket.filter(
         (r) =>
           r.transportError === undefined &&
           r.classification?.syntax === "ok" &&
-          r.classification.contract === "ok",
+          r.classification.contract === "ok" &&
+          !r.classification.topLevel.wrapperKey &&
+          !r.classification.topLevel.fenceResidue &&
+          !r.classification.topLevel.prose &&
+          r.deltaDoneMismatch !== true,
       ).length;
       const count = (pick: (v: TopLevelViolations) => boolean) =>
         bucket.filter((r) => r.classification !== undefined && pick(r.classification.topLevel))

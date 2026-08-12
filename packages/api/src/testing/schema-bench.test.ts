@@ -99,21 +99,29 @@ describe("validateAgainstSchema — 전체 트리 검증", () => {
     // 상위 키 판정만 하면 이게 통과한다 — 심층 검증의 존재 이유
     const errs = validateAgainstSchema({ scenes: [{}, {}, {}] }, nested);
     expect(errs.length).toBeGreaterThanOrEqual(6); // 각 scene 의 id·advance 누락
-    expect(errs[0]).toContain("missing required");
+    expect(errs[0]).toContain("must have required property");
   });
 
   it("타입·enum·minItems 위반을 경로와 함께 보고한다", () => {
-    expect(
-      validateAgainstSchema({ scenes: [{ id: 1, advance: "next" }] }, nested),
-    ).toEqual(expect.arrayContaining([expect.stringContaining("$.scenes: fewer than minItems")]));
+    expect(validateAgainstSchema({ scenes: [{ id: 1, advance: "next" }] }, nested)).toEqual(
+      expect.arrayContaining([expect.stringContaining("fewer than 3 items")]),
+    );
     const deep = validateAgainstSchema(
-      { scenes: [{ id: "s1", advance: "jump" }, { id: "s2", advance: "next" }, { id: "s3", advance: "next" }] },
+      {
+        scenes: [
+          { id: "s1", advance: "jump" },
+          { id: "s2", advance: "next" },
+          { id: "s3", advance: "next" },
+        ],
+      },
       nested,
     );
-    expect(deep).toEqual([expect.stringContaining("$.scenes[0].advance: enum violation")]);
+    expect(deep).toEqual([
+      expect.stringContaining("/scenes/0/advance: must be equal to one of the allowed values"),
+    ]);
   });
 
-  it("anyOf/oneOf/const/nullable union 을 지원한다 (deti 실물 keyword)", () => {
+  it("anyOf/const/nullable union 을 지원한다 (deti 실물 keyword)", () => {
     const sch = {
       type: "object",
       properties: {
@@ -123,7 +131,46 @@ describe("validateAgainstSchema — 전체 트리 검증", () => {
       required: ["mood", "kind"],
     };
     expect(validateAgainstSchema({ mood: null, kind: "a" }, sch)).toEqual([]);
-    expect(validateAgainstSchema({ mood: 3, kind: "c" }, sch)).toHaveLength(2);
+    // allErrors 라 브랜치별 세부 에러가 함께 나온다 — 두 필드 모두 위반이 잡히는 것만 고정
+    const errs = validateAgainstSchema({ mood: 3, kind: "c" }, sch);
+    expect(errs.some((e) => e.startsWith("/mood:"))).toBe(true);
+    expect(errs.some((e) => e.startsWith("/kind:"))).toBe(true);
+  });
+
+  it("oneOf 는 정확히 한 브랜치만 허용한다 — anyOf 로 완화하지 않는다 (2차 검토 #2)", () => {
+    const sch = {
+      oneOf: [{ type: "object", required: ["a"] }, { type: "object" }],
+    };
+    // 두 브랜치 모두 매칭 → oneOf 위반. 축약 검증기는 이걸 통과시켰다.
+    expect(validateAgainstSchema({ a: 1 }, sch)).toEqual(
+      expect.arrayContaining([expect.stringContaining("exactly one")]),
+    );
+    expect(validateAgainstSchema({ b: 1 }, sch)).toEqual([]);
+  });
+
+  it("실측 반증 케이스: anyOf 브랜치 내부의 enum 위반을 잡는다 (e2e 4/4→2/4 원인)", () => {
+    // v1 e2e 오판의 축소판 — expression 이 anyOf 브랜치 안 enum 에 걸림
+    const sch = {
+      type: "object",
+      properties: {
+        elements: {
+          type: "array",
+          items: {
+            anyOf: [
+              {
+                type: "object",
+                properties: { expression: { type: "string", enum: ["평온", "긴장"] } },
+                required: ["expression"],
+              },
+              { type: "null" },
+            ],
+          },
+        },
+      },
+      required: ["elements"],
+    };
+    expect(validateAgainstSchema({ elements: [{ expression: "기대" }] }, sch)).not.toEqual([]);
+    expect(validateAgainstSchema({ elements: [{ expression: "평온" }, null] }, sch)).toEqual([]);
   });
 
   it("정상 인스턴스는 위반 0", () => {
@@ -279,9 +326,25 @@ describe("aggregateBench", () => {
     expect(rows[0]!.totalCostUsd).toBeCloseTo(0.03);
   });
 
-  it("델타≠done 불일치를 집계한다", () => {
+  it("델타≠done 불일치를 집계하고 pass 에서도 제외한다 (2차 검토 #7)", () => {
     const rows = aggregateBench([rec({ deltaDoneMismatch: true }), rec({ iteration: 1 })]);
     expect(rows[0]!.deltaDoneMismatches).toBe(1);
+    expect(rows[0]!.passes).toBe(1); // mismatch 건은 syntax/contract ok 여도 pass 아님
+  });
+
+  it("형태 위반(펜스 잔존 등)은 contract ok 여도 pass 가 아니다 (2차 검토 #7)", () => {
+    const rows = aggregateBench([
+      rec({
+        classification: {
+          syntax: "ok",
+          contract: "ok",
+          topLevel: { wrapperKey: false, fenceResidue: true, prose: false },
+        },
+      }),
+      rec({ iteration: 1 }),
+    ]);
+    expect(rows[0]!.passes).toBe(1);
+    expect(rows[0]!.fenceResidue).toBe(1);
   });
 
   it("표 렌더가 헤더+행 형태를 유지한다", () => {

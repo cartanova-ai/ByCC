@@ -246,8 +246,19 @@ interface TurnArgs {
 }
 
 // sonamu @api 규약: 파라미터는 { args: QueryInput } 로 감싼다 (AI SDK 와 동일 wire shape)
+//
+// logger 는 기본 false — tool 검증 조기 실패(인자 위반 등)로 연속턴을 포기하면
+// request-log run 이 열린 채 남는다 (#9). 로그가 필요하면 BENCH_LOG=1 (열린 run
+// 이 stale cleanup 까지 남을 수 있음을 감수).
+const BENCH_LOG = process.env.BENCH_LOG === "1";
 function wireBody(turn: TurnArgs): string {
-  return JSON.stringify({ args: { ...turn, projectName: "schema-delivery-bench" } });
+  return JSON.stringify({
+    args: {
+      ...turn,
+      projectName: "schema-delivery-bench",
+      ...(BENCH_LOG ? {} : { logger: false }),
+    },
+  });
 }
 
 interface TurnResult {
@@ -557,10 +568,24 @@ async function main(): Promise<void> {
     }
   }
 
-  repairCheckpointTail(OUT);
+  // 잘린 tail 수리는 파일을 실제로 쓰는 live 에서만 — dry-run 은 무변경이어야 한다 (#10)
+  if (LIVE) repairCheckpointTail(OUT);
   const completed = existsSync(OUT)
     ? parseCheckpointLines(readFileSync(OUT, "utf8"))
     : new Map<string, BenchRecord>();
+  // 현재 run 의 checkpoint 키 집합 — resume 스킵과 최종 집계가 같은 집합을 봐야
+  // 이전 model/mode/iteration 범위의 레코드가 현재 증거로 둔갑하지 않는다 (#4)
+  const currentKeys = new Set(
+    tasks.map((t) =>
+      checkpointKey({
+        fixture: t.fixture.name,
+        fixtureHash: hashes.get(t.fixture.name),
+        model: t.model,
+        mode: t.mode,
+        iteration: t.iteration,
+      }),
+    ),
+  );
   const pending = tasks.filter(
     (t) =>
       !completed.has(
@@ -620,11 +645,27 @@ async function main(): Promise<void> {
   });
   await Promise.all(workers);
 
-  // 집계는 현재 fixture 지문과 일치하는 레코드만 — 옛 지문의 잔재는 표에서 제외
-  const all = [...parseCheckpointLines(readFileSync(OUT, "utf8")).values()].filter(
-    (r) => hashes.get(r.fixture) === r.fixtureHash,
-  );
-  console.log(`\n${formatAggregateTable(aggregateBench(all))}`);
+  // 집계는 **현재 run 의 조합**(model×fixture@hash×mode×iteration<N)에 속하는
+  // 레코드만 — 파일에 남은 다른 run 의 잔재는 표에서 제외한다 (#4)
+  const finalMap = parseCheckpointLines(readFileSync(OUT, "utf8"));
+  const current = [...finalMap.entries()]
+    .filter(([key]) => currentKeys.has(key))
+    .map(([, record]) => record);
+  console.log(`\n${formatAggregateTable(aggregateBench(current))}`);
+  // cell 별 정확히 N 건인지 — 부족하면 어떤 cell 이 몇 건인지 명시한다
+  const cellCounts = new Map<string, number>();
+  for (const r of current) {
+    const cell = `${r.model}|${r.fixture}|${r.mode}`;
+    cellCounts.set(cell, (cellCounts.get(cell) ?? 0) + 1);
+  }
+  const incomplete = [...cellCounts.entries()].filter(([, n]) => n !== N);
+  if (incomplete.length > 0 || cellCounts.size !== MODELS.length * fixtures.length * MODES.length) {
+    console.log(
+      `⚠ 불완전한 cell (기대 N=${N}): ${incomplete.map(([c, n]) => `${c}=${n}`).join(", ") || "누락 cell 존재"}`,
+    );
+  } else {
+    console.log(`모든 cell 이 정확히 N=${N} 건입니다.`);
+  }
 }
 
 main().catch((error) => {
