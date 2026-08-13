@@ -141,11 +141,7 @@ export class QgridDispatcherClass {
       // sessionKey 소비자의 warm 좌표를 죽은 좌표로 덮어써 다음 텍스트 turn 이 cold 로 떨어진다.
       const coord = input.imageGeneration
         ? undefined
-        : issueConvContext(
-            result.threadCoord,
-            decision,
-            preferredOpenAITokenId(result.threadCoord.workerId),
-          );
+        : issueConvContext(result.threadCoord, decision, result.threadCoord.workerId);
 
       return applyToolCallEmulation(toEmulationResult(result), input.tools, {
         threadCoord: coord,
@@ -227,7 +223,7 @@ export class QgridDispatcherClass {
                 threadCoord: issueConvContext(
                   turnResult.threadCoord,
                   decision,
-                  preferredOpenAITokenId(turnResult.threadCoord.workerId),
+                  turnResult.threadCoord.workerId,
                 ),
                 answerKind,
               }),
@@ -291,12 +287,6 @@ export class QgridDispatcherClass {
 
     throw directLlmApiFallbackNotImplemented(input);
   }
-}
-
-// Legacy coordinates encode tokenId*100+workerIndex. Direct affinity keeps only the token choice;
-// small values support coordinates that already contain a token ID.
-function preferredOpenAITokenId(workerId: number): number {
-  return workerId >= 100 ? Math.floor(workerId / 100) : workerId;
 }
 
 function parseProviderRoute(model: string | undefined): { provider?: string; model: string } {

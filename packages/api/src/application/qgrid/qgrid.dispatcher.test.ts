@@ -211,7 +211,7 @@ describe("QgridDispatcherClass", () => {
     const dispatcher = new QgridDispatcherClass();
     dispatcher.openaiDispatcher = {
       generate: vi.fn(async () =>
-        providerResult({ threadCoord: { workerId: 907, threadId: "ignored", epoch: 2 } }),
+        providerResult({ threadCoord: { workerId: 137, threadId: "ignored", epoch: -1 } }),
       ),
     } as never;
 
@@ -223,7 +223,7 @@ describe("QgridDispatcherClass", () => {
     });
 
     expect(result.runContext?.threadCoord).toEqual({
-      workerId: 9,
+      workerId: 137,
       threadId: "c".repeat(64),
       epoch: -1,
       systemHash: expect.any(String),
