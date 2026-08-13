@@ -85,8 +85,10 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
 
   const resp = await fetch(OPENAI_TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    // 토큰 엔드포인트는 OAuth 표준 form 인코딩 계약을 강제한다. JSON 으로 보내면
+    // access token 만료 후의 모든 refresh 가 거부되어 토큰이 통째로 죽는다.
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
       grant_type: "refresh_token",
       client_id: OPENAI_CLIENT_ID,
       refresh_token: creds.refreshToken,

@@ -69,7 +69,10 @@ describe("OpenAI refresh", () => {
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(request.body as string)).toEqual({
+    expect((request.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/x-www-form-urlencoded",
+    );
+    expect(Object.fromEntries(request.body as URLSearchParams)).toEqual({
       grant_type: "refresh_token",
       client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
       refresh_token: "old-refresh",
