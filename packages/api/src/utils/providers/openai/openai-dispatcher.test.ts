@@ -346,8 +346,42 @@ describe("OpenAIDispatcher direct runtime", () => {
     await expect(next).resolves.toMatchObject({ tokenName: "one" });
   });
 
+  it("queues instead of rejecting when the only eligible token is busy", async () => {
+    let release!: () => void;
+    let call = 0;
+    const d = new OpenAIDispatcher(config(), undefined, {
+      clientFactory: () => ({
+        responses: () => ({
+          async *[Symbol.asyncIterator]() {
+            call++;
+            if (call === 1) await new Promise<void>((resolve) => (release = resolve));
+            yield { type: "completed", responseId: "r" } as const;
+          },
+        }),
+      }),
+      fetch: async () => quotaResponse(90),
+    });
+    // one: threshold 없음(항상 eligible), two: threshold 초과 상태로 permit 은 비어 있음.
+    await d.onTokenAdded(1, "one", credentials, null);
+    await d.onTokenAdded(2, "two", { ...credentials, accountId: "acct2" }, 80);
+
+    const active = d.generate(request());
+    await vi.waitFor(() => expect(call).toBe(1));
+
+    // one 이 바쁘다는 이유로 "전부 threshold 초과"라고 판정하면 안 된다 → 큐잉되어야 한다.
+    const queued = d.generate(request());
+    await tickTimer();
+    expect(d.queueLength).toBe(1);
+
+    release();
+    await active;
+    await expect(queued).resolves.toMatchObject({ tokenName: "one" });
+  });
+
   it("fails quota lookup open, gates all exceeded tokens, and recovers after lifecycle update", async () => {
-    const completeClient = () => ({ responses: () => events({ type: "completed", responseId: "r" }) });
+    const completeClient = () => ({
+      responses: () => events({ type: "completed", responseId: "r" }),
+    });
     const failOpen = new OpenAIDispatcher(config(), undefined, {
       clientFactory: completeClient,
       fetch: async () => new Response("down", { status: 503 }),

@@ -487,16 +487,21 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   ): Promise<Permit | null> {
     const eligible = new Set<number>();
     const over: Array<{ name: string; threshold: number }> = [];
+    // permit 이 없어 지금 못 고르는 토큰도 quota 판정에는 포함한다. 바쁜 eligible 토큰을
+    // 빼고 판단하면 "전부 threshold 초과"로 오인해 큐잉해야 할 요청을 거절하게 된다.
+    let quotaEligibleExists = false;
     for (const [id, token] of this.tokenMetadata) {
-      if (!token.active || token.inUse >= token.capacity) continue;
-      if (await this.isQuotaEligible(id, token, signal)) eligible.add(id);
-      else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
+      if (!token.active) continue;
+      if (await this.isQuotaEligible(id, token, signal)) {
+        quotaEligibleExists = true;
+        if (token.inUse < token.capacity) eligible.add(id);
+      } else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
         over.push({ name: token.name, threshold: token.quotaThreshold });
     }
     const activeAvailable = [...this.tokenMetadata.values()].some(
       (t) => t.active && t.inUse < t.capacity,
     );
-    if (activeAvailable && eligible.size === 0 && over.length) {
+    if (activeAvailable && !quotaEligibleExists && over.length) {
       logger.warn("quota_threshold gate: all_exceeded", {
         provider: "openai",
         overThresholdTokens: over,
