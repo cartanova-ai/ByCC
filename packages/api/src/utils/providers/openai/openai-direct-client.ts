@@ -187,18 +187,18 @@ function cacheAffinityUuid(key: string): string {
   return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
 }
 
+type AffinityConnection = {
+  socket: OpenAIWebSocketLike;
+  events: ReturnType<typeof socketEvents>;
+  closed?: boolean;
+};
+
 export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
   private static readonly MAX_AFFINITY_CONNECTIONS = 16;
   private credentials: OpenAIDirectCredentials;
   private readonly refreshCredentials?: () => Promise<OpenAIDirectCredentials>;
   private readonly webSocketFactory: OpenAIWebSocketFactory;
-  private readonly affinityConnections = new Map<
-    string,
-    {
-      socket: OpenAIWebSocketLike;
-      events: ReturnType<typeof socketEvents>;
-    }
-  >();
+  private readonly affinityConnections = new Map<string, AffinityConnection>();
   private readonly busyAffinities = new Set<string>();
 
   constructor(options: OpenAIWebSocketTransportOptions) {
@@ -221,23 +221,36 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
     this.busyAffinities.clear();
   }
 
-  private rememberAffinityConnection(
-    threadId: string,
-    connection: {
-      socket: OpenAIWebSocketLike;
-      events: ReturnType<typeof socketEvents>;
-    },
-  ): void {
-    if (this.affinityConnections.size >= OpenAIWebSocketTransport.MAX_AFFINITY_CONNECTIONS) {
-      const oldestKey = this.affinityConnections.keys().next().value;
-      if (oldestKey) {
-        const oldest = this.affinityConnections.get(oldestKey)!;
-        oldest.events.cleanup();
-        oldest.socket.close(1000, "affinity cache evicted");
-        this.affinityConnections.delete(oldestKey);
-      }
+  /**
+   * 캐시에 연결을 등록한다. 자리가 없으면 유휴 연결만 축출하고, 전부 사용 중이면
+   * 진행 중인 응답을 끊는 대신 등록을 포기한다(false → 이 요청은 일회성 소켓으로 처리).
+   */
+  private rememberAffinityConnection(threadId: string, connection: AffinityConnection): boolean {
+    if (
+      !this.affinityConnections.has(threadId) &&
+      this.affinityConnections.size >= OpenAIWebSocketTransport.MAX_AFFINITY_CONNECTIONS
+    ) {
+      const idleKey = [...this.affinityConnections.keys()].find(
+        (key) => !this.busyAffinities.has(key),
+      );
+      if (idleKey === undefined) return false;
+      const idle = this.affinityConnections.get(idleKey)!;
+      idle.events.cleanup();
+      idle.socket.close(1000, "affinity cache evicted");
+      this.affinityConnections.delete(idleKey);
     }
     this.affinityConnections.set(threadId, connection);
+    // 유휴 상태에서 backend 가 끊은 소켓을 다음 요청이 집어들지 않도록 캐시에서 제거한다.
+    const drop = () => {
+      connection.closed = true;
+      if (this.busyAffinities.has(threadId)) return;
+      if (this.affinityConnections.get(threadId) !== connection) return;
+      this.affinityConnections.delete(threadId);
+      connection.events.cleanup();
+    };
+    connection.socket.on("close", drop);
+    connection.socket.on("error", drop);
+    return true;
   }
 
   private async *run(request: OpenAITransportRequest): AsyncGenerator<OpenAINormalizedEvent> {
@@ -247,7 +260,14 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
       const hasAffinity = request.body.prompt_cache_key !== undefined;
       const retainConnection = hasAffinity && !this.busyAffinities.has(request.threadId);
       if (retainConnection) this.busyAffinities.add(request.threadId);
-      const cached = retainConnection ? this.affinityConnections.get(request.threadId) : undefined;
+      const entry = retainConnection ? this.affinityConnections.get(request.threadId) : undefined;
+      if (entry?.closed) {
+        this.affinityConnections.delete(request.threadId);
+        entry.events.cleanup();
+      }
+      const cached = entry?.closed ? undefined : entry;
+      // 캐시 등록에 실패하면 이 요청은 재사용 대상이 아니다.
+      let retained = retainConnection;
       const socket =
         cached?.socket ??
         this.webSocketFactory(websocketUrl(CHATGPT_CODEX_RESPONSES_URL), {
@@ -288,7 +308,7 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
             throw new OpenAIProtocolError("OpenAI WebSocket closed before the handshake completed");
           }
           if (retainConnection) {
-            this.rememberAffinityConnection(request.threadId, { socket, events });
+            retained = this.rememberAffinityConnection(request.threadId, { socket, events });
           }
         }
 
@@ -316,7 +336,7 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
             if (!event) continue;
             if (event.type === "completed") {
               completed = true;
-              if (retainConnection) events.detachAbort();
+              if (retained) events.detachAbort();
               else socket.close(1000, "response completed");
               yield event;
               return;
@@ -334,8 +354,8 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
           }
         }
       } finally {
-        if (!completed || !retainConnection) {
-          if (retainConnection) this.affinityConnections.delete(request.threadId);
+        if (!completed || !retained) {
+          if (retained) this.affinityConnections.delete(request.threadId);
           events.cleanup();
           if (!completed) socket.terminate();
         }

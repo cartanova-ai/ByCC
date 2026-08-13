@@ -210,6 +210,37 @@ async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function wsClient(factory: OpenAIWebSocketFactory): OpenAIDirectClient {
+  return new OpenAIDirectClient({
+    credentials: { accessToken: "access", accountId: "acct" },
+    transportKind: "websocket",
+    webSocketFactory: factory,
+  });
+}
+
+/** 새 소켓 요청 시작 + handshake 완료까지 진행시킨다. */
+async function startAffinity(
+  mock: ReturnType<typeof mockedWebSocket>,
+  client: OpenAIDirectClient,
+  promptCacheKey: string,
+) {
+  const before = mock.sockets.length;
+  const result = collect(client.responses({ model: "gpt", history: [], promptCacheKey }));
+  await tick();
+  const socket = mock.sockets[before];
+  socket?.emit("open");
+  await tick();
+  return { result, socket: mock.sockets[mock.sockets.length - 1]! };
+}
+
+function completeSocket(socket: MockSocket, id: string): void {
+  socket.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "response.completed", response: { id } })),
+    false,
+  );
+}
+
 describe("OpenAI direct Responses WebSocket client", () => {
   it("scheme-swaps the pinned URL, sends identity headers and one response.create body", async () => {
     const mock = mockedWebSocket();
@@ -332,6 +363,49 @@ describe("OpenAI direct Responses WebSocket client", () => {
 
     await expect(second).rejects.toMatchObject({ name: "AbortError" });
     expect(mock.sockets[0]!.terminated).toBe(true);
+  });
+
+  it("drops an affinity socket that the backend closed while idle and reconnects", async () => {
+    const mock = mockedWebSocket();
+    const client = wsClient(mock.factory);
+
+    const first = await startAffinity(mock, client, "shared");
+    completeSocket(first.socket, "r1");
+    await first.result;
+
+    // 유휴 상태에서 backend 가 소켓을 끊는다.
+    first.socket.emit("close", 1006, Buffer.from("idle timeout"));
+
+    const second = await startAffinity(mock, client, "shared");
+    completeSocket(second.socket, "r2");
+    await expect(second.result).resolves.toEqual([{ type: "completed", responseId: "r2" }]);
+    expect(mock.sockets).toHaveLength(2);
+  });
+
+  it("never evicts an affinity socket that is still streaming", async () => {
+    const mock = mockedWebSocket();
+    const client = wsClient(mock.factory);
+
+    const busy = [];
+    for (let i = 0; i < 16; i++) busy.push(await startAffinity(mock, client, `key-${i}`));
+
+    // 17번째 handshake 는 캐시가 가득 찬 상태에서 들어온다.
+    const overflow = await startAffinity(mock, client, "key-16");
+    completeSocket(overflow.socket, "overflow");
+    await expect(overflow.result).resolves.toEqual([
+      { type: "completed", responseId: "overflow" },
+    ]);
+
+    // 진행 중이던 가장 오래된 응답은 끊기지 않고 그대로 완료돼야 한다.
+    expect(busy[0]!.socket.closed).toBeUndefined();
+    expect(busy[0]!.socket.terminated).toBe(false);
+    completeSocket(busy[0]!.socket, "r0");
+    await expect(busy[0]!.result).resolves.toEqual([{ type: "completed", responseId: "r0" }]);
+
+    for (let i = 1; i < 16; i++) {
+      completeSocket(busy[i]!.socket, `r${i}`);
+      await busy[i]!.result;
+    }
   });
 
   it("isolates concurrent requests with the same prompt affinity", async () => {
