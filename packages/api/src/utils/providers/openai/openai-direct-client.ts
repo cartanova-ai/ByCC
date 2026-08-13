@@ -154,6 +154,28 @@ function abortError(signal?: AbortSignal): Error {
     : new DOMException("Aborted", "AbortError");
 }
 
+async function nextPooledRecord(
+  events: ReturnType<typeof socketEvents>,
+  socket: OpenAIWebSocketLike,
+  signal?: AbortSignal,
+): Promise<SocketRecord> {
+  if (!signal) return events.next();
+  if (signal.aborted) throw abortError(signal);
+  return new Promise<SocketRecord>((resolve, reject) => {
+    const onAbort = () => {
+      socket.terminate();
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void events
+      .next()
+      .then(resolve, reject)
+      .finally(() => {
+        signal.removeEventListener("abort", onAbort);
+      });
+  });
+}
+
 function cacheAffinityUuid(key: string): string {
   const hex = crypto.createHash("sha256").update(key).digest("hex").slice(0, 32).split("");
   hex[12] = "4";
@@ -267,7 +289,9 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
         });
 
         while (true) {
-          const record = await events.next();
+          const record = cached
+            ? await nextPooledRecord(events, socket, request.signal)
+            : await events.next();
           if (record.kind === "message") {
             if (record.isBinary) {
               throw new OpenAIProtocolError("OpenAI WebSocket sent an unexpected binary message");

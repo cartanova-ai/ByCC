@@ -301,6 +301,39 @@ describe("OpenAI direct Responses WebSocket client", () => {
     expect(mock.sockets[0]!.terminated).toBe(false);
   });
 
+  it("aborts a request that reuses a pooled WebSocket", async () => {
+    const mock = mockedWebSocket();
+    const client = new OpenAIDirectClient({
+      credentials: { accessToken: "access", accountId: "acct" },
+      transportKind: "websocket",
+      webSocketFactory: mock.factory,
+    });
+    const first = collect(
+      client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),
+    );
+    mock.sockets[0]!.emit("open");
+    await tick();
+    mock.sockets[0]!.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "response.completed", response: { id: "r1" } })),
+      false,
+    );
+    await first;
+
+    const controller = new AbortController();
+    const second = collect(
+      client.responses(
+        { model: "gpt", history: [], promptCacheKey: "shared" },
+        controller.signal,
+      ),
+    );
+    await tick();
+    controller.abort();
+
+    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    expect(mock.sockets[0]!.terminated).toBe(true);
+  });
+
   it("fails binary frames and closes without a terminal event without replay", async () => {
     const mock = mockedWebSocket();
     const client = new OpenAIDirectClient({
