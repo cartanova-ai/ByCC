@@ -378,6 +378,34 @@ describe("OpenAI direct Responses WebSocket client", () => {
     expect(mock.sockets).toHaveLength(2);
   });
 
+  it("rejects an in-flight pooled request when the client closes", async () => {
+    const mock = mockedWebSocket();
+    const client = new OpenAIDirectClient({
+      credentials: { accessToken: "access", accountId: "acct" },
+      transportKind: "websocket",
+      webSocketFactory: mock.factory,
+    });
+    const first = collect(
+      client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),
+    );
+    mock.sockets[0]!.emit("open");
+    await tick();
+    mock.sockets[0]!.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "response.completed", response: { id: "r1" } })),
+      false,
+    );
+    await first;
+
+    const second = collect(
+      client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),
+    );
+    await tick();
+    client.close();
+
+    await expect(second).rejects.toThrow("event stream was closed");
+  });
+
   it("fails binary frames and closes without a terminal event without replay", async () => {
     const mock = mockedWebSocket();
     const client = new OpenAIDirectClient({

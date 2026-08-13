@@ -142,7 +142,11 @@ function socketEvents(socket: OpenAIWebSocketLike, signal?: AbortSignal) {
       socket.off("error", onError);
       socket.off("unexpected-response", onUnexpectedResponse);
       records.length = 0;
-      waiters.length = 0;
+      const closed = {
+        kind: "error" as const,
+        error: new OpenAIProtocolError("OpenAI WebSocket event stream was closed"),
+      };
+      for (const waiter of waiters.splice(0)) waiter(closed);
     },
     detachAbort: () => signal?.removeEventListener("abort", onAbort),
   };
