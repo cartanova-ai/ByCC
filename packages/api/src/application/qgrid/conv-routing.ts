@@ -8,7 +8,7 @@
  * 식별: 서버 발급 불투명 thread 좌표(QgridThreadCoord)를 클라가 그대로 회송.
  * 검증: systemHash(다른 대화 오접속 차단) + (dispatcher의) epoch/worker 생존.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { type ReuseThreadCoord } from "../../utils/providers/common/provider-dispatcher";
 import { type JsonValue, type UserInput } from "../../utils/providers/common/provider-types";
@@ -80,10 +80,9 @@ export function decideConvRouting(
     coord.threadId === input.cacheAffinityKey;
   const legacyReuseEligible =
     options.directOpenAI !== true && coord !== undefined && coord.systemHash === sysHash;
-  const cacheKey = options.directOpenAI
-    ? (input.cacheAffinityKey ??
-      (directCoordEligible ? coord.threadId : randomBytes(32).toString("hex")))
-    : undefined;
+  // affinity 를 요청하지 않은 one-shot 요청에 임의 키를 붙이면 transport 가 그 소켓을
+  // affinity 소켓으로 오인해 재사용되지 않을 연결을 계속 붙들어 둔다 → 키를 비워 둔다.
+  const cacheKey = options.directOpenAI ? input.cacheAffinityKey : undefined;
 
   return {
     reuse:

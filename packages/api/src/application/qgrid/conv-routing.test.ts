@@ -168,8 +168,16 @@ describe("decideConvRouting", () => {
   });
 
   it("system hash separates model namespaces", () => {
-    expect(systemHash("same", "openai/gpt-5.5")).not.toBe(
-      systemHash("same", "openai/gpt-5.4"),
-    );
+    expect(systemHash("same", "openai/gpt-5.5")).not.toBe(systemHash("same", "openai/gpt-5.4"));
+  });
+
+  it("direct OpenAI 요청에 affinity key 가 없으면 cache key 를 만들지 않는다", () => {
+    const decision = decideConvRouting(input({ model: "openai/gpt-5.5" }), {
+      directOpenAI: true,
+      modelNamespace: "openai/gpt-5.5",
+    });
+
+    expect(decision.promptCacheKey).toBeUndefined();
+    expect(decision.preferredTokenId).toBeUndefined();
   });
 });
