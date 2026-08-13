@@ -40,6 +40,17 @@ async function* events(...values: OpenAINormalizedEvent[]) {
   yield* values;
 }
 
+function quotaResponse(usedPercent = 1): Response {
+  return new Response(JSON.stringify({ rate_limits: { primary_window: { used_percent: usedPercent } } }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function tickTimer(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("OpenAIDispatcher direct runtime", () => {
   it("passes the resolved transport to the injectable client factory", async () => {
     const factory = vi.fn((_options: import("./openai-direct-client").OpenAIDirectClientOptions) => ({
@@ -239,6 +250,100 @@ describe("OpenAIDispatcher direct runtime", () => {
     release();
     await active;
     await expect(d.generate(request())).resolves.toMatchObject({ tokenName: "new" });
+  });
+
+  it("retires a replaced client only after its in-flight requests finish", async () => {
+    let release!: () => void;
+    let call = 0;
+    const close = vi.fn();
+    const d = new OpenAIDispatcher(config(2), undefined, {
+      clientFactory: () => ({
+        responses: () => ({
+          async *[Symbol.asyncIterator]() {
+            call++;
+            if (call === 1) await new Promise<void>((resolve) => (release = resolve));
+            yield { type: "completed", responseId: "r" } as const;
+          },
+        }),
+        close,
+      }),
+    });
+    await d.onTokenAdded(1, "old", credentials);
+    const active = d.generate(request());
+    await vi.waitFor(() => expect(call).toBe(1));
+
+    await d.onTokenUpdated(1, "new", { ...credentials, accessToken: "replacement" });
+    // 세대 교체는 새 요청이 새 client 를 만들 뿐, 진행 중인 client 를 끊지 않는다.
+    await expect(d.generate(request())).resolves.toMatchObject({ tokenName: "new" });
+    expect(close).not.toHaveBeenCalled();
+
+    release();
+    await expect(active).resolves.toMatchObject({ tokenName: "new" });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a hung quota lookup when the caller aborts", async () => {
+    const started = vi.fn(() => events({ type: "completed", responseId: "r" }));
+    const d = new OpenAIDispatcher(config(), undefined, {
+      clientFactory: () => ({ responses: started }),
+      fetch: async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = (init as RequestInit | undefined)?.signal;
+          if (!signal) return;
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    });
+    await d.onTokenAdded(1, "one", credentials, 80);
+    const controller = new AbortController();
+    const pending = d.generate(request({ abortSignal: controller.signal }));
+    await tickTimer();
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(started).not.toHaveBeenCalled();
+  });
+
+  it("keeps the next queued request when the queue head is aborted during quota selection", async () => {
+    const releases: Array<() => void> = [];
+    let releaseQuota: (() => void) | undefined;
+    let quotaCalls = 0;
+    const d = new OpenAIDispatcher(config(), undefined, {
+      clientFactory: () => ({
+        responses: () => ({
+          async *[Symbol.asyncIterator]() {
+            await new Promise<void>((resolve) => releases.push(resolve));
+            yield { type: "completed", responseId: "r" } as const;
+          },
+        }),
+      }),
+      fetch: async () => {
+        quotaCalls++;
+        // 두 번째 lookup(=head 를 위한 drain)만 붙잡아 abort 와 경합시킨다.
+        if (quotaCalls === 2) await new Promise<void>((resolve) => (releaseQuota = resolve));
+        return quotaResponse();
+      },
+    });
+    await d.onTokenAdded(1, "one", credentials, 80);
+
+    const active = d.generate(request());
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    const headAbort = new AbortController();
+    const head = d.generate(request({ abortSignal: headAbort.signal }));
+    const next = d.generate(request());
+    await tickTimer();
+    // quota 캐시를 무효화해 다음 selectPermit 이 실제 lookup 을 타게 한다.
+    await d.onTokenUpdated(1, "one", credentials, 80);
+
+    // 첫 permit 반납 → drain 이 head 를 위해 quota lookup 을 기다리는 사이 head 가 abort 된다.
+    releases.shift()!();
+    await active;
+    await vi.waitFor(() => expect(releaseQuota).toBeTypeOf("function"));
+    headAbort.abort();
+    await expect(head).rejects.toMatchObject({ name: "AbortError" });
+    releaseQuota!();
+
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases.shift()!();
+    await expect(next).resolves.toMatchObject({ tokenName: "one" });
   });
 
   it("fails quota lookup open, gates all exceeded tokens, and recovers after lifecycle update", async () => {

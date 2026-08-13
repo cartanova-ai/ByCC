@@ -24,6 +24,7 @@ export type OpenAIQuotaUsageResult =
 export interface OpenAIQuotaHttpOptions {
   credentials: Pick<OpenAICredentials, "accessToken" | "accountId">;
   fetch?: typeof fetch;
+  signal?: AbortSignal;
 }
 
 async function readDirect(options: OpenAIQuotaHttpOptions): Promise<OpenAIRateLimitsWithMeta> {
@@ -33,6 +34,7 @@ async function readDirect(options: OpenAIQuotaHttpOptions): Promise<OpenAIRateLi
       options.credentials.accessToken,
       options.credentials.accountId,
     ),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   if (!response.ok) throw new Error(`OpenAI quota lookup failed: HTTP ${response.status}`);
   const body = (await response.json()) as Record<string, unknown>;

@@ -24,6 +24,9 @@ import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
 const QUEUE_TIMEOUT_MS = 60_000;
 const MAX_QUEUE_SIZE = 50;
+// 교체된 codex worker 가 강제하던 watchdog. 호출자가 timeoutMs 를 생략해도 permit 이
+// 영원히 붙잡히지 않도록 direct transport 도 유한한 기본 상한을 유지한다.
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
 export type ImageFailureKind = "gate" | "not_called" | "incomplete";
 
@@ -68,6 +71,13 @@ export type OpenAIDirectClientFactory = (
   tokenId: number,
 ) => Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
 
+type ClientEntry = {
+  generation: number;
+  client: Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
+  inFlight: number;
+  retired: boolean;
+};
+
 export interface OpenAIDispatcherDependencies {
   clientFactory?: OpenAIDirectClientFactory;
   fetch?: typeof fetch;
@@ -79,9 +89,9 @@ function abortError(signal?: AbortSignal): Error {
   return reason instanceof Error ? reason : new DOMException("Aborted", "AbortError");
 }
 
-function activeSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined {
-  const timeout = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
-  return signal && timeout ? AbortSignal.any([signal, timeout]) : (signal ?? timeout);
+function activeSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function quotaMessage(entries: Array<{ name: string; threshold: number }>): string {
@@ -141,13 +151,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   readonly queue: QueueItem[] = [];
   readonly permitConfig: OpenAIPermitConfig;
   readonly rateLimitsCache = new Map<number, OpenAIRateLimitsWithMeta & { generation: number }>();
-  private readonly clients = new Map<
-    number,
-    {
-      generation: number;
-      client: Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
-    }
-  >();
+  private readonly clients = new Map<number, ClientEntry>();
+  private readonly retiredClients = new Set<ClientEntry>();
   static readonly RATE_LIMITS_CACHE_TTL = 60_000;
 
   private readonly selector = new SmoothWeightedRoundRobin();
@@ -192,6 +197,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.rejectAllQueued("DISPATCHER_SHUTDOWN");
     for (const { client } of this.clients.values()) client.close?.();
     this.clients.clear();
+    for (const entry of this.retiredClients) entry.client.close?.();
+    this.retiredClients.clear();
     this.tokenMetadata.clear();
     this.rateLimitsCache.clear();
     this.quotaBlocked.clear();
@@ -222,8 +229,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async onTokenRemoved(id: number): Promise<void> {
-    this.clients.get(id)?.client.close?.();
-    this.clients.delete(id);
+    this.retireClient(id);
     this.tokenMetadata.delete(id);
     this.selector.removeToken(id);
     this.invalidateRateLimitsCache(id);
@@ -314,9 +320,70 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     let imageAttempted = false;
     let servingModel = req.model ?? "";
     const metadata = permit.metadata;
-    let clientEntry = this.clients.get(permit.tokenId);
-    if (!clientEntry || clientEntry.generation !== metadata.generation) {
-      clientEntry?.client.close?.();
+    const clientEntry = this.acquireClient(permit);
+    try {
+      for await (const event of clientEntry.client.responses(
+        requestOptions(req),
+        req.abortSignal,
+      )) {
+        if (event.type === "text-delta") {
+          firstDeltaAt ??= Date.now();
+          text += event.text;
+          onDelta?.(event.text);
+        } else if (event.type === "image") {
+          imageAttempted = true;
+          images.push({ data: event.base64, revisedPrompt: event.revisedPrompt ?? null });
+        } else if (event.type === "output-item" && event.item.type === "image_generation_call") {
+          imageAttempted = true;
+        } else if (event.type === "completed" && event.usage) {
+          servingModel = event.model ?? servingModel;
+          usage = {
+            totalTokens: event.usage.totalTokens,
+            inputTokens: event.usage.inputTokens,
+            outputTokens: event.usage.outputTokens,
+            cachedInputTokens: event.usage.cachedInputTokens,
+            reasoningOutputTokens: event.usage.reasoningTokens,
+          };
+        } else if (event.type === "completed") {
+          servingModel = event.model ?? servingModel;
+        } else if (event.type === "error") {
+          if (req.imageGeneration)
+            throw new ImageGenerationError("incomplete", event.error.message);
+          throw event.error;
+        }
+      }
+    } finally {
+      this.releaseClient(clientEntry);
+    }
+    if (req.imageGeneration && images.length === 0) {
+      throw new ImageGenerationError(
+        imageAttempted ? "incomplete" : "not_called",
+        imageAttempted
+          ? "image generation did not complete"
+          : "model did not call image generation",
+      );
+    }
+    return {
+      text,
+      tokenName: metadata.name,
+      usage,
+      durationMs: Date.now() - startedAt,
+      ttftMs: firstDeltaAt === undefined ? null : firstDeltaAt - startedAt,
+      model: servingModel,
+      threadCoord: { workerId: permit.tokenId, threadId: req.promptCacheKey ?? "", epoch: -1 },
+      ...(images.length ? { images } : {}),
+    };
+  }
+
+  /** 세대가 바뀐 client 는 사용 중인 요청이 끝난 뒤에 닫는다. */
+  private acquireClient(permit: Permit): ClientEntry {
+    const metadata = permit.metadata;
+    let entry = this.clients.get(permit.tokenId);
+    if (entry && entry.generation !== metadata.generation) {
+      this.retireClient(permit.tokenId);
+      entry = undefined;
+    }
+    if (!entry) {
       const client = this.clientFactory(
         {
           credentials: {
@@ -339,60 +406,34 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         },
         permit.tokenId,
       );
-      clientEntry = { generation: metadata.generation, client };
-      this.clients.set(permit.tokenId, clientEntry);
+      entry = { generation: metadata.generation, client, inFlight: 0, retired: false };
+      this.clients.set(permit.tokenId, entry);
     }
-    const client = clientEntry.client;
+    entry.inFlight++;
+    return entry;
+  }
 
-    for await (const event of client.responses(requestOptions(req), req.abortSignal)) {
-      if (event.type === "text-delta") {
-        firstDeltaAt ??= Date.now();
-        text += event.text;
-        onDelta?.(event.text);
-      } else if (event.type === "image") {
-        imageAttempted = true;
-        images.push({ data: event.base64, revisedPrompt: event.revisedPrompt ?? null });
-      } else if (event.type === "output-item" && event.item.type === "image_generation_call") {
-        imageAttempted = true;
-      } else if (event.type === "completed" && event.usage) {
-        servingModel = event.model ?? servingModel;
-        usage = {
-          totalTokens: event.usage.totalTokens,
-          inputTokens: event.usage.inputTokens,
-          outputTokens: event.usage.outputTokens,
-          cachedInputTokens: event.usage.cachedInputTokens,
-          reasoningOutputTokens: event.usage.reasoningTokens,
-        };
-      } else if (event.type === "completed") {
-        servingModel = event.model ?? servingModel;
-      } else if (event.type === "error") {
-        if (req.imageGeneration) throw new ImageGenerationError("incomplete", event.error.message);
-        throw event.error;
-      }
+  private releaseClient(entry: ClientEntry): void {
+    entry.inFlight = Math.max(0, entry.inFlight - 1);
+    if (entry.retired && entry.inFlight === 0) {
+      this.retiredClients.delete(entry);
+      entry.client.close?.();
     }
-    if (req.imageGeneration && images.length === 0) {
-      throw new ImageGenerationError(
-        imageAttempted ? "incomplete" : "not_called",
-        imageAttempted
-          ? "image generation did not complete"
-          : "model did not call image generation",
-      );
-    }
-    return {
-      text,
-      tokenName: metadata.name,
-      usage,
-      durationMs: Date.now() - startedAt,
-      ttftMs: firstDeltaAt === undefined ? null : firstDeltaAt - startedAt,
-      model: servingModel,
-      threadCoord: { workerId: permit.tokenId, threadId: req.promptCacheKey ?? "", epoch: -1 },
-      ...(images.length ? { images } : {}),
-    };
+  }
+
+  /** map 에서 떼어내고, 진행 중인 요청이 없을 때만 즉시 닫는다. */
+  private retireClient(tokenId: number): void {
+    const entry = this.clients.get(tokenId);
+    if (!entry) return;
+    this.clients.delete(tokenId);
+    entry.retired = true;
+    if (entry.inFlight === 0) entry.client.close?.();
+    else this.retiredClients.add(entry);
   }
 
   private async acquire(preferredTokenId?: number, signal?: AbortSignal): Promise<Permit> {
     if (signal?.aborted) throw abortError(signal);
-    const permit = await this.selectPermit(preferredTokenId);
+    const permit = await this.selectPermit(preferredTokenId, signal);
     if (permit) {
       if (signal?.aborted) {
         this.release(permit);
@@ -440,12 +481,15 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     });
   }
 
-  private async selectPermit(preferredTokenId?: number): Promise<Permit | null> {
+  private async selectPermit(
+    preferredTokenId?: number,
+    signal?: AbortSignal,
+  ): Promise<Permit | null> {
     const eligible = new Set<number>();
     const over: Array<{ name: string; threshold: number }> = [];
     for (const [id, token] of this.tokenMetadata) {
       if (!token.active || token.inUse >= token.capacity) continue;
-      if (await this.isQuotaEligible(id, token)) eligible.add(id);
+      if (await this.isQuotaEligible(id, token, signal)) eligible.add(id);
       else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
         over.push({ name: token.name, threshold: token.quotaThreshold });
     }
@@ -504,13 +548,20 @@ export class OpenAIDispatcher implements ProviderDispatcher {
           }
           let permit: Permit | null;
           try {
-            permit = await this.selectPermit(item.preferredTokenId);
+            permit = await this.selectPermit(item.preferredTokenId, item.signal);
           } catch (error) {
+            // await 중에 timeout/abort 로 이미 제거·거절된 항목이면 다음 head 로 넘어간다.
+            if (this.queue[0] !== item) continue;
             this.queue.shift();
             item.reject(error as Error);
             continue;
           }
           if (!permit) break;
+          // head 가 바뀌었다면 이 permit 의 주인이 사라진 것이므로 반드시 반납한다.
+          if (this.queue[0] !== item) {
+            this.release(permit);
+            continue;
+          }
           this.queue.shift();
           item.resolve(permit);
         }
@@ -568,7 +619,10 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.quotaBlocked.delete(id);
   }
 
-  async getRateLimitsByTokenId(tokenId: number): Promise<OpenAIRateLimitsWithMeta> {
+  async getRateLimitsByTokenId(
+    tokenId: number,
+    signal?: AbortSignal,
+  ): Promise<OpenAIRateLimitsWithMeta> {
     const token = this.tokenMetadata.get(tokenId);
     if (!token) throw new Error(`openai token ${tokenId} not found`);
     const cached = this.rateLimitsCache.get(tokenId);
@@ -581,6 +635,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     const result = await readOpenAIQuotaUsage({
       credentials: token.credentials,
       fetch: this.fetchImpl,
+      ...(signal ? { signal } : {}),
     });
     if (result.kind === "lookup_failed") throw new Error(result.reason);
     if (!result.raw) throw new Error("OpenAI quota response missing raw rate limits");
@@ -589,10 +644,14 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     return entry;
   }
 
-  private async isQuotaEligible(id: number, token: TokenMetadata): Promise<boolean> {
+  private async isQuotaEligible(
+    id: number,
+    token: TokenMetadata,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     if (token.quotaThreshold === null || token.quotaThreshold === undefined) return true;
     const generation = token.generation;
-    const result = await readOpenAIQuotaUsage(async () => this.getRateLimitsByTokenId(id));
+    const result = await readOpenAIQuotaUsage(async () => this.getRateLimitsByTokenId(id, signal));
     if (this.tokenMetadata.get(id) !== token || token.generation !== generation) return false;
     if (result.kind === "lookup_failed") {
       this.quotaBlocked.delete(id);
