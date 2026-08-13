@@ -86,7 +86,6 @@ describe("OpenAI direct HTTPS client", () => {
     const secondHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
     expect(secondHeaders["session-id"]).toBe(firstHeaders["session-id"]);
     expect(secondHeaders["thread-id"]).toBe(firstHeaders["thread-id"]);
-    expect(secondHeaders["x-client-request-id"]).toBe(firstHeaders["thread-id"]);
     expect(secondHeaders["x-client-request-id"]).toBe(firstHeaders["x-client-request-id"]);
   });
 
@@ -129,7 +128,7 @@ describe("OpenAI direct HTTPS client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("uses opaque prompt affinity as thread id without exposing a caller session key", async () => {
+  it("uses opaque prompt affinity as stable session and thread ids with unique request ids", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       sse({ type: "response.completed", response: { id: "r" } }),
     );
@@ -138,9 +137,19 @@ describe("OpenAI direct HTTPS client", () => {
       fetch: fetchMock,
     });
     await collect(client.responses({ model: "gpt-test", history: [], promptCacheKey: "opaque" }));
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-      "thread-id": "opaque",
-      "x-client-request-id": "opaque",
+    await collect(client.responses({ model: "gpt-test", history: [], promptCacheKey: "opaque" }));
+    const firstHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const secondHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(firstHeaders).toMatchObject({
+      "session-id": expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+      "thread-id": expect.any(String),
+    });
+    expect(firstHeaders["thread-id"]).toBe(firstHeaders["session-id"]);
+    expect(secondHeaders["session-id"]).toBe(firstHeaders["session-id"]);
+    expect(secondHeaders["thread-id"]).toBe(firstHeaders["thread-id"]);
+    expect(secondHeaders["x-client-request-id"]).not.toBe(firstHeaders["x-client-request-id"]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      prompt_cache_key: firstHeaders["session-id"],
     });
   });
 });
@@ -248,6 +257,43 @@ describe("OpenAI direct Responses WebSocket client", () => {
     expect(mock.sockets[0]!.closed).toEqual({ code: 1000, reason: "response completed" });
     expect(mock.sockets[0]!.terminated).toBe(false);
     expect([...mock.sockets[0]!.listeners.values()].flat()).toHaveLength(0);
+  });
+
+  it("reuses one WebSocket for sequential requests with the same prompt affinity", async () => {
+    const mock = mockedWebSocket();
+    const client = new OpenAIDirectClient({
+      credentials: { accessToken: "access", accountId: "acct" },
+      transportKind: "websocket",
+      webSocketFactory: mock.factory,
+    });
+
+    const first = collect(
+      client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),
+    );
+    mock.sockets[0]!.emit("open");
+    await tick();
+    mock.sockets[0]!.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "response.completed", response: { id: "r1" } })),
+      false,
+    );
+    await first;
+
+    const second = collect(
+      client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),
+    );
+    await tick();
+    mock.sockets[0]!.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "response.completed", response: { id: "r2" } })),
+      false,
+    );
+    await second;
+
+    expect(mock.sockets).toHaveLength(1);
+    expect(mock.sockets[0]!.sent).toHaveLength(2);
+    expect(mock.sockets[0]!.closed).toBeUndefined();
+    expect(mock.sockets[0]!.terminated).toBe(false);
   });
 
   it("fails binary frames and closes without a terminal event without replay", async () => {

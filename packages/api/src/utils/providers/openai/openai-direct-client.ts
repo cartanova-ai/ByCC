@@ -24,11 +24,13 @@ export interface OpenAITransportRequest {
   signal?: AbortSignal;
   sessionId: string;
   threadId: string;
+  clientRequestId: string;
 }
 
 /** Transport-independent streaming interface; HTTPS is the first implementation. */
 export interface OpenAIResponsesTransport {
   stream(request: OpenAITransportRequest): OpenAIEventStream;
+  close?(): void;
 }
 
 export interface OpenAIHttpsTransportOptions {
@@ -68,7 +70,12 @@ type SocketRecord =
 const MAX_BUFFERED_SOCKET_RECORDS = 1600;
 
 function websocketUrl(url: string): string {
-  const parsed = new URL(url);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch (error) {
+    throw new OpenAIProtocolError(`Invalid OpenAI Responses URL: ${String(error)}`);
+  }
   parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
   return parsed.toString();
 }
@@ -146,10 +153,25 @@ function abortError(signal?: AbortSignal): Error {
     : new DOMException("Aborted", "AbortError");
 }
 
+function cacheAffinityUuid(key: string): string {
+  const hex = crypto.createHash("sha256").update(key).digest("hex").slice(0, 32).split("");
+  hex[12] = "4";
+  hex[16] = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
+}
+
 export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
+  private static readonly MAX_AFFINITY_CONNECTIONS = 16;
   private credentials: OpenAIDirectCredentials;
   private readonly refreshCredentials?: () => Promise<OpenAIDirectCredentials>;
   private readonly webSocketFactory: OpenAIWebSocketFactory;
+  private readonly affinityConnections = new Map<
+    string,
+    {
+      socket: OpenAIWebSocketLike;
+      events: ReturnType<typeof socketEvents>;
+    }
+  >();
 
   constructor(options: OpenAIWebSocketTransportOptions) {
     this.credentials = options.credentials;
@@ -162,45 +184,79 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
     return this.run(request);
   }
 
+  close(): void {
+    for (const { socket, events } of this.affinityConnections.values()) {
+      events.cleanup();
+      socket.close(1000, "transport closed");
+    }
+    this.affinityConnections.clear();
+  }
+
+  private rememberAffinityConnection(
+    threadId: string,
+    connection: {
+      socket: OpenAIWebSocketLike;
+      events: ReturnType<typeof socketEvents>;
+    },
+  ): void {
+    if (this.affinityConnections.size >= OpenAIWebSocketTransport.MAX_AFFINITY_CONNECTIONS) {
+      const oldestKey = this.affinityConnections.keys().next().value;
+      if (oldestKey) {
+        const oldest = this.affinityConnections.get(oldestKey)!;
+        oldest.events.cleanup();
+        oldest.socket.close(1000, "affinity cache evicted");
+        this.affinityConnections.delete(oldestKey);
+      }
+    }
+    this.affinityConnections.set(threadId, connection);
+  }
+
   private async *run(request: OpenAITransportRequest): AsyncGenerator<OpenAINormalizedEvent> {
     let refreshed = false;
     while (true) {
       if (request.signal?.aborted) throw abortError(request.signal);
-      const socket = this.webSocketFactory(websocketUrl(CHATGPT_CODEX_RESPONSES_URL), {
-        headers: {
-          ...buildCodexIdentityHeaders(this.credentials.accessToken, this.credentials.accountId, {
-            sessionId: request.sessionId,
-            threadId: request.threadId,
-            clientRequestId: request.threadId,
-          }),
-          "OpenAI-Beta": "responses_websockets=2026-02-06",
-        },
-      });
-      const events = socketEvents(socket, request.signal);
+      const cacheable = request.body.prompt_cache_key !== undefined;
+      const cached = cacheable ? this.affinityConnections.get(request.threadId) : undefined;
+      const socket =
+        cached?.socket ??
+        this.webSocketFactory(websocketUrl(CHATGPT_CODEX_RESPONSES_URL), {
+          headers: {
+            ...buildCodexIdentityHeaders(this.credentials.accessToken, this.credentials.accountId, {
+              sessionId: request.sessionId,
+              threadId: request.threadId,
+              clientRequestId: request.clientRequestId,
+            }),
+            "OpenAI-Beta": "responses_websockets=2026-02-06",
+          },
+        });
+      const events = cached?.events ?? socketEvents(socket, request.signal);
       let completed = false;
       try {
-        const handshake = await events.next();
-        if (
-          handshake.kind === "rejected" &&
-          handshake.status === 401 &&
-          !refreshed &&
-          this.refreshCredentials
-        ) {
-          socket.terminate();
-          this.credentials = await this.refreshCredentials();
-          refreshed = true;
-          continue;
-        }
-        if (handshake.kind === "rejected") {
-          throw new OpenAIProtocolError(
-            `OpenAI WebSocket handshake rejected${handshake.status ? ` with HTTP ${handshake.status}` : ""}`,
-            undefined,
-            handshake.status,
-          );
-        }
-        if (handshake.kind === "error") throw handshake.error;
-        if (handshake.kind !== "open") {
-          throw new OpenAIProtocolError("OpenAI WebSocket closed before the handshake completed");
+        if (!cached) {
+          const handshake = await events.next();
+          if (
+            handshake.kind === "rejected" &&
+            handshake.status === 401 &&
+            !refreshed &&
+            this.refreshCredentials
+          ) {
+            socket.terminate();
+            this.credentials = await this.refreshCredentials();
+            refreshed = true;
+            continue;
+          }
+          if (handshake.kind === "rejected") {
+            throw new OpenAIProtocolError(
+              `OpenAI WebSocket handshake rejected${handshake.status ? ` with HTTP ${handshake.status}` : ""}`,
+              undefined,
+              handshake.status,
+            );
+          }
+          if (handshake.kind === "error") throw handshake.error;
+          if (handshake.kind !== "open") {
+            throw new OpenAIProtocolError("OpenAI WebSocket closed before the handshake completed");
+          }
+          if (cacheable) this.rememberAffinityConnection(request.threadId, { socket, events });
         }
 
         await new Promise<void>((resolve, reject) => {
@@ -225,7 +281,7 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
             if (!event) continue;
             if (event.type === "completed") {
               completed = true;
-              socket.close(1000, "response completed");
+              if (!cacheable) socket.close(1000, "response completed");
               yield event;
               return;
             }
@@ -242,8 +298,11 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
           }
         }
       } finally {
-        events.cleanup();
-        if (!completed) socket.terminate();
+        if (!completed || !cacheable) {
+          if (cacheable) this.affinityConnections.delete(request.threadId);
+          events.cleanup();
+          if (!completed) socket.terminate();
+        }
       }
     }
   }
@@ -265,7 +324,9 @@ async function responseError(response: Response): Promise<OpenAIProtocolError> {
       parsed.message ??
       (typeof error === "string" ? error : message);
     code = (typeof error === "object" ? error.code : undefined) ?? parsed.code;
-  } catch {}
+  } catch {
+    code = undefined;
+  }
   return new OpenAIProtocolError(message, code, response.status);
 }
 
@@ -296,7 +357,7 @@ export class OpenAIHttpsTransport implements OpenAIResponsesTransport {
           {
             sessionId: request.sessionId,
             threadId: request.threadId,
-            clientRequestId: request.threadId,
+            clientRequestId: request.clientRequestId,
           },
         ),
         body: JSON.stringify(request.body),
@@ -338,13 +399,23 @@ export class OpenAIDirectClient {
   }
 
   responses(options: OpenAIResponsesOptions, signal?: AbortSignal): OpenAIEventStream {
-    const sessionId = crypto.randomUUID();
+    const clientRequestId = crypto.randomUUID();
+    const affinityId = options.promptCacheKey
+      ? cacheAffinityUuid(options.promptCacheKey)
+      : clientRequestId;
     return this.transport.stream({
-      body: buildOpenAIResponsesRequest(options),
+      body: buildOpenAIResponsesRequest(
+        options.promptCacheKey ? { ...options, promptCacheKey: affinityId } : options,
+      ),
       signal,
-      sessionId,
+      sessionId: affinityId,
       // promptCacheKey is already a one-way SDK affinity value, never a raw sessionKey.
-      threadId: options.promptCacheKey ?? sessionId,
+      threadId: affinityId,
+      clientRequestId,
     });
+  }
+
+  close(): void {
+    this.transport.close?.();
   }
 }

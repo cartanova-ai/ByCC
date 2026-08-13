@@ -110,7 +110,7 @@ pnpm add @cartanova/qgrid-ai-sdk
 
 ![Qgrid architecture](./assets/qgrid-architecture.ko.svg)
 
-- **OpenAI** — `https://chatgpt.com/backend-api/codex/responses`를 직접 호출합니다. 기본값인 `QGRID_OPENAI_TRANSPORT=https`는 HTTPS/SSE를 사용하고, `QGRID_OPENAI_TRANSPORT=websocket`은 같은 URL의 scheme을 `wss`로 바꿔 요청마다 Responses WebSocket 하나를 엽니다. WebSocket은 `response.create` 메시지 하나를 보내고 terminal Responses event를 받아야 합니다. Connection multiplexing과 ambiguous request replay는 하지 않습니다. Handshake가 401로 거부됐음이 확정된 경우에만 credential을 갱신하고 한 번 다시 연결합니다. 잘못된 selector 값은 dispatcher 설정 시 즉시 실패합니다.
+- **OpenAI** — `https://chatgpt.com/backend-api/codex/responses`를 직접 호출합니다. 기본값인 `QGRID_OPENAI_TRANSPORT=websocket`은 같은 URL의 scheme을 `wss`로 바꾸고 동일한 prompt-cache affinity의 순차 요청에서 연결을 재사용합니다. Cache affinity가 없는 요청은 요청마다 연결 하나를 사용합니다. `QGRID_OPENAI_TRANSPORT=https`도 사용할 수 있지만 prompt-cache connection affinity는 유지하지 않습니다. Ambiguous request는 재전송하지 않습니다. Handshake가 401로 거부됐음이 확정된 경우에만 credential을 갱신하고 한 번 다시 연결합니다. 잘못된 selector 값은 dispatcher 설정 시 즉시 실패합니다.
 - **Anthropic** — 요청마다 격리된 Claude Code 프로세스를 fresh spawn (`stream-json` 입출력, 토큰별 config 격리). 대화 히스토리는 매 턴 재주입. OAuth 토큰 자동 refresh.
 - **Quota threshold** — 토큰별 사용률 임계값(기본 80%). 임계값을 넘은 토큰은 rolling window가 회복될 때까지 라우팅에서 제외.
 - **Request Log** — 매 요청의 generate step, tool-call step, reasoning, 토큰 사용량, 캐시 지표, TTFT, 비용을 DB에 기록. 대시보드에서 확인.

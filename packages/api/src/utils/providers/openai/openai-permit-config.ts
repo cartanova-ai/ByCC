@@ -38,7 +38,7 @@ function settingsBackedEnv(): Record<string, string | undefined> {
 export function resolveOpenAIPermitConfig(
   env: Record<string, string | undefined> = settingsBackedEnv(),
 ): OpenAIPermitConfig {
-  const transport = env.QGRID_OPENAI_TRANSPORT ?? "https";
+  const transport = env.QGRID_OPENAI_TRANSPORT ?? "websocket";
   if (transport !== "https" && transport !== "websocket") {
     throw new Error(
       `Invalid QGRID_OPENAI_TRANSPORT value: ${transport}. Expected https or websocket.`,

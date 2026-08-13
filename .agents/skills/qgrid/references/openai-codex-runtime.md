@@ -18,7 +18,7 @@ OpenAI requests go directly to `https://chatgpt.com/backend-api/codex/responses`
 
 This is a private ChatGPT backend, not a documented public API. Its URL, accepted fields, required headers, event shapes, quota response, and availability can change without notice. Unit tests use mocked HTTP/SSE fixtures. Do not describe those tests as live provider verification.
 
-`QGRID_OPENAI_TRANSPORT=https|websocket` selects the transport once when dispatcher configuration is resolved; HTTPS is the default and other values fail fast. WebSocket mode scheme-swaps the Responses HTTPS URL to `wss`, opens one connection per request, sends one `response.create` message, and requires a terminal Responses event. It does not multiplex or replay ambiguous requests. Only a definitively rejected 401 handshake may refresh credentials and reconnect once.
+`QGRID_OPENAI_TRANSPORT=https|websocket` selects the transport once when dispatcher configuration is resolved; WebSocket is the default and other values fail fast. WebSocket mode scheme-swaps the Responses HTTPS URL to `wss` and reuses one connection for sequential requests with the same prompt-cache affinity. Requests without cache affinity use one connection each. HTTPS remains available but does not preserve prompt-cache connection affinity. Qgrid does not replay ambiguous requests. Only a definitively rejected 401 handshake may refresh credentials and reconnect once.
 
 The active HTTPS/SSE request receives the composed caller/timeout signal. Qgrid never replays a POST after a transport, 429, or 5xx failure because acceptance is ambiguous. A 401 may refresh credentials and retry once because the backend rejected that attempt.
 

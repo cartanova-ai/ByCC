@@ -52,7 +52,9 @@ describe("OpenAIDispatcher direct runtime", () => {
     );
     await d.onTokenAdded(1, "one", credentials);
     await d.generate(request());
+    await d.generate(request());
     expect(factory.mock.calls[0]?.[0]).toMatchObject({ transportKind: "websocket" });
+    expect(factory).toHaveBeenCalledTimes(1);
   });
 
   it("maps complete cold context and Responses controls, then maps usage and affinity", async () => {

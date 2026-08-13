@@ -66,7 +66,7 @@ type QueueItem = {
 export type OpenAIDirectClientFactory = (
   options: OpenAIDirectClientOptions,
   tokenId: number,
-) => Pick<OpenAIDirectClient, "responses">;
+) => Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
 
 export interface OpenAIDispatcherDependencies {
   clientFactory?: OpenAIDirectClientFactory;
@@ -141,6 +141,13 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   readonly queue: QueueItem[] = [];
   readonly permitConfig: OpenAIPermitConfig;
   readonly rateLimitsCache = new Map<number, OpenAIRateLimitsWithMeta & { generation: number }>();
+  private readonly clients = new Map<
+    number,
+    {
+      generation: number;
+      client: Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
+    }
+  >();
   static readonly RATE_LIMITS_CACHE_TTL = 60_000;
 
   private readonly selector = new SmoothWeightedRoundRobin();
@@ -183,6 +190,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async stop(): Promise<void> {
     this.rejectAllQueued("DISPATCHER_SHUTDOWN");
+    for (const { client } of this.clients.values()) client.close?.();
+    this.clients.clear();
     this.tokenMetadata.clear();
     this.rateLimitsCache.clear();
     this.quotaBlocked.clear();
@@ -213,6 +222,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async onTokenRemoved(id: number): Promise<void> {
+    this.clients.get(id)?.client.close?.();
+    this.clients.delete(id);
     this.tokenMetadata.delete(id);
     this.selector.removeToken(id);
     this.invalidateRateLimitsCache(id);
@@ -303,28 +314,35 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     let imageAttempted = false;
     let servingModel = req.model ?? "";
     const metadata = permit.metadata;
-    const client = this.clientFactory(
-      {
-        credentials: {
-          accessToken: metadata.credentials.accessToken,
-          accountId: metadata.credentials.accountId,
+    let clientEntry = this.clients.get(permit.tokenId);
+    if (!clientEntry || clientEntry.generation !== metadata.generation) {
+      clientEntry?.client.close?.();
+      const client = this.clientFactory(
+        {
+          credentials: {
+            accessToken: metadata.credentials.accessToken,
+            accountId: metadata.credentials.accountId,
+          },
+          transportKind: this.permitConfig.transport,
+          fetch: this.fetchImpl,
+          refreshCredentials: async () => {
+            const refreshed = await handleChatgptAuthTokensRefresh(permit.tokenId);
+            const current = this.tokenMetadata.get(permit.tokenId);
+            if (current)
+              current.credentials = {
+                ...current.credentials,
+                accessToken: refreshed.accessToken,
+                accountId: refreshed.chatgptAccountId,
+              };
+            return { accessToken: refreshed.accessToken, accountId: refreshed.chatgptAccountId };
+          },
         },
-        transportKind: this.permitConfig.transport,
-        fetch: this.fetchImpl,
-        refreshCredentials: async () => {
-          const refreshed = await handleChatgptAuthTokensRefresh(permit.tokenId);
-          const current = this.tokenMetadata.get(permit.tokenId);
-          if (current)
-            current.credentials = {
-              ...current.credentials,
-              accessToken: refreshed.accessToken,
-              accountId: refreshed.chatgptAccountId,
-            };
-          return { accessToken: refreshed.accessToken, accountId: refreshed.chatgptAccountId };
-        },
-      },
-      permit.tokenId,
-    );
+        permit.tokenId,
+      );
+      clientEntry = { generation: metadata.generation, client };
+      this.clients.set(permit.tokenId, clientEntry);
+    }
+    const client = clientEntry.client;
 
     for await (const event of client.responses(requestOptions(req), req.abortSignal)) {
       if (event.type === "text-delta") {
