@@ -195,6 +195,7 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
       events: ReturnType<typeof socketEvents>;
     }
   >();
+  private readonly busyAffinities = new Set<string>();
 
   constructor(options: OpenAIWebSocketTransportOptions) {
     this.credentials = options.credentials;
@@ -213,6 +214,7 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
       socket.close(1000, "transport closed");
     }
     this.affinityConnections.clear();
+    this.busyAffinities.clear();
   }
 
   private rememberAffinityConnection(
@@ -238,8 +240,10 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
     let refreshed = false;
     while (true) {
       if (request.signal?.aborted) throw abortError(request.signal);
-      const cacheable = request.body.prompt_cache_key !== undefined;
-      const cached = cacheable ? this.affinityConnections.get(request.threadId) : undefined;
+      const hasAffinity = request.body.prompt_cache_key !== undefined;
+      const retainConnection = hasAffinity && !this.busyAffinities.has(request.threadId);
+      if (retainConnection) this.busyAffinities.add(request.threadId);
+      const cached = retainConnection ? this.affinityConnections.get(request.threadId) : undefined;
       const socket =
         cached?.socket ??
         this.webSocketFactory(websocketUrl(CHATGPT_CODEX_RESPONSES_URL), {
@@ -279,7 +283,9 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
           if (handshake.kind !== "open") {
             throw new OpenAIProtocolError("OpenAI WebSocket closed before the handshake completed");
           }
-          if (cacheable) this.rememberAffinityConnection(request.threadId, { socket, events });
+          if (retainConnection) {
+            this.rememberAffinityConnection(request.threadId, { socket, events });
+          }
         }
 
         await new Promise<void>((resolve, reject) => {
@@ -306,7 +312,7 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
             if (!event) continue;
             if (event.type === "completed") {
               completed = true;
-              if (cacheable) events.detachAbort();
+              if (retainConnection) events.detachAbort();
               else socket.close(1000, "response completed");
               yield event;
               return;
@@ -324,11 +330,12 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
           }
         }
       } finally {
-        if (!completed || !cacheable) {
-          if (cacheable) this.affinityConnections.delete(request.threadId);
+        if (!completed || !retainConnection) {
+          if (retainConnection) this.affinityConnections.delete(request.threadId);
           events.cleanup();
           if (!completed) socket.terminate();
         }
+        if (retainConnection) this.busyAffinities.delete(request.threadId);
       }
     }
   }
