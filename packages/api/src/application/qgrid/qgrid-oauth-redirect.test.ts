@@ -112,6 +112,14 @@ describe("QgridFrame.oauthStart redirect resolution", () => {
     expect(authUrlParam(authUrl, "redirect_uri")).toBe(CONSOLE_CALLBACK_URL);
   });
 
+  it("uses the redirect flow for a loopback Host header with a port", async () => {
+    mockHttpContext({ host: "localhost:44900" });
+
+    const { authUrl, mode } = await QgridFrame.oauthStart("tok");
+    expect(mode).toBe("redirect");
+    expect(authUrlParam(authUrl, "redirect_uri")).toBe("http://localhost:44900/callback");
+  });
+
   it("falls back to the localhost redirect flow without an HTTP context", async () => {
     vi.spyOn(Sonamu, "getContext").mockImplementation(() => {
       throw new Error("no context");

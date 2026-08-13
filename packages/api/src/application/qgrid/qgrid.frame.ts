@@ -104,9 +104,10 @@ function resolveOAuthRedirect(): { redirectUri: string; mode: "redirect" | "code
     const { headers } = Sonamu.getContext();
     const origin = typeof headers.origin === "string" ? headers.origin : undefined;
     const forwarded = headers["x-forwarded-host"];
+    const rawHost = Array.isArray(forwarded) ? forwarded[0] : (forwarded ?? headers.host);
     const host = origin
       ? new URL(origin).hostname
-      : String(forwarded ?? headers.host ?? "localhost");
+      : new URL(`http://${rawHost ?? "localhost"}`).hostname;
     if (!new Set(["localhost", "127.0.0.1", "::1", "[::1]"]).has(host)) {
       return { redirectUri: CONSOLE_CALLBACK_URL, mode: "code" };
     }
