@@ -267,8 +267,12 @@ describe("OpenAI direct Responses WebSocket client", () => {
       webSocketFactory: mock.factory,
     });
 
+    const firstController = new AbortController();
     const first = collect(
-      client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),
+      client.responses(
+        { model: "gpt", history: [], promptCacheKey: "shared" },
+        firstController.signal,
+      ),
     );
     mock.sockets[0]!.emit("open");
     await tick();
@@ -278,6 +282,7 @@ describe("OpenAI direct Responses WebSocket client", () => {
       false,
     );
     await first;
+    firstController.abort();
 
     const second = collect(
       client.responses({ model: "gpt", history: [], promptCacheKey: "shared" }),

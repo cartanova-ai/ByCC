@@ -144,6 +144,7 @@ function socketEvents(socket: OpenAIWebSocketLike, signal?: AbortSignal) {
       records.length = 0;
       waiters.length = 0;
     },
+    detachAbort: () => signal?.removeEventListener("abort", onAbort),
   };
 }
 
@@ -281,7 +282,8 @@ export class OpenAIWebSocketTransport implements OpenAIResponsesTransport {
             if (!event) continue;
             if (event.type === "completed") {
               completed = true;
-              if (!cacheable) socket.close(1000, "response completed");
+              if (cacheable) events.detachAbort();
+              else socket.close(1000, "response completed");
               yield event;
               return;
             }
