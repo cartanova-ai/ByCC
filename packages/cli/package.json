@@ -1,6 +1,6 @@
 {
   "name": "@cartanova/qgrid-cli",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/cartanova-ai/qgrid"
@@ -17,10 +17,12 @@
   ],
   "type": "module",
   "scripts": {
-    "bundle": "cd ../api && pnpm build && cd ../cli && rm -rf bundle && mkdir -p bundle/public && touch bundle/.env && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
+    "bundle": "pnpm run check:bundle-dependencies && cd ../api && pnpm build && cd ../cli && rm -rf bundle && mkdir -p bundle/public && touch bundle/.env && cp -r ../api/dist ./bundle/dist && cp -r ../api/web-dist ./bundle/web-dist && cp -r ../api/src ./bundle/src",
     "build": "tsdown",
+    "check:bundle-dependencies": "node tooling/check-bundled-api-dependencies.mjs",
     "postinstall": "node postinstall.mjs",
-    "prepublishOnly": "pnpm run bundle"
+    "prepack": "pnpm run test && pnpm run bundle",
+    "test": "vitest run --dir src && node --test tooling/check-bundled-api-dependencies.node-test.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.0",
@@ -42,6 +44,7 @@
     "dotenv": "^16",
     "fastify": "^4",
     "ioredis": "^5.8.2",
+    "json-schema-to-zod": "^2.8.1",
     "knex": "^3.2.9",
     "pg": "^8.16.3",
     "radashi": "^12.2.0",
@@ -54,7 +57,9 @@
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
     "@types/ws": "8.18.1",
-    "tsdown": "catalog:"
+    "semver": "^7.7.4",
+    "tsdown": "catalog:",
+    "yaml": "^2.8.2"
   },
   "engines": {
     "node": ">=20"

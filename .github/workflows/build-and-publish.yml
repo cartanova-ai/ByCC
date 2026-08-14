@@ -32,6 +32,9 @@ jobs:
       - name: Check
         run: pnpm check
 
+      - name: Test CLI packaging contract
+        run: pnpm --filter @cartanova/qgrid-cli test
+
       - name: Build
         run: pnpm build
 
