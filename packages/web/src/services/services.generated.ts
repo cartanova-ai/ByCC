@@ -615,6 +615,27 @@ export namespace RequestLogService {
       mutationFn: (params: { spa: RequestLogSaveParams[] }) => save(params.spa),
     });
 
+  export async function responseTypeTs(id: number): Promise<{ typescript: string | null }> {
+    return fetch({
+      method: "GET",
+      url: `/api/requestLog/responseTypeTs?${qs.stringify({ id })}`,
+    });
+  }
+
+  export const responseTypeTsQueryOptions = (id: number) =>
+    queryOptions({
+      queryKey: ["RequestLog", "responseTypeTs", id],
+      queryFn: () => responseTypeTs(id),
+    });
+
+  export const useResponseTypeTs = (id: number, options?: { enabled?: boolean }) =>
+    useRefreshable(
+      useQuery({
+        ...responseTypeTsQueryOptions(id),
+        ...options,
+      }),
+    );
+
   export async function del(ids: number[]): Promise<number> {
     return fetch({
       method: "POST",

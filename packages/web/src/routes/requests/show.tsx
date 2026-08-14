@@ -321,6 +321,14 @@ function HeaderBar({ data }: { data: RequestLog }) {
           {data.status}
         </span>
       )}
+      {data.response_json_ok === false && (
+        <span
+          title="structured 요청의 응답이 JSON 파싱에 실패했습니다"
+          className="text-[10px] px-1.5 py-0.5 rounded-full bg-caution-400/15 text-caution-500 font-medium uppercase"
+        >
+          broken json
+        </span>
+      )}
       {data.effort && (
         <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-sand-100 text-sand-500 font-mono">
           effort={data.effort}
@@ -975,6 +983,33 @@ function ToolsSection({ tools }: { tools: ToolDefinitions }) {
   );
 }
 
+// structured output 요청의 JSON Schema 를 TypeScript 타입 선언으로 렌더링한다.
+// 변환은 서버가 한다(변환 라이브러리가 Node 전제) — 실패하면 원문 스키마로 폴백한다.
+function ResponseTypeSection({ id, jsonSchema }: { id: number; jsonSchema: string }) {
+  const { data, isLoading } = RequestLogService.useResponseTypeTs(id);
+  const typescript = data?.typescript ?? null;
+
+  return (
+    <Section title="Response Type">
+      <div className="relative">
+        <CopyButton text={typescript ?? jsonSchema} />
+        {isLoading ? (
+          <p className="text-sm text-sand-400">Compiling…</p>
+        ) : (
+          <pre className="text-[13px] text-sand-800 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed">
+            {typescript ?? jsonSchema}
+          </pre>
+        )}
+        {!isLoading && typescript === null && (
+          <p className="mt-2 text-[11px] text-sand-400">
+            TypeScript 변환에 실패해 JSON Schema 원문을 표시합니다.
+          </p>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 function RequestDetail({ id }: { id: number }) {
   const { data, isLoading } = RequestLogService.useRequestLog("A", id);
   const { data: stepsData } = RequestLogStepService.useRequestLogSteps("T", {
@@ -1071,6 +1106,8 @@ function RequestDetail({ id }: { id: number }) {
       ) : (
         promptSections
       )}
+
+      {data.json_schema && <ResponseTypeSection id={id} jsonSchema={data.json_schema} />}
 
       <Section title="Response">
         <div className="relative">

@@ -32,6 +32,7 @@
     "chalk": "^4.1.2",
     "date-fns": "^4.1.0",
     "dotenv": "^16",
+    "json-schema-to-typescript-lite": "^15.0.0",
     "knex": "^3.2.9",
     "pg": "^8.16.3",
     "radashi": "^12.2.0",

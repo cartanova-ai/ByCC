@@ -136,6 +136,7 @@ export async function beforeQuery(args: QueryInput): Promise<{
       history: filterHistoryForStorage(args.history),
       tools: args.tools?.length ? args.tools : undefined,
       is_image_generation: args.imageGeneration,
+      json_schema: args.jsonSchema ?? null,
     });
   }
 

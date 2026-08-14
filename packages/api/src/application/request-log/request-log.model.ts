@@ -1,3 +1,4 @@
+import { compile as compileJsonSchemaToTs } from "json-schema-to-typescript-lite";
 import {
   api,
   asArray,
@@ -387,6 +388,31 @@ class RequestLogModelClass extends BaseModelClass<
       .toSorted((a, b) => a.provider.localeCompare(b.provider));
   }
 
+  /**
+   * structured output 요청의 JSON Schema 를 TypeScript 타입 선언 문자열로 변환한다.
+   * 변환 라이브러리(ref-parser)가 Node 전제를 깔고 있어 브라우저 번들 대신 서버에서
+   * 변환한다. 스키마가 없거나 변환 실패면 null — 화면은 원문 스키마로 폴백한다.
+   */
+  @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
+  async responseTypeTs(id: number): Promise<{ typescript: string | null }> {
+    const wdb = this.getPuri("w");
+    const rows = (await wdb
+      .from("request_logs")
+      .select({ json_schema: "request_logs.json_schema" })
+      .where("request_logs.id", id)) as unknown as Array<{ json_schema: string | null }>;
+    const schema = rows[0]?.json_schema;
+    if (!schema) return { typescript: null };
+    try {
+      const compiled = await compileJsonSchemaToTs(
+        JSON.parse(schema) as Parameters<typeof compileJsonSchemaToTs>[0],
+        "Response",
+      );
+      return { typescript: compiled.trim() };
+    } catch {
+      return { typescript: null };
+    }
+  }
+
   // ── Run Lifecycle ──────────────────────────────────────────────
 
   async createRun(params: {
@@ -398,6 +424,7 @@ class RequestLogModelClass extends BaseModelClass<
     history?: unknown;
     tools?: ToolDefinitions;
     is_image_generation?: boolean;
+    json_schema?: string | null;
   }): Promise<number> {
     const wdb = this.getPuri("w");
     wdb.ubRegister("request_logs", {
@@ -418,6 +445,7 @@ class RequestLogModelClass extends BaseModelClass<
       tool_call_count: 0,
       // 이미지 turn 식별(R13). run 경로(tools+image 조합)도 auto 경로와 동일하게 마킹.
       is_image_generation: params.is_image_generation ?? false,
+      json_schema: params.json_schema ?? null,
       ...(params.history !== undefined ? { history: params.history as { type: string }[] } : {}),
       ...(params.tools !== undefined ? { tools: params.tools } : {}),
     });

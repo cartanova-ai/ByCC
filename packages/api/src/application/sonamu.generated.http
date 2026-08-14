@@ -226,6 +226,7 @@ GET {{baseUrl}}/api/requestLog/findMany
 	&rawParams[model_name]=
 	&rawParams[project_name_is_null]=false
 	&rawParams[project_name_is_not_null]=false
+	&rawParams[response_json_broken]=false
 Content-Type: application/json
 
 ###
@@ -261,6 +262,7 @@ Content-Type: application/json
       "effort": null,
       "history": null,
       "tools": null,
+      "json_schema": null,
       "status": "running",
       "error_message": null,
       "response_json_ok": null,
@@ -269,6 +271,12 @@ Content-Type: application/json
     }
   ]
 }
+
+###
+
+GET {{baseUrl}}/api/requestLog/responseTypeTs
+	?id=0
+Content-Type: application/json
 
 ###
 
@@ -511,6 +519,7 @@ GET {{baseUrl}}/api/qgrid/totalCost
 	&params[model_name]=
 	&params[project_name_is_null]=false
 	&params[project_name_is_not_null]=false
+	&params[response_json_broken]=false
 Content-Type: application/json
 
 ###

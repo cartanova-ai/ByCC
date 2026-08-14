@@ -234,6 +234,8 @@ const entityLabels = {
   "entity.RequestLog.effort": "effort level",
   "entity.RequestLog.history": "inject_items 히스토리",
   "entity.RequestLog.tools": "요청에 장착된 tool 정의 목록",
+  "entity.RequestLog.json_schema":
+    "structured output 요청의 JSON Schema 원문 (detail 의 response 타입 표시용)",
   "entity.RequestLog.status": "실행 상태",
   "entity.RequestLog.error_message": "에러 메시지",
   "entity.RequestLog.response_json_ok":

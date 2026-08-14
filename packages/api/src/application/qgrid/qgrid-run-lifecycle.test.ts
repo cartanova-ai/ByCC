@@ -118,6 +118,7 @@ describe("qgrid run lifecycle start", () => {
       project_name: "project",
       history: [{ type: "message", role: "user", content: "earlier" }],
       is_image_generation: undefined,
+      json_schema: null,
     });
   });
 

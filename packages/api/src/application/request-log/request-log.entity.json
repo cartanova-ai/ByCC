@@ -165,6 +165,12 @@
       "desc": "요청에 장착된 tool 정의 목록"
     },
     {
+      "name": "json_schema",
+      "type": "string",
+      "nullable": true,
+      "desc": "structured output 요청의 JSON Schema 원문 (detail 의 response 타입 표시용)"
+    },
+    {
       "name": "status",
       "type": "enum",
       "id": "RequestLogStatus",
@@ -268,6 +274,7 @@
       "effort",
       "history",
       "tools",
+      "json_schema",
       "status",
       "response_json_ok",
       "error_message",

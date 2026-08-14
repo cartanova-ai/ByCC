@@ -45,6 +45,7 @@ export const requestLogSubsetQueries = {
       effort: "request_logs.effort",
       history: "request_logs.history",
       tools: "request_logs.tools",
+      json_schema: "request_logs.json_schema",
       status: "request_logs.status",
       response_json_ok: "request_logs.response_json_ok",
       error_message: "request_logs.error_message",
