@@ -4,6 +4,7 @@ import { clsx } from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import RefreshIcon from "~icons/lucide/refresh-cw";
 
+import { cacheHitRate } from "@/lib/cost";
 import { type MonitSearch } from "@/routes/monit";
 import { type MonitLogChunk, type MonitLogEntry } from "@/services/monit/monit.types";
 import { MonitService } from "@/services/services.generated";
@@ -51,6 +52,101 @@ function categoryLabel(category: string[]): string {
   return category.join("·");
 }
 
+// 폴링(1초)마다 한 샘플 — 2분 창이면 추세를 읽기에 충분하고 메모리는 상수다.
+const SPARK_CAP = 120;
+
+function pushSample(buffer: number[], value: number): void {
+  buffer.push(value);
+  if (buffer.length > SPARK_CAP) buffer.splice(0, buffer.length - SPARK_CAP);
+}
+
+// 인라인 스파크라인 — 값의 절대 눈금은 옆의 숫자가 맡고, 여기는 추세만 그린다.
+// 단일 시리즈라 범례 불필요, 색은 중립(sand)로 두고 상태색은 숫자 쪽이 표현한다.
+function Sparkline({
+  values,
+  width = 56,
+  height = 14,
+}: {
+  values: number[];
+  width?: number;
+  height?: number;
+}) {
+  if (values.length < 2) return null;
+  const max = Math.max(...values, 1);
+  const step = width / (SPARK_CAP - 1);
+  const startX = width - (values.length - 1) * step;
+  const points = values
+    .map((v, i) => {
+      const x = startX + i * step;
+      // 1px 여백을 위·아래로 확보해 0/최댓값 라인이 잘리지 않게 한다.
+      const y = height - 1 - (v / max) * (height - 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        className="text-sand-300"
+      />
+    </svg>
+  );
+}
+
+// 토큰별 쿼터 게이지 — dispatcher 의 60초 캐시 스냅샷이라 실측 지연이 있을 수 있다.
+// 채움색은 평상시 중립, threshold 도달/차단 시에만 상태색(caution)을 쓴다.
+function QuotaGauge({
+  usedPercent,
+  threshold,
+  blocked,
+}: {
+  usedPercent: number | null;
+  threshold: number | null;
+  blocked: boolean;
+}) {
+  if (usedPercent === null) return null;
+  const clamped = Math.max(0, Math.min(usedPercent, 100));
+  const over = blocked || (threshold !== null && usedPercent >= threshold);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="relative inline-block h-[4px] w-9 overflow-hidden rounded-full bg-sand-100">
+        <span
+          className={clsx(
+            "absolute inset-y-0 left-0 rounded-full",
+            over ? "bg-caution-500" : "bg-sand-400",
+          )}
+          style={{ width: `${clamped}%` }}
+        />
+        {threshold !== null && (
+          <span
+            className="absolute inset-y-0 w-px bg-sand-500"
+            style={{ left: `${Math.min(threshold, 100)}%` }}
+          />
+        )}
+      </span>
+      <span
+        className={clsx(
+          "font-mono text-[10px] tabular-nums",
+          over ? "font-semibold text-caution-500" : "text-sand-500",
+        )}
+      >
+        {Math.round(usedPercent)}%
+      </span>
+    </span>
+  );
+}
+
 export function MonitConsole({
   search,
   onSearchChange,
@@ -76,6 +172,23 @@ export function MonitConsole({
   const infoQuery = useQuery({ ...MonitService.monitInfoQueryOptions(), staleTime: Infinity });
   const info = infoQuery.data;
   const vitals = query.data?.vitals;
+
+  // 최근 1시간 집계 — request_logs 를 타므로 로그 폴링(1초)과 분리해 30초 주기.
+  const statsQuery = useQuery({
+    ...MonitService.monitStatsQueryOptions(),
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const stats = statsQuery.data;
+
+  // 스파크라인 표본 — 렌더는 매 폴마다 query.data 변경으로 일어나므로 ref 로 충분하다.
+  const queueSparkRef = useRef<number[]>([]);
+  const permitSparkRef = useRef<number[]>([]);
+  useEffect(() => {
+    if (!vitals) return;
+    pushSample(queueSparkRef.current, vitals.openaiQueueLength);
+    pushSample(permitSparkRef.current, vitals.openaiTotalPermits - vitals.openaiAvailablePermits);
+  }, [vitals]);
 
   useEffect(() => {
     const chunk = query.data;
@@ -221,14 +334,15 @@ export function MonitConsole({
           </span>
           {vitals && (
             <>
-              <span>
-                openai permits{" "}
+              <span className="inline-flex items-center gap-1.5">
+                openai in-use{" "}
                 <span className="font-mono text-sand-800">
-                  {vitals.openaiAvailablePermits}/{vitals.openaiTotalPermits}
-                </span>{" "}
-                free
+                  {vitals.openaiTotalPermits - vitals.openaiAvailablePermits}/
+                  {vitals.openaiTotalPermits}
+                </span>
+                <Sparkline values={permitSparkRef.current} />
               </span>
-              <span>
+              <span className="inline-flex items-center gap-1.5">
                 queue{" "}
                 <span
                   className={clsx(
@@ -240,8 +354,37 @@ export function MonitConsole({
                 >
                   {vitals.openaiQueueLength}
                 </span>
+                <Sparkline values={queueSparkRef.current} />
               </span>
+              {vitals.anthropicTokenCount > 0 && (
+                <span>
+                  anthropic running{" "}
+                  <span className="font-mono text-sand-800">{vitals.anthropicInFlight}</span>
+                </span>
+              )}
             </>
+          )}
+          {stats?.providers.map((p) =>
+            p.provider === "unknown" && p.requests === 0 ? null : (
+              <span key={p.provider} className="text-sand-500">
+                1h {p.provider} <span className="font-mono text-sand-700">{p.requests}</span> req
+                {p.errors > 0 && (
+                  <>
+                    {" · "}
+                    <span className="font-mono font-semibold text-caution-500">
+                      {p.errors}
+                    </span> err
+                  </>
+                )}
+                {" · hit "}
+                <span className="font-mono text-sand-700">
+                  {cacheHitRate({
+                    input_tokens: p.inputTokens,
+                    cache_read_tokens: p.cacheReadTokens,
+                  })}
+                </span>
+              </span>
+            ),
           )}
         </div>
       )}
@@ -254,20 +397,51 @@ export function MonitConsole({
                 <span className="w-[4.5rem] shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-sand-400">
                   openai
                 </span>
-                {vitals.openaiPermitsByToken.map((token) => (
-                  <span
-                    key={token.name}
-                    title={`${token.name}: ${token.count} permits`}
-                    className="inline-flex items-baseline gap-1.5 rounded-md border border-sand-200 bg-white px-2 py-1"
-                  >
-                    <span className="font-mono text-[11px] text-sand-600">
-                      {token.name.split("/").pop()}
+                {vitals.openaiPermitsByToken.map((token) => {
+                  const quota = vitals.openaiQuotaByToken.find((q) => q.name === token.name);
+                  const quotaTitle =
+                    quota?.usedPercent === null || quota === undefined
+                      ? "quota not sampled yet"
+                      : `quota ${Math.round(quota.usedPercent)}%${
+                          quota.threshold !== null ? ` / threshold ${quota.threshold}%` : ""
+                        }${
+                          quota.resetsAt
+                            ? // wham 응답의 resetsAt 단위(초/ms)가 문서화돼 있지 않아 방어적으로 판별한다.
+                              ` · resets ${formatTime(quota.resetsAt > 1e12 ? quota.resetsAt : quota.resetsAt * 1000)}`
+                            : ""
+                        }`;
+                  return (
+                    <span
+                      key={token.name}
+                      title={`${token.name}: ${token.inUse}/${token.capacity} permits in use · ${quotaTitle}`}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-sand-200 bg-white px-2 py-1"
+                    >
+                      <span className="font-mono text-[11px] text-sand-600">
+                        {token.name.split("/").pop()}
+                      </span>
+                      <span
+                        className={clsx(
+                          "font-mono text-[13px] font-semibold tracking-[-0.02em]",
+                          token.inUse >= token.capacity ? "text-caution-500" : "text-sand-900",
+                        )}
+                      >
+                        {token.inUse}/{token.capacity}
+                      </span>
+                      {quota && (
+                        <QuotaGauge
+                          usedPercent={quota.usedPercent}
+                          threshold={quota.threshold}
+                          blocked={quota.blocked}
+                        />
+                      )}
+                      {quota?.blocked && (
+                        <span className="rounded-full bg-caution-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-caution-500">
+                          quota
+                        </span>
+                      )}
                     </span>
-                    <span className="font-mono text-[13px] font-semibold tracking-[-0.02em] text-sand-900">
-                      {token.count}
-                    </span>
-                  </span>
-                ))}
+                  );
+                })}
               </div>
             )}
             {vitals.anthropicTokenNames.length > 0 && (

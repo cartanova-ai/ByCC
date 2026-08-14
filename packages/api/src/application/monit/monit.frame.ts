@@ -8,8 +8,14 @@ import { api, BaseFrameClass, DB } from "sonamu";
 
 import { resolveOpenAIPermitConfig } from "../../utils/providers/openai/openai-permit-config";
 import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
+import { RequestLogModel } from "../request-log/request-log.model";
 import { monitLogBuffer } from "./log-buffer";
-import { type MonitLogChunk, type MonitServerInfo, type MonitVitals } from "./monit.types";
+import {
+  type MonitLogChunk,
+  type MonitServerInfo,
+  type MonitStats,
+  type MonitVitals,
+} from "./monit.types";
 
 // 응답당 엔트리 상한 — 폴링 클라이언트는 다음 폴에서 이어서 따라잡는다.
 const RESPONSE_ENTRY_LIMIT = 1_000;
@@ -45,6 +51,16 @@ class MonitFrameClass extends BaseFrameClass {
       },
     };
   }
+
+  // 최근 1시간 provider 별 요청/오류/캐시 통계. vitals 와 달리 request_logs 를 타므로
+  // 분리된 endpoint 로 두고 웹에서 더 느슨한 주기로 폴링한다. 읽기 전용이며 request log 를
+  // 남기지 않는 monit 경계는 동일하다.
+  @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
+  async monitStats(): Promise<MonitStats> {
+    const windowMinutes = 60;
+    const since = new Date(Date.now() - windowMinutes * 60_000);
+    return { windowMinutes, providers: await RequestLogModel.providerStatsSince(since) };
+  }
 }
 
 // dispatcher 미초기화(부팅 직후) 시 0 으로 응답한다 — 가벼운 스냅샷이라 오류로 만들지 않는다.
@@ -54,8 +70,10 @@ function currentVitals(): MonitVitals {
     openaiAvailablePermits: QgridDispatcher.openaiDispatcher?.availablePermits ?? 0,
     openaiQueueLength: QgridDispatcher.openaiDispatcher?.queueLength ?? 0,
     openaiPermitsByToken: QgridDispatcher.openaiDispatcher?.permitsByToken ?? [],
+    openaiQuotaByToken: QgridDispatcher.openaiDispatcher?.quotaByToken ?? [],
     anthropicTokenCount: QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0,
     anthropicTokenNames: QgridDispatcher.anthropicDispatcher?.tokenNames ?? [],
+    anthropicInFlight: QgridDispatcher.anthropicDispatcher?.inFlight ?? 0,
   };
 }
 

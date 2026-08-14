@@ -323,6 +323,65 @@ class RequestLogModelClass extends BaseModelClass<
     });
   }
 
+  /**
+   * 최근 구간의 provider 별 경량 통계(모니터링용). provider 는 requested_model_name 의
+   * "openai/..." | "anthropic/..." prefix 로 판정한다 — serving model_name 은 prefix 가
+   * 없고, running 초기엔 아직 비어 있다. 집계는 JS 에서 한다: 폴링 주기가 느슨하고
+   * 구간이 짧아 row 수가 작으며, prefix CASE 식을 쿼리 빌더에 박지 않아도 된다.
+   */
+  async providerStatsSince(since: Date): Promise<
+    Array<{
+      provider: string;
+      requests: number;
+      errors: number;
+      inputTokens: number;
+      cacheReadTokens: number;
+    }>
+  > {
+    const wdb = this.getPuri("w");
+    const rows = (await wdb
+      .from("request_logs")
+      .select({
+        requested_model_name: "request_logs.requested_model_name",
+        status: "request_logs.status",
+        input_tokens: "request_logs.input_tokens",
+        cache_read_tokens: "request_logs.cache_read_tokens",
+      })
+      .where("request_logs.created_at", ">=", since)) as unknown as Array<{
+      requested_model_name: string | null;
+      status: string;
+      input_tokens: number;
+      cache_read_tokens: number;
+    }>;
+
+    const byProvider = new Map<
+      string,
+      { requests: number; errors: number; inputTokens: number; cacheReadTokens: number }
+    >();
+    for (const row of rows) {
+      const model = row.requested_model_name ?? "";
+      const provider = model.startsWith("openai/")
+        ? "openai"
+        : model.startsWith("anthropic/")
+          ? "anthropic"
+          : "unknown";
+      const agg = byProvider.get(provider) ?? {
+        requests: 0,
+        errors: 0,
+        inputTokens: 0,
+        cacheReadTokens: 0,
+      };
+      agg.requests += 1;
+      if (row.status === "error") agg.errors += 1;
+      agg.inputTokens += row.input_tokens;
+      agg.cacheReadTokens += row.cache_read_tokens;
+      byProvider.set(provider, agg);
+    }
+    return [...byProvider.entries()]
+      .map(([provider, agg]) => ({ provider, ...agg }))
+      .toSorted((a, b) => a.provider.localeCompare(b.provider));
+  }
+
   // ── Run Lifecycle ──────────────────────────────────────────────
 
   async createRun(params: {

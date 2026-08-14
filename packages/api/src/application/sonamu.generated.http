@@ -620,3 +620,9 @@ Content-Type: application/json
 GET {{baseUrl}}/api/monit/monitInfo
 	?
 Content-Type: application/json
+
+###
+
+GET {{baseUrl}}/api/monit/monitStats
+	?
+Content-Type: application/json

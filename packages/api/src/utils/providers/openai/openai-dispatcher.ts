@@ -698,9 +698,41 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   get queueLength(): number {
     return this.queue.length;
   }
-  get permitsByToken(): Array<{ name: string; count: number }> {
+  get permitsByToken(): Array<{ name: string; inUse: number; capacity: number }> {
     return [...this.tokenMetadata.values()]
-      .map((t) => ({ name: t.name, count: t.capacity }))
+      .map((t) => ({ name: t.name, inUse: t.inUse, capacity: t.capacity }))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * 토큰별 쿼터 스냅샷 — 신선한(rate limits TTL 내) 캐시만 읽고 절대 fetch 하지 않는다.
+   * monit vitals 는 로그 폴링에 편승하는 값이라 여기서 네트워크를 타면 안 된다.
+   * threshold 미설정 토큰은 쿼터 판정을 돌지 않아 usedPercent 가 null 로 남을 수 있다.
+   */
+  get quotaByToken(): Array<{
+    name: string;
+    usedPercent: number | null;
+    threshold: number | null;
+    blocked: boolean;
+    resetsAt: number | null;
+  }> {
+    const now = Date.now();
+    return [...this.tokenMetadata.entries()]
+      .map(([id, t]) => {
+        const cached = this.rateLimitsCache.get(id);
+        const fresh =
+          cached !== undefined &&
+          cached.generation === t.generation &&
+          now - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL;
+        const primary = fresh ? cached.data.rateLimits?.primary : undefined;
+        return {
+          name: t.name,
+          usedPercent: primary?.usedPercent ?? null,
+          threshold: t.quotaThreshold ?? null,
+          blocked: this.quotaBlocked.has(id),
+          resetsAt: primary?.resetsAt ?? null,
+        };
+      })
       .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 }

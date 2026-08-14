@@ -118,13 +118,18 @@ describe("MonitFrame.monitLogs", () => {
       availablePermits: 24,
       queueLength: 3,
       permitsByToken: [
-        { name: "openai/haze", count: 12 },
-        { name: "openai/nk", count: 13 },
+        { name: "openai/haze", inUse: 1, capacity: 12 },
+        { name: "openai/nk", inUse: 0, capacity: 13 },
+      ],
+      quotaByToken: [
+        { name: "openai/haze", usedPercent: 41, threshold: 80, blocked: false, resetsAt: null },
+        { name: "openai/nk", usedPercent: null, threshold: null, blocked: false, resetsAt: null },
       ],
     } as never;
     QgridDispatcher.anthropicDispatcher = {
       tokenCount: 8,
       tokenNames: ["anthropic/haze", "anthropic/noa"],
+      inFlight: 2,
     } as never;
     try {
       const chunk = await MonitFrame.monitLogs();
@@ -133,11 +138,16 @@ describe("MonitFrame.monitLogs", () => {
         openaiAvailablePermits: 24,
         openaiQueueLength: 3,
         openaiPermitsByToken: [
-          { name: "openai/haze", count: 12 },
-          { name: "openai/nk", count: 13 },
+          { name: "openai/haze", inUse: 1, capacity: 12 },
+          { name: "openai/nk", inUse: 0, capacity: 13 },
+        ],
+        openaiQuotaByToken: [
+          { name: "openai/haze", usedPercent: 41, threshold: 80, blocked: false, resetsAt: null },
+          { name: "openai/nk", usedPercent: null, threshold: null, blocked: false, resetsAt: null },
         ],
         anthropicTokenCount: 8,
         anthropicTokenNames: ["anthropic/haze", "anthropic/noa"],
+        anthropicInFlight: 2,
       });
     } finally {
       QgridDispatcher.openaiDispatcher = null;

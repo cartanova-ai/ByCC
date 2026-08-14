@@ -21,11 +21,26 @@ export const MonitVitals = z.object({
   openaiTotalPermits: z.number(),
   openaiAvailablePermits: z.number(),
   openaiQueueLength: z.number(),
-  // 토큰별 permit 용량 — 프로세스 수가 아니라 토큰당 동시 요청 상한이다
-  openaiPermitsByToken: z.array(z.object({ name: z.string(), count: z.number() })),
+  // 토큰별 permit 사용량 — inUse 는 지금 나가 있는 동시 요청, capacity 는 상한
+  openaiPermitsByToken: z.array(
+    z.object({ name: z.string(), inUse: z.number(), capacity: z.number() }),
+  ),
+  // 토큰별 쿼터 스냅샷 — dispatcher 의 60초 rate-limits 캐시에서만 읽는다(비신선이면 null).
+  // threshold 미설정 토큰은 쿼터 판정을 돌지 않아 usedPercent 가 계속 null 일 수 있다.
+  openaiQuotaByToken: z.array(
+    z.object({
+      name: z.string(),
+      usedPercent: z.number().nullable(),
+      threshold: z.number().nullable(),
+      blocked: z.boolean(),
+      resetsAt: z.number().nullable(),
+    }),
+  ),
   anthropicTokenCount: z.number(),
   // fresh-spawn 이라 상주 프로세스가 없다 — 풀에 어떤 토큰이 있는지만 보여준다
   anthropicTokenNames: z.array(z.string()),
+  // 지금 실행 중인 Claude Code 프로세스 수
+  anthropicInFlight: z.number(),
 });
 export type MonitVitals = z.infer<typeof MonitVitals>;
 
@@ -52,3 +67,20 @@ export const MonitServerInfo = z.object({
   }),
 });
 export type MonitServerInfo = z.infer<typeof MonitServerInfo>;
+
+// 최근 1시간 provider 별 요청 통계 — request_logs 를 집계한다. vitals 와 달리 DB 를
+// 타므로 별도 endpoint 로 분리해 더 느슨한 주기로 폴링한다.
+export const MonitProviderStats = z.object({
+  provider: z.string(), // "openai" | "anthropic" | "unknown"
+  requests: z.number(),
+  errors: z.number(),
+  inputTokens: z.number(),
+  cacheReadTokens: z.number(),
+});
+export type MonitProviderStats = z.infer<typeof MonitProviderStats>;
+
+export const MonitStats = z.object({
+  windowMinutes: z.number(),
+  providers: z.array(MonitProviderStats),
+});
+export type MonitStats = z.infer<typeof MonitStats>;

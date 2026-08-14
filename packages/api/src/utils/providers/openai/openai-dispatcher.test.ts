@@ -230,7 +230,7 @@ describe("OpenAIDispatcher direct runtime", () => {
     void d.generate(request());
     void d.generate(request());
     await expect(d.generate(request())).rejects.toThrow("SERVER_BUSY");
-    expect(d.permitsByToken).toEqual([{ name: "one", count: 2 }]);
+    expect(d.permitsByToken).toEqual([{ name: "one", inUse: 2, capacity: 2 }]);
   });
 
   it("applies credential metadata updates without leaking an active permit", async () => {

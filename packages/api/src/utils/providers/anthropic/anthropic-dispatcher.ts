@@ -93,6 +93,12 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     return this.tokenPool.size;
   }
 
+  // 지금 실행 중인 Claude Code 프로세스 수 — fresh-spawn 이라 이게 곧 동시 요청 수다.
+  private inFlightCount = 0;
+  get inFlight(): number {
+    return this.inFlightCount;
+  }
+
   // Monit 표시용 — 풀에 있는 토큰 이름 스냅샷 (이름순 정렬)
   get tokenNames(): string[] {
     return [...this.tokenPool.values()].map((token) => token.name).toSorted();
@@ -273,7 +279,16 @@ export class AnthropicDispatcher implements ProviderDispatcher {
   }
 
   // generate/generateStream 공통 실행. onDelta 는 스트림이면 점진 방출, 비스트림이면 no-op.
-  private async run(
+  private async run(...args: Parameters<AnthropicDispatcher["runInner"]>): Promise<GenerateResult> {
+    this.inFlightCount++;
+    try {
+      return await this.runInner(...args);
+    } finally {
+      this.inFlightCount--;
+    }
+  }
+
+  private async runInner(
     req: GenerateRequest,
     onDelta: (t: string) => void,
     opts?: { includePartialMessages?: boolean },

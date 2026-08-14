@@ -122,4 +122,7 @@ export namespace MonitService {
 
   export const monitInfo = (): SSRQuery =>
     createSSRQuery("MonitFrame", "monitInfo", [], ["Monit", "monitInfo"]);
+
+  export const monitStats = (): SSRQuery =>
+    createSSRQuery("MonitFrame", "monitStats", [], ["Monit", "monitStats"]);
 }
