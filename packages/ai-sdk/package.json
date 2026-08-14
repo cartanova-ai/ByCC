@@ -26,6 +26,9 @@
     "e2e:tools-output": "tsx e2e/tools-structured-output.ts",
     "e2e:logger": "tsx e2e/e2e-logger.ts"
   },
+  "dependencies": {
+    "undici": "^6.28.0"
+  },
   "devDependencies": {
     "@ai-sdk/provider": "catalog:",
     "ai": "catalog:",

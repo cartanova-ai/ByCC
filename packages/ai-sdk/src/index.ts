@@ -11,6 +11,11 @@ import {
 
 import { createEnvelopeStreamParser } from "./envelope-stream-parser";
 import {
+  closeQgridRequestTransport,
+  createQgridRequestTransport,
+  qgridFetch,
+} from "./http-transport";
+import {
   type QgridSupportedModel,
   type QueryOutput,
   type QgridProviderConfig,
@@ -263,40 +268,52 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
         runContext = { threadCoord: storedCoord };
       }
 
-      const data = await fetch(`${serverUrl}/api/qgrid/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          args: {
-            prompt,
-            ...(imageGeneration && input ? { input } : {}),
-            model: modelId,
-            system,
-            effort: effectiveEffort,
-            ...(verbosity ? { verbosity } : {}),
-            ...(reasoningSummary ? { reasoningSummary } : {}),
-            ...(serviceTier ? { serviceTier } : {}),
-            ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
-            ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
-            ...(jsonSchema ? { jsonSchema } : {}),
-            ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
-            ...(projectName ? { projectName } : {}),
-            ...(cacheAffinityKey ? { cacheAffinityKey } : {}),
-            ...(logger === false ? { logger: false } : {}),
-            ...(runContext ? { runContext } : {}),
-            ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
-            ...(imageGeneration ? { imageGeneration } : {}),
-            ...(imageGenerationOptions ? { imageGenerationOptions } : {}),
-          },
-        }),
-        signal: options.abortSignal,
-      }).then(async (res) => {
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(`qgrid ${res.status}: ${text}`);
-        }
-        return (await res.json()) as QueryOutput;
-      });
+      const transport = createQgridRequestTransport(modelId, timeoutMs);
+      const data = await qgridFetch(
+        `${serverUrl}/api/qgrid/query`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            args: {
+              prompt,
+              ...(imageGeneration && input ? { input } : {}),
+              model: modelId,
+              system,
+              effort: effectiveEffort,
+              ...(verbosity ? { verbosity } : {}),
+              ...(reasoningSummary ? { reasoningSummary } : {}),
+              ...(serviceTier ? { serviceTier } : {}),
+              ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+              ...(hasTools ? { tools: tools.map(toQgridTool) } : {}),
+              ...(jsonSchema ? { jsonSchema } : {}),
+              ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
+              ...(projectName ? { projectName } : {}),
+              ...(cacheAffinityKey ? { cacheAffinityKey } : {}),
+              ...(logger === false ? { logger: false } : {}),
+              ...(runContext ? { runContext } : {}),
+              ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
+              ...(imageGeneration ? { imageGeneration } : {}),
+              ...(imageGenerationOptions ? { imageGenerationOptions } : {}),
+            },
+          }),
+          signal: options.abortSignal,
+          ...(transport ? { dispatcher: transport.dispatcher } : {}),
+        },
+        {
+          operation: "query",
+          serverUrl,
+          transportTimeoutMs: transport?.timeoutMs,
+        },
+      )
+        .then(async (res) => {
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(`qgrid ${res.status}: ${text}`);
+          }
+          return (await res.json()) as QueryOutput;
+        })
+        .finally(() => closeQgridRequestTransport(transport));
 
       // 응답 변환
       const content: LanguageModelV3Content[] = [];

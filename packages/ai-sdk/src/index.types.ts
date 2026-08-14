@@ -31,8 +31,9 @@ export type QgridProviderOptions = {
   serviceTier?: string;
   /**
    * qgrid 서버의 provider 실행 제한(ms). Anthropic 경로에서는 Claude Code 프로세스 타이머로
-   * 사용된다. AI SDK 표준 timeout은 provider에 숫자를 전달하지 않고 abortSignal로 변환되므로,
-   * 서버 측 제한을 바꾸려면 이 옵션을 사용한다. 양의 정수만 허용하며 최대 30분, 기본 240초다.
+   * 사용되며, SDK의 non-stream 요청별 HTTP headers/body timeout은 이 값보다 60초 길게 설정된다.
+   * AI SDK 표준 timeout은 provider에 숫자를 전달하지 않고 abortSignal로 변환되므로, 서버 측
+   * 제한을 바꾸려면 이 옵션을 사용한다. 양의 정수만 허용하며 최대 30분, 기본 240초다.
    */
   timeoutMs?: number;
   /**

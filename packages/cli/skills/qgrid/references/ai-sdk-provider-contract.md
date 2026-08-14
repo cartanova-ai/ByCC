@@ -63,7 +63,7 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 - `verbosity`: OpenAI/Codex route only.
 - `reasoningSummary`: OpenAI/Codex route only.
 - `serviceTier`: OpenAI/Codex route only.
-- `timeoutMs`: Anthropic server-side Claude Code process timeout in milliseconds. It must be a positive integer no greater than 30 minutes and defaults to 240 seconds.
+- `timeoutMs`: Anthropic server-side Claude Code process timeout in milliseconds. It must be a positive integer no greater than 30 minutes and defaults to 240 seconds. For non-stream `generateText`, the SDK derives request-scoped Undici `headersTimeout` and `bodyTimeout` values as `timeoutMs + 60_000` without changing the process-global dispatcher.
 - `fallbackModels`: reserved for future qgrid server-side fallback routing. It is not the Fable 5 safety-refusal fallback, which is owned by Claude Code upstream.
 - `imageGeneration`: OpenAI/Codex non-stream only. Enables Codex's built-in `image_generation` tool for that request.
 - `imageGenerationOptions`: optional image quality/size hints and cost-estimation basis. Current supported values are `quality: "low" | "medium" | "high"` and `size: "1024x1024" | "1024x1536" | "1536x1024"`.
@@ -73,9 +73,15 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 AI SDK's standard top-level `timeout` is still the overall client-side budget. AI SDK converts it
 to the `abortSignal` in `LanguageModelV3CallOptions`, so a custom provider cannot recover the
 original numeric duration. Do not infer or duplicate that timeout. Use
-`providerOptions.qgrid.timeoutMs` only for the server-side Claude Code limit, and recommend setting
-the AI SDK timeout high enough to include network and server overhead. Client cancellation and
-non-streaming HTTP disconnects propagate separately through `AbortSignal`.
+`providerOptions.qgrid.timeoutMs` for the server-side Claude Code limit. The SDK also uses that
+explicit value to keep its own non-stream HTTP transport budget 60 seconds above the server
+limit; this prevents Undici's 300-second default from cutting off long Anthropic requests first.
+Recommend setting the AI SDK timeout high enough to include network and server overhead. Client
+cancellation and non-streaming HTTP disconnects propagate separately through `AbortSignal`.
+
+Transport failures preserve their root category in the public error message. In particular,
+`UND_ERR_HEADERS_TIMEOUT` reports the effective transport budget and `ECONNREFUSED` reports a
+connection refusal instead of leaving both as an undifferentiated `fetch failed`.
 
 ## Request logging
 

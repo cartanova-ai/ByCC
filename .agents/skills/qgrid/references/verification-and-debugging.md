@@ -188,6 +188,14 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 - AI SDK reference-image guard. The client passed a base64 image data URL large enough to likely exceed qgrid's JSON request body transport. Compress or resize the image before calling `generateText`, preferably as WebP/JPEG.
 
+`qgrid query transport failed: response headers timed out`:
+
+- The AI SDK's request-scoped Undici `headersTimeout` for non-stream Anthropic generation expired. The message includes the effective transport budget, which is `providerOptions.qgrid.timeoutMs + 60_000`. Check whether the qgrid server stayed alive and whether its provider timeout/error response was delayed beyond that budget.
+
+`qgrid query transport failed: connection refused`:
+
+- The qgrid process was not accepting connections at the configured server origin. This is distinct from a long-running provider response; check the qgrid process, port, and `QGRID_URL`.
+
 OpenAI `ImageGenerationError` kinds:
 
 - `gate`: capability/model check failed before the turn.

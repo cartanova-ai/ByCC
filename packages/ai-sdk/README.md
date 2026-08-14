@@ -216,7 +216,7 @@ const { text } = await generateText({
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI only | Response text verbosity |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI only | Reasoning summary output mode |
 | `serviceTier` | `string` | OpenAI only | OpenAI/codex service tier |
-| `timeoutMs` | positive integer, max `1_800_000` | Anthropic only | Server-side Claude Code process timeout in milliseconds. Defaults to 240 seconds |
+| `timeoutMs` | positive integer, max `1_800_000` | Anthropic only | Server-side Claude Code process timeout in milliseconds. The SDK's non-stream HTTP budget is 60 seconds longer. Defaults to 240 seconds |
 | `imageGeneration` | `boolean` | OpenAI only, non-stream | Enables codex's built-in `image_generation` tool (see [below](#image-generation)) |
 | `imageGenerationOptions` | `{ quality?, size? }` | OpenAI only | Image quality/size hints. `quality: "low" \| "medium" \| "high"`, `size: "1024x1024" \| "1024x1536" \| "1536x1024"` (defaults: `medium` / `1536x1024`) |
 | `fallbackModels` | `string[]` | reserved | Reserved for future qgrid server-side fallback routing. Not functional yet and unrelated to Claude Code's Fable refusal fallback |
@@ -224,8 +224,11 @@ const { text } = await generateText({
 AI SDK's top-level `timeout` remains the overall client-side budget and is converted to an
 `AbortSignal` before the custom provider runs. It does not expose the numeric timeout to qgrid.
 Use `providerOptions.qgrid.timeoutMs` when the qgrid server's Claude Code process needs a different
-limit. A client abort or disconnected non-streaming HTTP request also terminates the server-side
-provider execution.
+limit. Anthropic `generateText` requests use a request-scoped Undici dispatcher without changing global process
+state; its `headersTimeout` and `bodyTimeout` are set to `timeoutMs + 60_000`. For example, a
+600-second server limit gets a 660-second HTTP transport budget, allowing the server's explicit
+timeout response to arrive before the client transport gives up. A client abort or disconnected
+non-streaming HTTP request also terminates the server-side provider execution.
 
 ### Multi-turn prompt cache (sessionKey)
 

@@ -163,6 +163,110 @@ describe("qgrid AI SDK provider", () => {
     );
   });
 
+  it("uses a request-scoped dispatcher for Anthropic generate requests", async () => {
+    let requestInit: RequestInit | undefined;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        requestInit = init;
+        return new Response(
+          JSON.stringify({
+            text: "ok",
+            model: "claude-sonnet-4-7",
+            usage,
+            durationMs: 310_000,
+            costUsd: 0.01,
+            costSource: "provider",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    await qgrid("anthropic/claude-sonnet-4-7").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "slow request" }] }],
+      providerOptions: { qgrid: { timeoutMs: 600_000 } },
+    } as never);
+
+    expect(requestInit).toHaveProperty("dispatcher");
+    expect(
+      (requestInit as RequestInit & { dispatcher: { closed: boolean } }).dispatcher.closed,
+    ).toBe(true);
+  });
+
+  it("does not replace the dispatcher for OpenAI generate requests", async () => {
+    let requestInit: RequestInit | undefined;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        requestInit = init;
+        return new Response(
+          JSON.stringify({
+            text: "ok",
+            model: "gpt-5.6-terra",
+            usage,
+            durationMs: 50,
+            costUsd: 0.001,
+            costSource: "provider",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    await qgrid("openai/gpt-5.6-terra").doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "fast request" }] }],
+    } as never);
+
+    expect(requestInit).not.toHaveProperty("dispatcher");
+  });
+
+  it("identifies an Anthropic response headers timeout and reports its transport budget", async () => {
+    const cause = Object.assign(new Error("Headers Timeout Error"), {
+      code: "UND_ERR_HEADERS_TIMEOUT",
+    });
+    let dispatcher: { closed: boolean } | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit & { dispatcher?: { closed: boolean } }) => {
+        dispatcher = init?.dispatcher;
+        throw new TypeError("fetch failed", { cause });
+      }),
+    );
+
+    await expect(
+      qgrid("anthropic/claude-sonnet-4-7").doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "slow request" }] }],
+        providerOptions: { qgrid: { timeoutMs: 600_000 } },
+      } as never),
+    ).rejects.toThrow(
+      "qgrid query transport failed: response headers timed out after 660000ms (UND_ERR_HEADERS_TIMEOUT)",
+    );
+    expect(dispatcher?.closed).toBe(true);
+  });
+
+  it("distinguishes connection refusal from a response headers timeout", async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:44900"), {
+      code: "ECONNREFUSED",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed", { cause });
+      }),
+    );
+
+    await expect(
+      qgrid("anthropic/claude-sonnet-4-7").doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "request" }] }],
+      } as never),
+    ).rejects.toThrow(
+      "qgrid query transport failed: connection refused by http://localhost:44900 (ECONNREFUSED)",
+    );
+  });
+
   it("sends tools and maps tool-call response", async () => {
     let queryBody: unknown;
     vi.stubGlobal(

@@ -207,7 +207,7 @@ const { text } = await generateText({
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI 전용 | 응답 텍스트의 상세도 |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI 전용 | 추론 요약 출력 방식 |
 | `serviceTier` | `string` | OpenAI 전용 | OpenAI/codex service tier |
-| `timeoutMs` | 양의 정수, 최대 `1_800_000` | Anthropic 전용 | 서버의 Claude Code 프로세스 제한시간(ms). 기본값은 240초 |
+| `timeoutMs` | 양의 정수, 최대 `1_800_000` | Anthropic 전용 | 서버의 Claude Code 프로세스 제한시간(ms). SDK의 non-stream HTTP 제한은 이 값보다 60초 길게 설정. 기본값은 240초 |
 | `imageGeneration` | `boolean` | OpenAI 전용, non-stream | codex 내장 `image_generation` tool 활성화 ([아래](#image-generation) 참조) |
 | `imageGenerationOptions` | `{ quality?, size? }` | OpenAI 전용 | 이미지 품질/크기 힌트. `quality: "low" \| "medium" \| "high"`, `size: "1024x1024" \| "1024x1536" \| "1536x1024"` (기본: `medium` / `1536x1024`) |
 | `fallbackModels` | `string[]` | 예약 | 향후 qgrid 서버 fallback routing용 예약 필드. 현재 동작하지 않으며 Claude Code의 Fable refusal fallback과 무관 |
@@ -215,7 +215,11 @@ const { text } = await generateText({
 AI SDK 최상위 `timeout`은 전체 클라이언트 제한시간이며 custom provider 실행 전에
 `AbortSignal`로 변환됩니다. 따라서 그 숫자 자체는 qgrid에 전달되지 않습니다. qgrid 서버의
 Claude Code 프로세스 제한시간을 바꾸려면 `providerOptions.qgrid.timeoutMs`를 사용하세요.
-클라이언트 취소 또는 비스트리밍 HTTP 연결 종료도 서버의 provider 실행을 중단합니다.
+Anthropic `generateText` 요청에는 전역 설정을 바꾸지 않는 요청별 Undici dispatcher가 붙고,
+`headersTimeout`과 `bodyTimeout`은 `timeoutMs + 60_000`으로 설정됩니다. 예를 들어 서버 제한이
+600초면 HTTP 전송 예산은 660초입니다. 이 여유 시간 덕분에 클라이언트 전송 계층보다 서버의
+명시적 timeout 응답이 먼저 도착할 수 있습니다. 클라이언트 취소 또는 비스트리밍 HTTP 연결
+종료도 서버의 provider 실행을 중단합니다.
 
 ### 멀티턴 prompt cache (sessionKey)
 
