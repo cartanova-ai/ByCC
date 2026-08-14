@@ -5,6 +5,7 @@ import { qgrid } from "./index";
 const usage = {
   input_tokens: 10,
   output_tokens: 5,
+  reasoning_tokens: 2,
   cache_creation_input_tokens: 0,
   cache_read_input_tokens: 3,
 };
@@ -209,6 +210,7 @@ describe("qgrid AI SDK provider", () => {
     expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty("logMode");
     expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty("jsonSchema");
     expect(result.finishReason).toEqual({ unified: "tool-calls", raw: "tool_call" });
+    expect(result.usage.outputTokens).toEqual({ total: 5, text: 3, reasoning: 2 });
     expect(result.content).toEqual([
       {
         type: "tool-call",
@@ -548,7 +550,9 @@ describe("qgrid AI SDK provider", () => {
       providerOptions: { qgrid: { logger: false } },
     } as never);
 
-    const queryBodies = calls.filter((c) => c.url.includes("/query")).map((c) => c.body);
+    const queryBodies = calls
+      .filter((c) => c.url.includes("/query"))
+      .map((c) => c.body as { args: { toolResults?: Array<{ toolCallId: string }> } });
     const followUpA = queryBodies.find((body) =>
       JSON.stringify(body.args.toolResults ?? []).includes("call_a"),
     );
@@ -1028,6 +1032,63 @@ describe("qgrid AI SDK provider", () => {
     expect(prepares).toHaveLength(2);
     expect(prepares[0]?.body.args).not.toHaveProperty("runContext");
     expect(prepares[1]?.body.args).not.toHaveProperty("runContext");
+  });
+
+  it("derives the same opaque cache affinity across provider instances without sending sessionKey", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        calls.push(body.args);
+        return new Response(
+          JSON.stringify({
+            text: "ok",
+            model: "gpt-5.5",
+            usage,
+            durationMs: 10,
+            costUsd: 0,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const options = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: { qgrid: { sessionKey: "raw-caller-session" } },
+    } as never;
+    await qgrid("openai/gpt-5.5").doGenerate(options);
+    await qgrid("openai/gpt-5.5").doGenerate(options);
+
+    const keys = calls.map((args) => args.cacheAffinityKey);
+    expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(JSON.stringify(calls)).not.toContain("raw-caller-session");
+  });
+
+  it("scopes opaque cache affinity by canonical model", async () => {
+    const keys: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const args = JSON.parse(String(init?.body)).args;
+        keys.push(args.cacheAffinityKey);
+        return new Response(
+          JSON.stringify({ text: "ok", model: args.model, usage, durationMs: 10, costUsd: 0 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const options = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: { qgrid: { sessionKey: "shared" } },
+    } as never;
+    await qgrid("openai/gpt-5.5").doGenerate(options);
+    await qgrid("openai/gpt-5.4").doGenerate(options);
+
+    expect(keys[0]).not.toBe(keys[1]);
   });
 
   it("does not attach a pending tool run when prompt does not match pending tool calls", async () => {

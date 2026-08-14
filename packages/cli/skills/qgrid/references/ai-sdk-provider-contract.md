@@ -58,7 +58,7 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 `providerOptions.qgrid` supports:
 
 - `logger`: request-log switch. Omitted or `true` is the default and enables qgrid logging; `false` guarantees that generation creates zero qgrid request-log rows.
-- `sessionKey`: OpenAI thread reuse key. Disabled for Anthropic models.
+- `sessionKey`: source for model-scoped opaque OpenAI prompt-cache affinity. Disabled for Anthropic models.
 - `effort`
 - `verbosity`: OpenAI/Codex route only.
 - `reasoningSummary`: OpenAI/Codex route only.
@@ -93,7 +93,7 @@ const result = await generateText({
 });
 ```
 
-`logger: false` affects observability only. Generation, streaming, AI SDK client tool execution, multi-step continuation, and OpenAI thread coordination continue normally. When `createQgridLogger` is also installed, it reads the same option and suppresses its external-provider telemetry lifecycle for that generation; qgrid provider calls are always skipped by the telemetry integration to prevent double logging.
+`logger: false` affects observability only. Generation, streaming, AI SDK client tool execution, multi-step continuation, and OpenAI cache affinity continue normally. When `createQgridLogger` is also installed, it reads the same option and suppresses its external-provider telemetry lifecycle for that generation; qgrid provider calls are always skipped by the telemetry integration to prevent double logging.
 
 For raw qgrid query/stream payloads, the corresponding input is top-level `logger?: boolean`, also defaulting to `true`. The old `logMode` input has been removed. Because the wire schema accepts unknown keys, a legacy payload containing `logMode` is accepted but the field is ignored. It must not appear in new code. Migrate callers as follows:
 
@@ -103,7 +103,7 @@ For raw qgrid query/stream payloads, the corresponding input is top-level `logge
 
 ## OpenAI/Codex Fast mode
 
-qgrid supports Codex Fast mode per request through `providerOptions.qgrid.serviceTier`. Pass `"fast"`; qgrid forwards it through the OpenAI route to Codex `turn/start`, and Codex normalizes the legacy `fast` value to the upstream `priority` service tier.
+qgrid supports Codex Fast mode per request through `providerOptions.qgrid.serviceTier`. Pass `"fast"`; qgrid forwards it as `service_tier: "priority"` in the direct OpenAI Responses request.
 
 ```ts
 const result = await generateText({
@@ -123,7 +123,7 @@ Fast mode contract:
 - It works on both `generateText` and `streamText`; image generation remains non-stream for unrelated reasons.
 - Omit `serviceTier` for normal/default routing. qgrid's current API accepts `"fast"` and `"flex"`; callers should not send Codex's normalized `"priority"` value directly.
 - qgrid is a pass-through for this selection. Codex applies the tier only when its Fast mode feature is enabled and the selected model advertises support; otherwise Codex can omit the unsupported tier.
-- Fast mode changes upstream service-tier routing, not qgrid worker capacity. It does not change WPT, client concurrency, queue behavior, or worker autoscaling.
+- Fast mode changes upstream service-tier routing, not qgrid permit capacity. It does not change token weights, client concurrency, or queue behavior.
 - Do not promise a fixed latency improvement. Verify TTFT, duration, throughput, and quota consumption with a workload-specific A/B test.
 
 ## Request construction
@@ -140,7 +140,7 @@ Payload responsibilities:
 - Send `logger: false` when the per-call option disables request logging; otherwise rely on the server default.
 - Preserve and resend `runContext` for tool-call follow-ups.
 - Let the server infer single-turn completion versus an open tool-call run. Logging-disabled tool calls still use the SDK's local pending-call correlation and continue without a request-log id.
-- Store/resend OpenAI `threadCoord` by `sessionKey`.
+- Derive/store/resend opaque OpenAI affinity coordinates by `sessionKey`.
 - Send `imageGeneration` and `imageGenerationOptions` when configured.
 - Send AI SDK multimodal image/file message parts as qgrid `input` only when `imageGeneration` is enabled. Normal non-image-generation calls keep `user_prompt` text-only and do not forward image input.
 - Reject oversized reference-image data URLs before the request leaves the SDK. Reference images travel as JSON data URLs; callers should compress/resize large photos, preferably to WebP/JPEG.
@@ -221,7 +221,7 @@ Usage maps qgrid standard usage into AI SDK V3 usage:
 
 ## Anthropic sessionKey guard
 
-Do not store or replay `sessionKey` thread coordinates for `anthropic/*` models. Tests cover this because Anthropic fresh-spawn runtime cannot safely use Codex-style thread reuse.
+Do not store or replay `sessionKey` affinity coordinates for `anthropic/*` models. Anthropic fresh-spawn runtime uses its own prefix-cache behavior.
 
 ## Logger integration
 

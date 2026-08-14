@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.0",
-    "@ai-sdk/openai": "^3.0.0",
     "@ai-sdk/provider": "^3.0.0",
     "@ai-sdk/provider-utils": "^4.0.0",
     "@anthropic-ai/sdk": "^0.81.0",
@@ -37,6 +36,7 @@
     "pg": "^8.16.3",
     "radashi": "^12.2.0",
     "sonamu": "^0.10.3",
+    "ws": "8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -45,6 +45,7 @@
     "@types/bcrypt": "^6",
     "@types/node": "25.0.7",
     "@types/pg": "catalog:",
+    "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "^4.1.10",
     "ajv": "^8.20.0",
     "fastify": "^4",

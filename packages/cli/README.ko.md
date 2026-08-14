@@ -106,7 +106,6 @@ CLI는 실행 시 npm의 최신 버전을 확인하고 patch를 포함해 설치
 - Node.js >= 20
 - PostgreSQL
 - Docker (로컬 PostgreSQL을 컨테이너로 실행할 경우)
-- [Codex CLI](https://github.com/openai/codex) (OpenAI 모델 사용 시)
 - [Claude Code](https://www.anthropic.com/claude-code) (Anthropic 모델 사용 시)
 
 ## 동작 방식
@@ -116,11 +115,13 @@ CLI는 Sonamu 기반 서버를 내장 번들로 포함. 실행 시:
 1. DB 연결 확인
 2. 서버 시작 (API + 대시보드 웹 UI)
 3. DB의 등록된 토큰 로드. 이후 토큰 등록/변경은 PostgreSQL LISTEN/NOTIFY로 실행 중인 서버에 실시간 반영
-4. **OpenAI 토큰**: persistent codex app-server worker pool과 JSON-RPC로 통신. Qgrid가 capacity, queue, thread retention을 내부적으로 관리. `sessionKey` 멀티턴 요청은 같은 thread로 재라우팅되어 prompt cache 적중
+4. **OpenAI 토큰**: `https://chatgpt.com/backend-api/codex/responses`를 HTTPS로 직접 호출하고 SSE를 해석합니다. 토큰 단위 concurrent permit에 smooth weighted routing을 적용하며, 50개 queue는 최대 60초 대기합니다. 전체 history를 재전송하고 `sessionKey`에서 파생한 불투명 prompt-cache affinity를 사용하며, `AbortSignal`로 queue와 실행 중 요청을 취소합니다
 5. **Anthropic 토큰**: 요청마다 격리된 claude 프로세스를 fresh spawn (`stream-json` 입출력). 토큰은 least-used 우선으로 선택. OAuth 토큰 자동 refresh
 6. 토큰별 quota threshold(기본 80%)를 넘은 토큰은 라우팅에서 제외 (사용률 조회 실패 시에는 fail-open으로 통과)
 
 Qgrid 앱 자체는 Docker에 의존하지 않지만 PostgreSQL은 필요함. 로컬 PostgreSQL이 없으면 Docker로 PostgreSQL을 띄우는 구성이 가장 간단함.
+
+OpenAI 로그인은 direct PKCE OAuth를 사용하고 quota는 Codex CLI identity header와 함께 private `wham/usage` endpoint를 직접 조회합니다. 이 ChatGPT backend interface는 문서화되지 않아 예고 없이 바뀔 수 있습니다. Mock test는 live provider 호환성을 입증하지 않습니다.
 
 ## SDK 연동
 

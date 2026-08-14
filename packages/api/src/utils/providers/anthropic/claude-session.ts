@@ -18,9 +18,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 
-import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
-import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
-import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import { type JsonValue, type TokenUsageBreakdown, type UserInput } from "../common/provider-types";
 import {
   ARGV_SAFE_MAX_UTF8_BYTES,
   assertAnthropicSchemaArgvSize,

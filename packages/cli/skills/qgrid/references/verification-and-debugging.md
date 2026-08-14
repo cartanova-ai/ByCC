@@ -54,7 +54,7 @@ Choose by affected area:
 | AI SDK provider request/response mapping | `packages/ai-sdk/src/index.test.ts` |
 | AI SDK logger integration | `packages/ai-sdk/src/logger.test.ts` |
 | qgrid provider routing and strict schema | `packages/api/src/application/qgrid/qgrid.dispatcher.test.ts` |
-| conversation/thread reuse routing | `packages/api/src/application/qgrid/conv-routing.test.ts` |
+| full-history and cache-affinity routing | `packages/api/src/application/qgrid/conv-routing.test.ts` |
 | tool-call emulation | `packages/api/src/application/qgrid/tool-emulation.test.ts`, `tool-emulation-schema.test.ts` |
 | request-log run lifecycle | `packages/api/src/application/qgrid/qgrid-run-lifecycle.test.ts` |
 | qgrid frame API behavior | `packages/api/src/application/qgrid/qgrid.frame.test.ts` |
@@ -64,8 +64,9 @@ Choose by affected area:
 | token weight migration/trigger split | `packages/api/src/application/qgrid/token-weight-migration.test.ts`, `token-trigger-setup.test.ts` |
 | boot order and startup migrations | `packages/api/src/server-bootstrap.test.ts`, `startup-migrations.test.ts` |
 | request log queries/legacy normalization | `packages/api/src/application/request-log/request-log.model.test.ts` |
-| OpenAI dispatcher routing/queue/quota/reuse | `packages/api/src/utils/providers/openai/openai-dispatcher.test.ts` |
-| OpenAI Codex worker RPC/turn behavior | `packages/api/src/utils/providers/openai/codex-worker.test.ts` |
+| OpenAI dispatcher permits/routing/queue/quota | `packages/api/src/utils/providers/openai/openai-dispatcher.test.ts` |
+| OpenAI protocol, direct HTTPS, and SSE | `packages/api/src/utils/providers/openai/openai-backend-protocol.test.ts`, `openai-direct-client.test.ts`, `openai-sse.test.ts` |
+| OpenAI direct PKCE OAuth | `packages/api/src/utils/providers/openai/openai-oauth.test.ts` |
 | OpenAI quota parser | `packages/api/src/utils/providers/openai/openai-quota.test.ts` |
 | Anthropic dispatcher token/quota/session behavior | `packages/api/src/utils/providers/anthropic/anthropic-dispatcher.test.ts` |
 | Anthropic Claude args/env/session isolation | `packages/api/src/utils/providers/anthropic/claude-session.test.ts` |
@@ -130,20 +131,19 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 `NO_OPENAI_WORKERS`:
 
-- The request path returns this immediately only when there is no active OpenAI token candidate. If active metadata exists but all workers are temporarily unavailable, qgrid queues while pool health maintenance attempts recovery.
-- Check active OpenAI tokens, worker startup/terminal-failure logs, Codex CLI availability, and `OpenAIDispatcher.readyWorkerCount`.
+- The request path returns this immediately only when there is no active OpenAI token candidate. If active metadata exists but all permits are occupied, qgrid queues.
+- Check active OpenAI tokens, credential state, and `OpenAIDispatcher.workerCount` permit capacity.
 - If tokens were recently changed, inspect `TokenSubscriber` status and reconcile behavior.
-- Repeated recovery spawn failures eventually surface as the normal queue timeout (`SERVER_BUSY`), not immediate `NO_OPENAI_WORKERS`.
 
 `NO_ACTIVE_WORKERS`:
 
-- OpenAI workers exist but active tokens were deactivated.
+- OpenAI token metadata exists but active tokens were deactivated.
 - Check token `active` state and token subscriber event handling.
 
 `SERVER_BUSY`:
 
-- OpenAI worker queue is full or a queued request timed out.
-- Check `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN`/`QGRID_OPENAI_MAX_WORKERS_PER_TOKEN`, worker readiness, long-running turns, and queue pressure.
+- OpenAI permit queue is full or a queued request timed out.
+- Check the legacy-named min/max capacity settings, occupied permits, long-running requests, and queue pressure.
 
 `QuotaThresholdExceededError` or `quota_threshold gate: all_exceeded`:
 
@@ -194,11 +194,6 @@ OpenAI `ImageGenerationError` kinds:
 - `not_called`: model completed but did not call Codex `image_generation`.
 - `incomplete`: image tool was attempted but no completed base64 image was produced.
 
-`worker not ready`:
-
-- OpenAI Codex worker RPC is missing or not initialized.
-- Check worker spawn/login failures and restart logs.
-
 `OpenAI refresh failed`:
 
 - Inspect response body for refresh token death codes.
@@ -212,6 +207,6 @@ OpenAI `ImageGenerationError` kinds:
 
 - Start from the package-specific tests before running smoke scripts.
 - For provider issues, identify route by model prefix first.
-- For cache issues, inspect `threadCoord`, `systemHash`, provider route, and usage semantics before assuming provider cache failure.
+- For cache issues, inspect opaque affinity, serialized history/prefix, provider route, and usage semantics before assuming provider cache failure.
 - For dashboard metric issues, verify qgrid-standard usage fields before changing UI formulas.
 - For Sonamu shape changes, verify API generated files and web consumers together.

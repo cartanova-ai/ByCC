@@ -1,184 +1,75 @@
-# OpenAI Codex Runtime
+# OpenAI Direct Codex Runtime
 
-Use this reference before changing OpenAI provider behavior, Codex worker lifecycle, thread reuse, cache behavior, OAuth refresh, image-generation gates, or quota routing.
+Use this reference before changing OpenAI transport, concurrency, routing, prompt-cache affinity, OAuth, quota lookup, image generation, or cancellation.
 
-## Contents
+## Source files
 
-- Process model
-- Codex configuration
-- Initialization and auth
-- Thread and turn flow
-- Thread retention
-- Queue and routing
-- Usage and notifications
-- Streaming
-- Image generation
+- Dispatcher and permits: `packages/api/src/utils/providers/openai/openai-dispatcher.ts`.
+- Direct client and transport interface: `openai-direct-client.ts`.
+- Request, identity headers, and normalized events: `openai-backend-protocol.ts`.
+- SSE decoding: `openai-sse.ts`.
+- Direct PKCE OAuth and refresh: `openai-oauth.ts`, `openai-refresh.ts`.
+- Direct quota lookup: `openai-quota.ts`.
+- Provider integration and history: `packages/api/src/application/qgrid/qgrid.dispatcher.ts`, `conv-routing.ts`.
 
-## Process model
+## Private backend boundary
 
-OpenAI tokens use persistent Codex app-server workers.
+OpenAI requests go directly to `https://chatgpt.com/backend-api/codex/responses` with an HTTPS `POST`. The response is an SSE stream. Qgrid sends the subscription bearer token, ChatGPT account id, content negotiation fields, and Codex CLI `originator` and `User-Agent` identity headers.
 
-- Dispatcher: `packages/api/src/utils/providers/openai/openai-dispatcher.ts`.
-- Worker: `packages/api/src/utils/providers/openai/codex-worker.ts`.
-- RPC client: `packages/api/src/utils/providers/openai/codex-rpc.ts`.
-- Process command: `codex app-server --listen stdio://`.
-- Workers per token: autoscaling defaults to 1–3 workers per active token, with a hard cap of 20.
-- Worker id: `tokenId * 100 + workerIndex`.
-- Worker home: `/tmp/qgrid-codex/${tokenId}-${workerIndex}` when `workerIndex` exists.
-- Worker cwd: `${CODEX_HOME}/cwd`.
+This is a private ChatGPT backend, not a documented public API. Its URL, accepted fields, required headers, event shapes, quota response, and availability can change without notice. Unit tests use mocked HTTP/SSE fixtures. Do not describe those tests as live provider verification.
 
-Workers are persistent. Turns are single-flight per worker (`busy` flag). When all eligible workers are busy, requests enter an in-memory queue.
+`QGRID_OPENAI_TRANSPORT=https|websocket` selects the transport once when dispatcher configuration is resolved; WebSocket is the default and other values fail fast. WebSocket mode scheme-swaps the Responses HTTPS URL to `wss` and reuses one connection for sequential requests with the same prompt-cache affinity. Requests without cache affinity use one connection each. HTTPS remains available but does not preserve prompt-cache connection affinity. Qgrid does not replay ambiguous requests. Only a definitively rejected 401 handshake may refresh credentials and reconnect once.
 
-Autoscaling is enabled unless `QGRID_OPENAI_AUTOSCALE` is `"false"` or `"0"`. It evaluates the pool every 5 seconds by default, starts scale-down after 10 idle minutes, and refuses scale-up when either memory guard would be crossed:
+The active HTTPS/SSE request receives the composed caller/timeout signal. Qgrid never replays a POST after a transport, 429, or 5xx failure because acceptance is ambiguous. A 401 may refresh credentials and retry once because the backend rejected that attempt.
 
-- estimated qgrid worker RSS: `0.71 + 0.157 * totalWorkerCount` GiB, limited to 16 GiB by default;
-- current host available memory at scale-up evaluation time, required to be at least 20 GiB by default.
+## Request and stream behavior
 
-All sizing and memory limits can be configured within the bounds listed in `cli-env-and-server-boot.md`.
+Every request sends `store: false`, `stream: true`, full Responses-format history, and `include: ["reasoning.encrypted_content"]`. Optional reasoning, verbosity, service tier, structured-output schema, image generation, and `prompt_cache_key` fields are added when requested.
 
-Pool health maintenance is separate from demand autoscaling:
+`normalizeOpenAISSE` handles chunk boundaries and converts private backend events into qgrid's normalized text, output-item, image, usage, completion, and error events. The HTTPS transport may retry a failure only before any visible event. It refreshes credentials once on a pre-event 401. Once output is visible, an error is returned rather than replaying a request that may already have produced output.
 
-- Every active token maintains the configured minimum worker slots even when demand autoscaling is disabled.
-- An initial all-worker spawn failure is retried by the periodic pool evaluation.
-- A transiently restarting worker keeps its slot so qgrid does not create a duplicate process or worker index.
-- After a worker exhausts its three restart attempts, it emits a one-shot terminal signal. The dispatcher removes that exact worker and repairs the token back to its configured minimum.
-- Minimum repair follows the same operator commitment as startup and is not blocked by the above-min memory guards. Demand expansion above the minimum still uses both guards.
-- A broken token's failed minimum repair does not block healthy tokens from scaling up or down.
+The caller's `AbortSignal` is passed through permit acquisition, retry delay, and `fetch`. Cancellation removes a queued item or aborts active transport work; permits are released in `finally`.
 
-## Codex configuration
+## Token permits, routing, and queue
 
-qgrid writes a worker-local `config.toml` under `CODEX_HOME` before spawning Codex. The intent is to use Codex as a plain generation backend, not as a coding agent.
+Concurrency is token-level. Each active OpenAI token owns a bounded number of permits from the existing OpenAI capacity settings; permits are counters, not child processes.
 
-Disabled by config:
+New requests use smooth weighted round-robin among active, quota-eligible tokens with a free permit. Token weights set relative routing share. A preferred token from cache affinity is attempted first when it remains eligible; otherwise correctness falls back to normal weighted selection.
 
-- web search
-- shell tool
-- tool search/suggest
-- multi-agent
-- image generation by default
-- apps/plugins
-- view_image
-- bundled skills/instructions
-- permissions/apps/environment instruction blocks
+When no eligible permit is free:
 
-Spawn env is intentionally small:
+- the queue accepts at most 50 items;
+- each item waits at most 60 seconds by default;
+- abort removes and rejects the item immediately;
+- releasing a permit drains queued work;
+- shutdown or loss of all active tokens rejects queued work.
 
-- `PATH`
-- `TMPDIR`
-- `CODEX_HOME`
-- `CODEX_EXEC_SERVER_URL=none`
+Quota lookup failures fail open. A successful lookup over a token's configured threshold excludes that token until the cached usage is refreshed.
 
-Do not re-enable built-in Codex tools/instructions unless the user explicitly asks for agentic Codex behavior.
+## Full-history replay and cache affinity
 
-## Initialization and auth
+Qgrid no longer retains an OpenAI provider thread. It sends the full conversation history on every turn. The AI SDK derives a model-scoped opaque value from `sessionKey`; the server validates and forwards it as `prompt_cache_key`.
 
-Worker initialization:
+The legacy `threadCoord` and `runContext` shape remains for compatibility, but it carries cache affinity rather than a process or provider-thread address. Do not infer worker lifetime, thread presence, or delta-only replay from `workerId`, `threadId`, or `epoch`.
 
-1. Spawn Codex app-server over stdio.
-2. Create `CodexRpcClient`.
-3. Send `initialize`.
-4. Login with ChatGPT/OAuth credentials.
-5. Bind Codex server-request `account/chatgptAuthTokens/refresh` to qgrid's token refresh handler.
+Stable affinity can improve provider prompt-cache reuse only when the serialized prefix remains stable. System prompt, tool/schema framing, message order, and model changes can still prevent a cache hit. Image generation sends full input and retains no provider conversation state.
 
-If Codex asks to refresh ChatGPT auth tokens, qgrid handles it through `handleChatgptAuthTokensRefresh(tokenId)`.
+## OAuth, identity, refresh, and quota
 
-## Thread and turn flow
+OpenAI browser login is implemented directly with authorization-code PKCE:
 
-Cold path:
+1. Generate verifier, SHA-256 challenge, and state.
+2. Build the OpenAI authorize URL with Codex CLI-compatible client, scope, originator, and simplified-flow fields.
+3. Validate pending state on callback.
+4. Exchange the code directly at `https://auth.openai.com/oauth/token`.
+5. Parse account id and plan claims, then store access, refresh, and id tokens.
 
-1. `thread/start` with `ephemeral: true`.
-2. `baseInstructions` is a minimal assistant prompt.
-3. `developerInstructions` carries the qgrid system prompt.
-4. Optional `thread/inject_items` injects full history.
-5. `turn/start` runs current input.
+Refresh posts the stored refresh token directly to the token endpoint, deduplicates concurrent refreshes, and persists rotated credentials. Generation sends Codex CLI identity headers built by `buildCodexIdentityHeaders`.
 
-Reuse path:
+Quota is fetched directly from `https://chatgpt.com/backend-api/wham/usage` with the same identity headers. Qgrid normalizes the primary usage window and caches it for 60 seconds. This private response format has the same stability warning as the Responses endpoint.
 
-1. qgrid verifies the incoming `threadCoord`.
-2. Dispatcher reacquires the exact worker by `workerId`.
-3. It checks worker readiness, active status, epoch, thread presence, and quota threshold.
-4. It waits up to 5 seconds for that worker to become free.
-5. It calls `turn/start` on the existing thread with delta input only.
+## Usage and images
 
-Thread metadata is stored only inside the worker process. Worker restart increments `epoch` and clears thread metadata. Thread reuse must fall back cold if epoch or thread lookup fails.
+OpenAI usage reports total input, cached input, output, reasoning, and total tokens for the request. Preserve cached input as a subset of input; do not add it to input again when computing cache-hit rate.
 
-## Thread retention
-
-Worker thread metadata:
-
-- idle TTL: 10 minutes.
-- max threads per worker: 16.
-- cleanup runs from the dispatcher's periodic health evaluation and also lazily before creating a new thread.
-
-Eviction is two-sided. Removing a thread from the reuse map only stops qgrid from routing turns to it; the thread itself stays resident inside the codex process. Codex auto-unloads a thread from memory only when it has zero subscribers and has been idle for 30 minutes (`THREAD_UNLOADING_DELAY`, hardcoded upstream), and `thread/start` auto-registers the creating connection as a permanent subscriber. So on every eviction (TTL sweep or LRU cap) qgrid also sends fire-and-forget `thread/unsubscribe`, which arms that 30-minute unload. Image one-shot threads never enter the reuse map, so they are unsubscribed immediately after their turn completes or fails.
-
-Periodic cleanup scans only ready, idle workers. It must never unsubscribe from a busy worker because turn notifications would stop reaching qgrid and the request could hang. Reusable thread `lastUsedAt` is refreshed when a turn finishes, so a long-running turn receives a full idle TTL after completion. The periodic pass keeps up to 16 threads; the pre-create lazy pass reserves one slot so the newly created thread still leaves the worker at no more than 16.
-
-Once `thread/start` returns, `createThread` owns cleanup until history injection and reuse-map registration finish. Any failure during that partial-creation window removes tentative metadata and immediately unsubscribes the thread. Otherwise neither turn cleanup nor the lazy sweep can see it, and repeated failed cold-history requests accumulate permanently subscribed threads.
-
-Do not send turns to an unsubscribed thread: its notifications no longer reach qgrid's connection, so the turn would hang until timeout. Map removal must always precede or accompany unsubscribe.
-
-`thread/archive` is not usable here: it requires a rollout file and ephemeral threads have none ("no rollout found"). Without unsubscribe, worker RSS grows without bound (measured ~2 MiB resident per 512 KB injected history; dev0 incident reached ~1.28 GB per worker in two days).
-
-## Queue and routing
-
-OpenAI worker selection:
-
-- Prefer reuse worker when a valid reuse coordinate exists. Successful reuse bypasses weighted selection and does not read or mutate its state.
-- Otherwise cold selection is two-level: group quota-eligible ready active workers by token, keep only tokens with at least one idle worker, choose the token with the shared smooth weighted round-robin selector (`providers/common/smooth-weighted-round-robin.ts`, driven by `tokens.weight`), then rotate a per-token worker cursor inside the chosen token.
-- Selection is work-conserving: a token whose workers are all busy is omitted from that selection round, so an idle lower-weight token receives the request immediately instead of waiting for the heavy token.
-- If no eligible worker is idle, enqueue. Queue drain re-runs the same weighted cold selection; it must not hand the queue head to the worker that happened to finish first.
-- If active token metadata exists but every worker is starting, restarting, or otherwise unavailable, enqueue instead of returning `NO_OPENAI_WORKERS`. Queue admission immediately requests both a drain and pool evaluation so a recovered worker cannot lose its wake-up.
-- Return `NO_OPENAI_WORKERS` immediately only when there is no active OpenAI token candidate. A zero-ready recovery request still uses the normal 60-second queue timeout.
-- Queue timeout: 60 seconds.
-- Max queue size: 50.
-
-Scale-down uses one pool-wide quiet clock, not per-worker timers. With an empty queue and no new request for `scaleDownIdleMs`, each evaluation removes at most one highest-index idle excess worker per token. Busy workers are never removed, and repeated evaluations stop exactly at the configured `minWorkersPerToken`.
-
-Quota threshold:
-
-- `quota_threshold` is stored on tokens.
-- Dispatcher reads rate limits through a ready worker.
-- Rate limit reads are cached for 60 seconds.
-- Lookup failure is fail-open.
-- If all ready active tokens are over threshold, throw `QuotaThresholdExceededError`.
-
-## Usage and notifications
-
-Codex RPC notifications drive result collection:
-
-- `item/agentMessage/delta`: text deltas and TTFT.
-- `item/completed`: final text and image-generation results.
-- `thread/tokenUsage/updated`: token usage.
-- `turn/completed`: duration and terminal status.
-- `error`: terminal error.
-
-When using thread reuse, use `tokenUsage.last`, not `tokenUsage.total`, for request logs. `.total` is conversation cumulative and mixes previous turns, which corrupts per-request cache hit metrics.
-
-## Streaming
-
-Streaming uses the same worker/thread execution with callbacks:
-
-- `onThreadId` emits the thread id when a new thread is created.
-- `onTurnId` emits turn id after `turn/start`.
-- qgrid can interrupt OpenAI turns on SSE close by calling `turn/interrupt` across ready workers.
-
-## Image generation
-
-Image generation is OpenAI/Codex-only and implemented as an opt-in Codex `image_generation` tool call. It is not a direct OpenAI Images API call from qgrid.
-
-- It is opt-in through `imageGeneration`.
-- `imageGenerationOptions` carries quality/size hints and the cost-estimation basis.
-- It is non-stream only; streaming path rejects it.
-- It always uses a cold one-shot thread and does not issue a reusable coordinate.
-- It enables `features.image_generation` only on that thread; global config remains disabled.
-- It swaps the normal "text only" base instruction for an image-permitting instruction on that thread.
-- It gates on provider capability and model multimodality.
-- AI SDK reference images are accepted only on this image-generation path. They arrive as qgrid `input` image data URLs and should be compressed/resized by callers before JSON transport.
-- Failure kinds are `gate`, `not_called`, and `incomplete`.
-- Codex notifications expose image items through `item/started` and `item/completed`; qgrid treats non-empty base64 `result` as the completion signal, not the item `status` string.
-- Completed images are surfaced as qgrid `image` content parts and AI SDK `file` parts with `mediaType: "image/png"`.
-- qgrid uses `gpt-image-2` as the image-tool pricing/model assumption. Codex does not expose exact image tool token usage, so `image_cost_usd` is an estimate from the public price table, not exact billing.
-- Codex may return multiple completed image outputs. qgrid maps each one to a separate image content part and a synthetic `image_generation` request-log tool step.
-
-Before modifying this area, inspect latest docs/plans/brainstorms and current tests.
+Image generation is opt-in and non-stream at the AI SDK interface. The backend still delivers its response through SSE. Returned base64 images become AI SDK PNG file parts. Recorded image cost remains an estimate based on qgrid's configured public image price table because this route does not expose exact image-tool billing.

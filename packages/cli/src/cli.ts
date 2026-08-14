@@ -18,13 +18,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
-const RUNTIME_CLI_DEPENDENCIES = [
-  {
-    command: "codex",
-    packageName: "@openai/codex",
-    label: "Codex CLI",
-    missingReason: "OpenAI tokens require codex app-server.",
-  },
+export const RUNTIME_CLI_DEPENDENCIES = [
   {
     command: "claude",
     packageName: "@anthropic-ai/claude-code",
@@ -80,7 +74,7 @@ function installRuntimeCliDependency(dep: RuntimeCliDependency): void {
   });
 }
 
-function ensureLatestRuntimeCliDependencies(): void {
+export function ensureLatestRuntimeCliDependencies(): void {
   for (const dep of RUNTIME_CLI_DEPENDENCIES) {
     let installedOutput = commandVersion(dep.command);
 

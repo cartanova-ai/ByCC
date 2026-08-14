@@ -4,7 +4,7 @@
 
 AI SDK v6 custom `LanguageModelV3` provider for [qgrid](https://github.com/cartanova-ai/Qgrid).
 
-**기존 AI SDK 코드 변경 없이, `model` 한 줄만 바꾸면 구독 토큰 풀링(토큰 N개 × worker 병렬 처리) + request log 대시보드를 사용할 수 있습니다.**
+**기존 AI SDK 코드 변경 없이, `model` 한 줄만 바꾸면 구독 토큰 풀링(토큰 N개 × concurrent permit) + request log 대시보드를 사용할 수 있습니다.**
 
 ```diff
  import { generateText } from "ai";
@@ -49,6 +49,8 @@ const { text } = await generateText({
 ```
 
 qgrid 서버(`http://localhost:44900`)가 실행 중이어야 합니다.
+
+OpenAI 서버 경로는 private ChatGPT Codex Responses backend를 HTTPS/SSE로 직접 호출합니다. 이 backend는 문서화되지 않아 예고 없이 변경될 수 있으며, qgrid의 mock protocol test는 live provider 검증이 아닙니다.
 
 ## 사용법
 > 들어가기전에: 모든 클라이언트 사용법은 [AI-SDK](https://ai-sdk.dev/docs/ai-sdk-core)와 동일합니다.
@@ -200,7 +202,7 @@ const { text } = await generateText({
 | 옵션 | 값 | 적용 범위 | 설명 |
 |---|---|---|---|
 | `logger` | `boolean` | 공통 | qgrid request log 저장 여부. 기본값은 `true`. `false`로 설정해도 client tool 실행과 multi-step 연결은 계속 동작 |
-| `sessionKey` | `string` | OpenAI 전용 | 멀티턴 대화 식별자. 같은 key는 같은 codex thread로 라우팅되어 prompt cache 적중 ([아래](#멀티턴-prompt-cache-sessionkey) 참조) |
+| `sessionKey` | `string` | OpenAI 전용 | 전체 history 재전송 시 불투명 prompt-cache affinity를 파생하는 멀티턴 대화 식별자 ([아래](#멀티턴-prompt-cache-sessionkey) 참조) |
 | `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | 공통 (지원 값은 모델별 상이, 예: `"max"`는 GPT-5.6+) | reasoning 모델의 추론 깊이. 기본값은 config의 `defaultEffort` (`"low"`) |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI 전용 | 응답 텍스트의 상세도 |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI 전용 | 추론 요약 출력 방식 |
@@ -217,7 +219,7 @@ Claude Code 프로세스 제한시간을 바꾸려면 `providerOptions.qgrid.tim
 
 ### 멀티턴 prompt cache (sessionKey)
 
-멀티턴 대화에서 `sessionKey`로 호출자의 도메인 ID(게임 세션 ID, 채팅방 ID 등) 하나만 넘기면, provider가 같은 대화를 같은 codex thread로 라우팅하여 prompt cache를 적중시킵니다. thread 좌표의 발급/보관/회송은 provider 내부에서 처리하므로 호출자는 key만 넘기면 됩니다.
+멀티턴 대화에서 `sessionKey`로 호출자의 도메인 ID(게임 세션 ID, 채팅방 ID 등)를 넘기면 SDK가 model 범위의 불투명 affinity key를 파생합니다. Qgrid는 이를 `prompt_cache_key`로 보내고 매 요청 전체 대화 history를 재전송합니다. Provider thread나 process session은 보관하지 않습니다.
 
 ```typescript
 const { text } = await generateText({
@@ -227,8 +229,8 @@ const { text } = await generateText({
 });
 ```
 
-- thread는 idle 10분 후 만료됩니다. 만료되거나 worker가 재시작되면 자동으로 cold thread로 시작하므로 요청이 실패하지는 않습니다.
-- `anthropic/*` 모델에서는 무시됩니다 (Claude Code는 요청마다 fresh process를 띄우므로 thread reuse가 없음).
+- SDK 내부 affinity coordinate entry는 idle 10분 후 만료됩니다. 동일 affinity key 파생은 이 entry에 의존하지 않습니다.
+- `anthropic/*` 모델에서는 무시됩니다. Claude Code는 자체 prefix-cache 동작을 사용합니다.
 
 ### Image Generation
 
@@ -268,7 +270,7 @@ const result = await generateText({
 ```
 
 - `streamText`에서는 거부됩니다 (non-stream 전용).
-- 이미지 생성 요청은 항상 cold one-shot thread로 실행되며 thread reuse 대상에서 제외됩니다.
+- 이미지 생성 요청은 provider 대화 상태를 보관하지 않고 전체 input을 직접 전송합니다.
 - 레퍼런스 이미지는 JSON data URL로 전송됩니다. 큰 사진은 압축하거나 리사이즈해서 전달하세요. 과도하게 큰 base64 입력은 SDK가 거부하며, 사진에는 WebP/JPEG를 권장합니다.
 - 이미지 비용은 `gpt-image-2` 공개 단가표 기반 **추정치**로 request log의 `image_cost_usd`에 별도 기록됩니다 (codex가 정확한 이미지 tool 사용량을 노출하지 않음).
 
@@ -340,7 +342,7 @@ AI SDK response metadata로 실제 serving 모델을 다르게 보고하면 step
 
 ```typescript
 type QgridSupportedModel =
-  // OpenAI (based on codex app-server)
+  // OpenAI (direct private Codex Responses backend)
   | "openai/gpt-5.6-sol"
   | "openai/gpt-5.6-terra"
   | "openai/gpt-5.6-luna"
@@ -369,13 +371,13 @@ type QgridSupportedModel =
 
 ### GPT-5.6 사양
 
-| 모델 | Context (qgrid/codex 런타임) | 최대 출력 | 1M tokens당 input / cached input / output |
+| 모델 | Context (qgrid OpenAI 경로) | 최대 출력 | 1M tokens당 input / cached input / output |
 |---|---:|---:|---:|
 | `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
 | `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
 | `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
 
-세 모델 모두 `max` reasoning effort를 지원합니다. OpenAI native API 사양은 1.05M context / 128K 최대 출력이지만, qgrid는 codex app-server 구독 경로로 실행되어 세 모델 모두 context window가 372K(95% effective, 실사용 입력 약 353K)로 보고되며 설정으로 올릴 수 없습니다. 입력이 272K tokens를 넘으면 요청 전체에 input 2x, output 1.5x 장문 컨텍스트 할증이 적용되며, cache write는 uncached input 단가의 1.25x입니다.
+세 모델 모두 `max` reasoning effort를 지원합니다. Qgrid는 model 설정에 사용해 온 구독 경로의 관측 한도인 372K context window(95% effective, 실사용 입력 약 353K)와 128K 최대 출력을 유지합니다. 이는 OpenAI public API에 표시된 1.05M context보다 작으며 local runtime의 제약으로 귀속하지 않습니다. 입력이 272K tokens를 넘으면 요청 전체에 input 2x, output 1.5x 장문 컨텍스트 할증이 적용되며, cache write는 uncached input 단가의 1.25x입니다.
 
 `anthropic/claude-fable-5`는 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 표준 단가는 input $10, cache read $1, 5분 cache write $12.50, 1시간 cache write $20, output $50입니다. qgrid는 Claude 응답의 5분/1시간 cache creation breakdown을 보존해 TTL별 단가를 각각 적용하며, breakdown이 없는 구버전 응답에서만 Claude Code가 subscription OAuth 경로에 자동 적용하는 1시간 TTL 단가로 fallback합니다. Fable은 adaptive thinking이 항상 켜져 있어야 하므로 qgrid는 이 모델의 adaptive thinking을 보존합니다.
 
@@ -406,7 +408,7 @@ qgrid(modelId, {
 
 ## 주의사항
 
-- `temperature`, `maxOutputTokens` 등 sampling 파라미터는 CLI 런타임(OpenAI: codex app-server, Anthropic: Claude Code)이 지원하지 않아 무시됩니다.
+- `temperature`, `maxOutputTokens` 등 sampling 파라미터는 OpenAI private Codex 경로와 Anthropic Claude Code 경로가 qgrid를 통해 받지 않으므로 무시됩니다.
 - Structured output은 top-level `object` schema만 서버에서 강제됩니다. top-level `array`는 클라이언트 파싱 fallback.
 - `tools`와 `Output.object`를 함께 사용하려면 qgrid server와 AI SDK가 모두 2.5.4 이상이어야 합니다.
 - AI SDK/Zod가 Draft-7 `items: [...]`로 만드는 위치 기반 tuple은 지원되는

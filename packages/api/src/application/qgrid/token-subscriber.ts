@@ -161,7 +161,7 @@ export class TokenSubscriber {
       this.dispatcher.removeCache(payload.id);
       await this.dispatcher.openaiDispatcher
         ?.onTokenRemoved(payload.id)
-        .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
+        .catch((e) => logger.warn(`openai token remove failed: ${(e as Error).message}`));
       // anthropic 토큰 이벤트는 동기(void) — provider 를 모르므로 무해하게 항상 제거 시도.
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → removed from cache`);
@@ -172,7 +172,7 @@ export class TokenSubscriber {
       this.dispatcher.removeCache(payload.id);
       await this.dispatcher.openaiDispatcher
         ?.onTokenRemoved(payload.id)
-        .catch((e) => logger.warn(`openai worker remove failed: ${(e as Error).message}`));
+        .catch((e) => logger.warn(`openai token remove failed: ${(e as Error).message}`));
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → missing, removed from cache`);
       return;
@@ -192,7 +192,7 @@ export class TokenSubscriber {
             row.quota_threshold,
             row.weight,
           )
-          .catch((e) => logger.warn(`openai worker spawn failed: ${(e as Error).message}`));
+          .catch((e) => logger.warn(`openai token add failed: ${(e as Error).message}`));
       } else if (row.active) {
         if (openaiDispatcher) {
           await openaiDispatcher
@@ -204,7 +204,7 @@ export class TokenSubscriber {
               row.weight,
             )
             .then(() => openaiDispatcher.onTokenActivated(payload.id))
-            .catch((e) => logger.warn(`openai worker update failed: ${(e as Error).message}`));
+            .catch((e) => logger.warn(`openai token update failed: ${(e as Error).message}`));
         }
       } else {
         openaiDispatcher?.onTokenDeactivated(payload.id);

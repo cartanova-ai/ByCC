@@ -1,5 +1,7 @@
 # Weighted token routing implementation plan
 
+> **Status (direct OpenAI migration complete):** This plan records the earlier worker/thread implementation and is not the current OpenAI runtime specification. The completed runtime keeps smooth weighted token routing and the 50-item/60-second queue, but uses token-level concurrent permits, direct HTTPS/SSE, full-history replay, and opaque prompt-cache affinity. See `packages/cli/skills/qgrid/references/openai-codex-runtime.md` for current behavior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Route new OpenAI and Anthropic requests across eligible tokens with per-token smooth weighted round-robin while preserving quota gates, OpenAI thread affinity, and work-conserving queue behavior.

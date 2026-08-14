@@ -3,6 +3,7 @@ import path from "path";
 import { getConsoleSink } from "@logtape/logtape";
 import { getLogger } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
+import { type FastifyReply, type FastifyRequest } from "fastify";
 import { CachePresets, defineConfig } from "sonamu";
 import { drivers as cacheDrivers, store } from "sonamu/cache";
 
@@ -98,23 +99,19 @@ export default defineConfig({
         prefix: "/api/public",
       },
       custom: (server) => {
-        // OAuth 콜백 — Anthropic이 /callback으로 리다이렉트
-        server.get("/callback", async (request, reply) => {
+        const oauthCallback = async (request: FastifyRequest, reply: FastifyReply) => {
           const { code, state } = request.query as { code?: string; state?: string };
           if (!code || !state) {
             return reply.redirect("/?oauth=error&reason=missing_params");
           }
           try {
             return QgridFrame.handleOAuthCallback(code, state, reply);
-          } catch (e) {
-            return reply.redirect(
-              `/?oauth=error&reason=${encodeURIComponent((e as Error).message)}`,
-            );
+          } catch {
+            return reply.redirect("/?oauth=error&reason=callback_failed");
           }
-        });
-
-        // OpenAI OAuth 는 codex app-server 가 자체 callback 서버를 올림
-        // handleOpenAICallback 불필요 — oauthCompleteOpenAI API 로 완료 확인
+        };
+        server.get("/callback", oauthCallback);
+        server.get("/auth/callback", oauthCallback);
       },
     },
     apiConfig: {
@@ -219,12 +216,14 @@ export default defineConfig({
         startExpiredTokenReminder();
 
         const anthropicCount = QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0;
-        const openaiReady = QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0;
-        const openaiTotal = QgridDispatcher.openaiDispatcher?.workerCount ?? 0;
+        const openaiReadyPermits = QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0;
+        const openaiTotalPermits = QgridDispatcher.openaiDispatcher?.workerCount ?? 0;
 
         log.info(`listening on http://${host}:${port}`);
         log.info(`anthropic: ${anthropicCount} tokens ready`);
-        log.info(`openai: ${openaiReady}/${openaiTotal} tokens ready`);
+        log.info(
+          `openai: ${openaiReadyPermits}/${openaiTotalPermits} concurrent request permits ready`,
+        );
         log.info(
           `subscriber: ${started ? "LISTEN active" : "degraded"}${triggerReady ? "" : ", trigger failed"}`,
         );

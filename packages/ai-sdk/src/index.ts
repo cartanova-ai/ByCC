@@ -33,10 +33,12 @@ import {
   toQgridTool,
 } from "./utils";
 
-// sessionKey → threadCoord(thread 좌표)
+// model-scoped opaque affinity → threadCoord. The key is derived independently of this map, so
+// separate qgrid() instances and processes send the same cache affinity for the same session.
 // 클라이언트가 전달한 providerOptions.qgrid.sessionKey의 좌표 발급/보관/회송을 여기서 처리한다
 // 모듈 레벨이라 qgrid() 인스턴스를 매 호출 새로 만들어도 공유
 const threadCoordStore = new Map<string, { coord: QgridThreadCoord; expiresAt: number }>();
+const CACHE_AFFINITY_NAMESPACE = "qgrid-cache-affinity-v1";
 const MAX_IMAGE_INPUT_DATA_URL_CHARS = 9_000_000;
 const MAX_IMAGE_INPUT_DATA_URL_CHARS_LABEL = "9M";
 
@@ -95,6 +97,16 @@ function setThreadCoord(sessionKey: string, coord: QgridThreadCoord): void {
   threadCoordStore.set(sessionKey, { coord, expiresAt: Date.now() + THREAD_COORD_TTL_MS });
 }
 
+async function deriveCacheAffinityKey(
+  modelId: QgridSupportedModel,
+  sessionKey?: string,
+): Promise<string | undefined> {
+  if (!sessionKey || modelId.startsWith("anthropic/")) return undefined;
+  const bytes = new TextEncoder().encode(`${CACHE_AFFINITY_NAMESPACE}\0${modelId}\0${sessionKey}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function qgridProviderMetadata(data: QueryOutput) {
   return {
     qgrid: {
@@ -111,10 +123,6 @@ function qgridProviderMetadata(data: QueryOutput) {
   };
 }
 
-function reusableSessionKey(modelId: QgridSupportedModel, sessionKey?: string): string | undefined {
-  return modelId.startsWith("anthropic/") ? undefined : sessionKey;
-}
-
 function getQgridProviderOptions(options: LanguageModelV3CallOptions): QgridProviderOptions {
   return (options.providerOptions?.qgrid as QgridProviderOptions | undefined) ?? {};
 }
@@ -122,6 +130,7 @@ function getQgridProviderOptions(options: LanguageModelV3CallOptions): QgridProv
 function toAiSdkUsage(usage: QueryOutput["usage"]) {
   const cacheRead = usage.cache_read_input_tokens;
   const cacheWrite = usage.cache_creation_input_tokens;
+  const reasoning = usage.reasoning_tokens ?? 0;
   return {
     inputTokens: {
       total: usage.input_tokens,
@@ -131,8 +140,8 @@ function toAiSdkUsage(usage: QueryOutput["usage"]) {
     },
     outputTokens: {
       total: usage.output_tokens,
-      text: usage.output_tokens,
-      reasoning: undefined,
+      text: Math.max(usage.output_tokens - reasoning, 0),
+      reasoning,
     },
   };
 }
@@ -227,7 +236,9 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       // 멀티턴 대화 식별자. 호출자가 자기 도메인 ID(예: 게임 세션 ID)만 넘기면,
       // thread 좌표 보관/회송은 threadCoordStore 가 내부에서 처리한다 → 클라이언트 무부담.
       const sessionKey = qgridOptions.sessionKey;
-      const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
+      const cacheAffinityKey = imageGeneration
+        ? undefined
+        : await deriveCacheAffinityKey(modelId, sessionKey);
 
       // qgrid server는 object root schema만 받는다. tools 유무와 무관하게 같은 계약을 적용한다.
       const jsonSchema = serializeObjectResponseFormat(options.responseFormat);
@@ -247,7 +258,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 
       // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송.
       // locally matched tool-result follow-up에는 stale session 좌표를 새로 섞지 않는다.
-      const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
+      const storedCoord = cacheAffinityKey ? getThreadCoord(cacheAffinityKey) : undefined;
       if (!matchedClientRun && storedCoord) {
         runContext = { threadCoord: storedCoord };
       }
@@ -270,6 +281,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
             ...(projectName ? { projectName } : {}),
+            ...(cacheAffinityKey ? { cacheAffinityKey } : {}),
             ...(logger === false ? { logger: false } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
@@ -339,8 +351,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       }
 
       // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
-      if (reuseSessionKey && data.runContext?.threadCoord) {
-        setThreadCoord(reuseSessionKey, data.runContext.threadCoord);
+      if (!imageGeneration && cacheAffinityKey && data.runContext?.threadCoord) {
+        setThreadCoord(cacheAffinityKey, data.runContext.threadCoord);
       }
 
       return {
@@ -377,7 +389,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       );
       warnDroppedImages(droppedImageCount);
       const sessionKey = qgridOptions.sessionKey;
-      const reuseSessionKey = reusableSessionKey(modelId, sessionKey);
+      const cacheAffinityKey = await deriveCacheAffinityKey(modelId, sessionKey);
 
       const jsonSchema = serializeObjectResponseFormat(options.responseFormat);
 
@@ -395,7 +407,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 
       // 비-tool 멀티턴: sessionKey 로 저장된 좌표를 회송. locally matched tool
       // follow-up에는 stale session 좌표를 새로 섞지 않는다.
-      const storedCoord = reuseSessionKey ? getThreadCoord(reuseSessionKey) : undefined;
+      const storedCoord = cacheAffinityKey ? getThreadCoord(cacheAffinityKey) : undefined;
       if (!matchedClientRun && storedCoord) {
         runContext = { threadCoord: storedCoord };
       }
@@ -417,6 +429,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(jsonSchema ? { jsonSchema } : {}),
             ...(history.length > 0 ? { history: JSON.stringify(history) } : {}),
             ...(projectName ? { projectName } : {}),
+            ...(cacheAffinityKey ? { cacheAffinityKey } : {}),
             ...(logger === false ? { logger: false } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
@@ -495,8 +508,8 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
                 }
 
                 // sessionKey 가 있으면 발급된 좌표를 저장 → 다음 호출에 자동 회송 (thread 재사용).
-                if (reuseSessionKey && done.runContext?.threadCoord) {
-                  setThreadCoord(reuseSessionKey, done.runContext.threadCoord);
+                if (cacheAffinityKey && done.runContext?.threadCoord) {
+                  setThreadCoord(cacheAffinityKey, done.runContext.threadCoord);
                 }
 
                 // AI SDK stream parts

@@ -19,7 +19,7 @@ The project workflow is documented in `docs/WORKFLOW.md`.
 
 Before changing runtime-sensitive areas, search `docs/diagnosis`, `docs/solutions`, and recent `docs/plans` for prior decisions. qgrid has important historical decisions around:
 
-- Codex thread reuse and prompt cache.
+- OpenAI full-history replay and opaque prompt-cache affinity.
 - Claude Code fresh spawn.
 - structured output strictness.
 - Anthropic usage categories.

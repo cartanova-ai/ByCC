@@ -5,12 +5,9 @@
  */
 
 import { type ImageGenerationOptions } from "../../../application/qgrid/qgrid.types";
-import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
-import { type TokenUsageBreakdown } from "../../../codex-protocol/v2/TokenUsageBreakdown";
-import { type UserInput } from "../../../codex-protocol/v2/UserInput";
+import { type JsonValue, type TokenUsageBreakdown, type UserInput } from "./provider-types";
 
-// qgrid provider 내부 표준 usage. codex-protocol 의 TokenUsageBreakdown 은 생성 파일이므로
-// provider 전용 cache write 세부 필드는 여기서 확장해 보존한다.
+// qgrid provider 내부 표준 usage. provider 전용 cache write 세부 필드는 여기서 확장해 보존한다.
 export type ProviderTokenUsageBreakdown = TokenUsageBreakdown & {
   cacheCreationInputTokens?: number;
   cacheCreationInputTokens5m?: number;
@@ -25,7 +22,7 @@ export interface ReuseThreadCoord {
   epoch: number;
 }
 
-// provider-무관 이미지 결과. OpenAI(codex) 경로에서만 채워지며, 상위(qgrid.dispatcher)가
+// provider-무관 이미지 결과. OpenAI 경로에서만 채워지며, 상위(qgrid.dispatcher)가
 // content 파트로 전파한다. Anthropic 경로는 이 필드를 채우지 않는다.
 export interface GeneratedImage {
   data: string; // base64 PNG
@@ -55,19 +52,24 @@ export interface GenerateRequest {
   verbosity?: string;
   reasoningSummary?: string;
   serviceTier?: string;
-  // provider 실행 제한(ms). 현재 Anthropic Claude session 타이머가 사용한다.
+  // provider 실행 제한(ms). Queue selection 이후의 active provider request 전체에 적용한다.
   timeoutMs?: number;
   abortSignal?: AbortSignal;
   // 첫 turn / 재사용 폴백 시 보낼 input — 전체 prompt. 항상 설정.
   coldInput: Array<UserInput>;
   // 첫 turn / 폴백 시 inject 할 전체 history.
   coldHistory?: Array<JsonValue>;
+  // Provider-neutral cache affinity hints. Direct OpenAI currently receives these while still
+  // replaying coldInput + coldHistory on every turn; a dispatcher may use them for token choice
+  // and prompt-cache routing without relying on a process-local worker/thread.
+  promptCacheKey?: string;
+  preferredTokenId?: number;
   // 재사용 좌표 + delta input. 둘은 한 쌍 — 검증 통과 시에만 설정한다.
   // dispatcher 가 worker/thread 생존을 재검증해 성공하면 reuseInput(delta)을, 실패하면
   // coldInput + coldHistory 로 폴백한다(전체 history 로 문맥 복구).
   reuse?: ReuseThreadCoord;
   reuseInput?: Array<UserInput>;
-  // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in).
+  // OpenAI image_generation tool 을 켠다(OpenAI 경로 전용, opt-in).
   // 이 플래그가 있으면 dispatcher 는 항상 cold thread 로 실행하고 재사용 라우팅을 건너뛴다.
   imageGeneration?: boolean;
   imageGenerationOptions?: ImageGenerationOptions;

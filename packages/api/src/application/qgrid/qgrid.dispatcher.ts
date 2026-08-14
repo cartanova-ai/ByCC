@@ -9,7 +9,6 @@
 
 import { InternalServerErrorException, ServiceUnavailableException } from "sonamu";
 
-import { type JsonValue } from "../../codex-protocol/serde_json/JsonValue";
 import { SD } from "../../i18n/sd.generated";
 import { type AnthropicDispatcher } from "../../utils/providers/anthropic/anthropic-dispatcher";
 import { createFenceStripTransform } from "../../utils/providers/anthropic/fence-strip";
@@ -19,6 +18,7 @@ import {
   type GenerateResult,
   type StreamCallbacks,
 } from "../../utils/providers/common/provider-dispatcher";
+import { type JsonValue } from "../../utils/providers/common/provider-types";
 import {
   parseAndValidateCallerSchemas,
   serializeAndValidateDispatchSchema,
@@ -115,7 +115,10 @@ export class QgridDispatcherClass {
     if (route.provider === "openai") {
       if (!this.openaiDispatcher) throw this.notReadyError("openai");
 
-      const decision = decideConvRouting(input);
+      const decision = decideConvRouting(input, {
+        directOpenAI: true,
+        modelNamespace: `openai/${route.model}`,
+      });
       const result = await this.openaiDispatcher.generate({
         model: route.model,
         systemPrompt: input.system,
@@ -124,10 +127,11 @@ export class QgridDispatcherClass {
         verbosity: input.verbosity,
         reasoningSummary: input.reasoningSummary,
         serviceTier: input.serviceTier,
+        timeoutMs: input.timeout,
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
-        reuse: decision.reuse,
-        reuseInput: decision.reuseInput,
+        promptCacheKey: input.imageGeneration ? undefined : decision.promptCacheKey,
+        preferredTokenId: input.imageGeneration ? undefined : decision.preferredTokenId,
         abortSignal,
         imageGeneration: input.imageGeneration,
         imageGenerationOptions: input.imageGenerationOptions,
@@ -137,7 +141,7 @@ export class QgridDispatcherClass {
       // sessionKey 소비자의 warm 좌표를 죽은 좌표로 덮어써 다음 텍스트 turn 이 cold 로 떨어진다.
       const coord = input.imageGeneration
         ? undefined
-        : issueConvContext(result.threadCoord, decision);
+        : issueConvContext(result.threadCoord, decision, result.threadCoord.workerId);
 
       return applyToolCallEmulation(toEmulationResult(result), input.tools, {
         threadCoord: coord,
@@ -186,7 +190,10 @@ export class QgridDispatcherClass {
     if (route.provider === "openai") {
       if (!this.openaiDispatcher) throw this.notReadyError("openai");
 
-      const decision = decideConvRouting(input);
+      const decision = decideConvRouting(input, {
+        directOpenAI: true,
+        modelNamespace: `openai/${route.model}`,
+      });
       await this.openaiDispatcher.generateStream(
         {
           model: route.model,
@@ -196,10 +203,11 @@ export class QgridDispatcherClass {
           verbosity: input.verbosity,
           reasoningSummary: input.reasoningSummary,
           serviceTier: input.serviceTier,
+          timeoutMs: input.timeout,
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
-          reuse: decision.reuse,
-          reuseInput: decision.reuseInput,
+          promptCacheKey: decision.promptCacheKey,
+          preferredTokenId: decision.preferredTokenId,
           abortSignal,
           // 이미지 플래그를 전달해야 generateStream 의 non-stream 전용 거부(R2)가 발동한다.
           imageGeneration: input.imageGeneration,
@@ -212,7 +220,11 @@ export class QgridDispatcherClass {
           onComplete: (turnResult) => {
             cb.onComplete(
               applyToolCallEmulation(toEmulationResult(turnResult), input.tools, {
-                threadCoord: issueConvContext(turnResult.threadCoord, decision),
+                threadCoord: issueConvContext(
+                  turnResult.threadCoord,
+                  decision,
+                  turnResult.threadCoord.workerId,
+                ),
                 answerKind,
               }),
             );
@@ -357,6 +369,7 @@ function toEmulationResult(
     usage: {
       input_tokens: result.usage.inputTokens,
       output_tokens: result.usage.outputTokens,
+      reasoning_tokens: result.usage.reasoningOutputTokens,
       cache_creation_input_tokens: result.usage.cacheCreationInputTokens ?? 0,
       cache_creation_5m_input_tokens: result.usage.cacheCreationInputTokens5m,
       cache_creation_1h_input_tokens: result.usage.cacheCreationInputTokens1h,

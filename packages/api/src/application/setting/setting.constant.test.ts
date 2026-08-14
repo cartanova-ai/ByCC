@@ -89,6 +89,30 @@ describe("SETTING_DEFS", () => {
     expect(new Set(envKeys).size).toBe(envKeys.length);
   });
 
+  it("OpenAI 호환 키는 유지하면서 동시 요청 허용량으로 안내한다", () => {
+    const min = findSettingDef("openai.minWorkersPerToken")!;
+    const max = findSettingDef("openai.maxWorkersPerToken")!;
+
+    expect(min.envKey).toBe("QGRID_OPENAI_MIN_WORKERS_PER_TOKEN");
+    expect(max.envKey).toBe("QGRID_OPENAI_MAX_WORKERS_PER_TOKEN");
+    expect(min.label).toContain("최소 동시 요청 허용량");
+    expect(max.label).toContain("최대 동시 요청 허용량");
+  });
+
+  it("직접 호출 모드에서 레거시 오토스케일과 메모리 설정을 비활성으로 안내한다", () => {
+    const legacyKeys = [
+      "openai.autoscale",
+      "openai.maxEstimatedRssGiB",
+      "openai.minHostAvailableGiB",
+    ];
+
+    for (const key of legacyKeys) {
+      const def = findSettingDef(key)!;
+      expect(def.label).toContain("비활성");
+      expect(def.help).toContain("직접 호출 모드에서는 사용하지 않습니다");
+    }
+  });
+
   it("정의되지 않은 키는 찾지 못한다", () => {
     expect(findSettingDef("nope.bad")).toBeUndefined();
   });
@@ -103,7 +127,7 @@ describe("SETTING_DEFS", () => {
     expect(validateSettingValue(rss, "32.5")).toMatchObject({ ok: false });
     expect(validateSettingValue(available, "64")).toMatchObject({ ok: true });
     expect(validateSettingValue(available, "64.5")).toMatchObject({ ok: false });
-    expect(rss.help).toContain("OOM");
-    expect(available.help).toContain("오토스케일");
+    expect(rss.help).toContain("직접 호출 모드에서는 사용하지 않습니다");
+    expect(available.help).toContain("직접 호출 모드에서는 사용하지 않습니다");
   });
 });

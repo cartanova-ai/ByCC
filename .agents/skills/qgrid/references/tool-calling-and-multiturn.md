@@ -241,8 +241,8 @@ once per deploy.
 OpenAI/Codex:
 
 - qgrid does not register AI SDK tools as Codex native tools.
-- Codex built-in tools are disabled in worker config.
-- qgrid sends the strict tool-call schema as `outputSchema` in `turn/start`.
+- The direct request contains only the tools and schema required by qgrid's emulation path.
+- qgrid sends the strict tool-call schema in the direct Responses request's JSON-schema format.
 - Codex returns text matching the structured schema.
 - qgrid parses that text and maps it to qgrid `tool-call` content.
 
@@ -316,7 +316,7 @@ qgrid; the model selects between the envelope's answer and tool-call actions.
 The combined contract requires qgrid server 2.5.4 and
 `@cartanova/qgrid-ai-sdk` 2.5.4.
 
-OpenAI/Codex follow-ups can reuse the same Codex thread when `runContext.threadCoord` remains valid. For tool-result follow-up turns, qgrid sends delta input containing tool result text to the existing thread; cold fallback injects full history.
+OpenAI follow-ups replay the complete Responses-format history. A valid `runContext` carries opaque `prompt_cache_key` affinity, not a provider thread address.
 
 Anthropic follow-ups do not reuse Claude sessions. qgrid starts a fresh Claude process, replays flattened full history, and sends the tool-result continuation input.
 

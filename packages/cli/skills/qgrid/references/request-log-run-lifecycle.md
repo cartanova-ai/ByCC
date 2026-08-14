@@ -74,7 +74,7 @@ Stored request log usage uses qgrid-standard semantics:
 - `image_cost_usd`: integer micro-USD estimate for Codex image generation output.
 - `image_cost_method`: string such as `assumed:gpt-image-2:medium:1536x1024:png`.
 
-OpenAI/Codex uses per-turn `.last` usage from `thread/tokenUsage/updated`.
+OpenAI uses the completed Responses event's per-request usage fields.
 
 Anthropic normalizes native mutually exclusive categories by summing input + cache creation + cache read into total input. Prefer positive Claude Code `total_cost_usd`; otherwise calculate from the actual serving model and TTL split.
 

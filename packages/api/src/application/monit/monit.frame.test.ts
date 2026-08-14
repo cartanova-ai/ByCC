@@ -153,7 +153,7 @@ describe("MonitFrame.monitLogs", () => {
 });
 
 describe("MonitFrame.monitInfo", () => {
-  it("returns the active DB connection, server url, and pool bounds without secrets", async () => {
+  it("returns the active DB connection, server url, and permit capacity without secrets", async () => {
     vi.stubEnv("HOST", "0.0.0.0");
     vi.stubEnv("PORT", "45000");
     vi.stubEnv("SONAMU_DB_HOST", "db.internal");
@@ -166,7 +166,8 @@ describe("MonitFrame.monitInfo", () => {
     expect(info.dbHost).toBe("db.internal");
     expect(info.dbName).toBe("qgrid_dev");
     expect(info.openai.minWorkersPerToken).toBeGreaterThan(0);
-    expect(info.openai.maxWorkersPerToken).toBeGreaterThanOrEqual(info.openai.minWorkersPerToken);
+    expect(info.openai.maxWorkersPerToken).toBe(info.openai.minWorkersPerToken);
+    expect(info.openai.autoscale).toBe(false);
     // allowlist — 연결 객체의 password/user 등은 절대 실리지 않는다.
     expect(Object.keys(info).toSorted()).toEqual(["dbHost", "dbName", "openai", "serverUrl"]);
     expect(JSON.stringify(info)).not.toContain("password");

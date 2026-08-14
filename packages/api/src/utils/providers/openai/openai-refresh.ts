@@ -1,7 +1,7 @@
 /**
  * OpenAI chatgptAuthTokens refresh handler.
  *
- * - codex app-server 가 401 받으면 `account/chatgptAuthTokens/refresh` server-request 를 보냄
+ * - direct HTTPS/WS transport가 401 refresh를 소유하고 저장된 refresh token으로 갱신함
  * - qgrid 가 DB 의 refresh_token 으로 새 access_token 을 발급받아 응답
  * - per-token inflight promise 로 concurrent refresh dedup
  * - rotation 감지: 새 refresh_token 있으면 DB 즉시 업데이트
@@ -85,6 +85,8 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
 
   const resp = await fetch(OPENAI_TOKEN_URL, {
     method: "POST",
+    // 토큰 엔드포인트는 OAuth 표준 form 인코딩 계약을 강제한다. JSON 으로 보내면
+    // access token 만료 후의 모든 refresh 가 거부되어 토큰이 통째로 죽는다.
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",

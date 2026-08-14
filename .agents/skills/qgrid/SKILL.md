@@ -1,6 +1,6 @@
 ---
 name: qgrid
-description: Work on the qgrid repository, an LLM subscription-token proxy with OpenAI Codex app-server workers, Anthropic Claude Code fresh-spawn runtime, AI SDK provider compatibility, Sonamu API/web generation, token routing, prompt-cache behavior, request logging, quota thresholds, and dashboard flows. Use when implementing, debugging, reviewing, or planning qgrid code, docs, migrations, provider integrations, CLI/runtime behavior, request logs, or SDK behavior.
+description: Work on the qgrid repository, an LLM subscription-token proxy with direct OpenAI private-backend HTTPS/SSE transport, Anthropic Claude Code fresh-spawn runtime, AI SDK provider compatibility, Sonamu API/web generation, weighted token routing, prompt-cache behavior, request logging, quota thresholds, and dashboard flows. Use when implementing, debugging, reviewing, or planning qgrid code, docs, migrations, provider integrations, CLI/runtime behavior, request logs, or SDK behavior.
 ---
 
 # Qgrid
@@ -13,12 +13,12 @@ Before changing code, identify the affected path:
 
 - Public AI SDK provider: read `references/ai-sdk-provider-contract.md`.
 - CLI startup, env vars, server boot, OAuth callback URL: read `references/cli-env-and-server-boot.md`.
-- OpenAI models or Codex worker/thread/cache behavior: read `references/openai-codex-runtime.md`.
+- OpenAI direct transport, permits, routing, cache affinity, OAuth, or quota behavior: read `references/openai-codex-runtime.md`.
 - Anthropic models or Claude Code spawn/stream-json behavior: read `references/anthropic-claude-code-runtime.md`.
 - Token registration, OAuth, token sync, active/inactive behavior, quota thresholds, or weighted token routing: read `references/token-auth-quota-lifecycle.md`.
 - Provider comparisons, routing, or cross-provider bugs: read `references/provider-runtime-differences.md`.
 - Tool calling, AI SDK multi-step loops, or tool-call request logs: read `references/tool-calling-and-multiturn.md`.
-- `sessionKey`, `threadCoord`, prompt cache metrics, usage accounting, or cost: read `references/prompt-cache-and-usage.md`.
+- `sessionKey`, opaque affinity coordinates, prompt cache metrics, usage accounting, or cost: read `references/prompt-cache-and-usage.md`.
 - Design rationale, prior decisions, or "why is this feature shaped this way?": read `references/decision-rationale.md`.
 - Dashboard changes: read `references/sonamu-api-web-flow.md`.
 - Request log lifecycle, tool-call steps, telemetry/logger behavior: read `references/request-log-run-lifecycle.md`.
@@ -34,7 +34,7 @@ Prefer `QGRID_PROJECT_NAME` as the project-wide default. Use config `projectName
 
 When writing AI SDK examples or setup code, import the public `QgridProviderOptions` type and apply `satisfies QgridProviderOptions` to the value under `providerOptions.qgrid`. AI SDK types the outer `providerOptions` as a generic JSON record, so it cannot infer qgrid's option names and values by itself. `QgridProviderOptions` is the inner qgrid namespace type, not the outer record type.
 
-Request logging is enabled by default. Use `providerOptions.qgrid.logger: false` only for a call that must create zero qgrid request-log rows. The same option suppresses both qgrid's server-native logging and `createQgridLogger` telemetry logging for that generation; it does not disable generation, AI SDK tool execution, multi-step continuation, or provider thread coordination. The old `logMode` input has been removed and must not appear in setup code or raw qgrid payloads.
+Request logging is enabled by default. Use `providerOptions.qgrid.logger: false` only for a call that must create zero qgrid request-log rows. The same option suppresses both qgrid's server-native logging and `createQgridLogger` telemetry logging for that generation; it does not disable generation, AI SDK tool execution, multi-step continuation, or OpenAI cache affinity. The old `logMode` input has been removed and must not appear in setup code or raw qgrid payloads.
 
 ## Non-Negotiable Boundaries
 
@@ -59,4 +59,4 @@ Choose verification by blast radius:
 - AI SDK changes: run `packages/ai-sdk` tests and inspect generated request payload behavior.
 - Sonamu API/model changes: check generated files and both API and web consumers.
 
-Do not rely on one provider's behavior to infer the other provider's behavior. OpenAI/Codex and Anthropic/Claude Code have different process lifetimes, cache behavior, usage accounting, and structured-output paths.
+Do not rely on one provider's behavior to infer the other provider's behavior. OpenAI direct transport and Anthropic/Claude Code have different execution lifecycles, cache behavior, usage accounting, and structured-output paths.

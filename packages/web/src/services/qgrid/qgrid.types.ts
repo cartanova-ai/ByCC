@@ -153,6 +153,7 @@ export const QueryOutput = z.object({
   usage: z.object({
     input_tokens: z.number(),
     output_tokens: z.number(),
+    reasoning_tokens: z.number(),
     cache_creation_input_tokens: z.number(),
     cache_creation_5m_input_tokens: z.number().optional(),
     cache_creation_1h_input_tokens: z.number().optional(),
@@ -185,6 +186,7 @@ export const StreamEvents = z.object({
     usage: z.object({
       input_tokens: z.number(),
       output_tokens: z.number(),
+      reasoning_tokens: z.number(),
       cache_creation_input_tokens: z.number(),
       cache_creation_5m_input_tokens: z.number().optional(),
       cache_creation_1h_input_tokens: z.number().optional(),

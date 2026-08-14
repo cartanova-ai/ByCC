@@ -4,26 +4,26 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 
 | Topic | OpenAI via Codex | Anthropic via Claude Code |
 |---|---|---|
-| Process lifetime | Persistent `codex app-server` workers | Fresh `claude` process per request |
-| Worker pool | Autoscaling pool per token, default 1–3 and hard-capped at 20 | No workers; in-memory token pool only |
-| Worker id | `tokenId * 100 + workerIndex` | `tokenId` |
-| Epoch | Worker spawn counter; changes on restart | Always `0` |
-| Request concurrency | One turn per worker; queue when all eligible workers busy | Fresh process per request |
-| Token selection | Smooth weighted RR picks a quota-eligible token with an idle worker, then a per-token worker cursor; reuse bypasses weights | Smooth weighted RR over quota-eligible tokens per request |
+| Process lifetime | No child process; direct HTTPS/SSE request | Fresh `claude` process per request |
+| Worker pool | Token-level concurrent permits; existing capacity settings determine the permit count | No workers; in-memory token pool only |
+| Worker id | Legacy coordinate field carries token id | `tokenId` |
+| Epoch | Legacy compatibility value; not a process generation | Always `0` |
+| Request concurrency | One permit per active request; 50-item, 60-second queue when all eligible permits are occupied | Fresh process per request |
+| Token selection | Smooth weighted RR over quota-eligible tokens with free permits; valid affinity may prefer its token | Smooth weighted RR over quota-eligible tokens per request |
 | Model routing | `openai/*`; qgrid strips provider prefix before provider call | `anthropic/*`; provider canonicalizes model and strips prefix/`[1m]` |
 | Prefix-less models | Fallback not implemented | Fallback not implemented |
-| Thread/session | Ephemeral Codex thread stored in worker memory | Fresh Claude `--session-id` per request |
-| `sessionKey` | AI SDK stores and replays `threadCoord` for thread reuse | AI SDK intentionally disables storage/replay |
-| Multi-turn | Reuse sends delta input to existing Codex thread; cold fallback injects full history | Fresh spawn receives flattened full history through stream-json |
-| Cache key | Codex conversation/thread id is prompt-cache affinity | Anthropic prefix cache via Claude Code; fresh spawn still can cache stable prefixes |
-| Built-in tools | Codex tools/apps/plugins/skills disabled by worker config | Claude tools disabled via `--tools ""` on every call |
+| Thread/session | No provider thread retained | Fresh Claude `--session-id` per request |
+| `sessionKey` | AI SDK derives and replays opaque `prompt_cache_key` affinity | AI SDK intentionally disables storage/replay |
+| Multi-turn | Full Responses-format history is sent on every request | Fresh spawn receives flattened full history through stream-json |
+| Cache key | Opaque model-scoped affinity key plus stable serialized prefix | Anthropic prefix cache via Claude Code; fresh spawn still can cache stable prefixes |
+| Built-in tools | Direct Responses request includes only requested qgrid tools/options | Claude tools disabled via `--tools ""` on every call |
 | AI SDK tools | Emulated via qgrid structured output schema, then mapped to AI SDK `tool-call` content | Emulated via envelope contract rendered as prompt text (SON-532); reply parsed by `parseEnvelope`; not native Claude Code tools |
-| Structured output | Codex `outputSchema` passed to `turn/start` (strictified, constrained decoding); schema changes can affect prefix cache | Schema delivered as prompt text appended to the system prompt (no `--json-schema`, no strictify); server strips fences; validation is the consumer's |
-| Usage accounting | Codex usage already reports `inputTokens` including cached input | Native Anthropic categories are mutually exclusive; qgrid sums them into total input |
+| Structured output | Strict JSON schema is sent in the direct Responses request; schema changes can affect prefix cache | Schema delivered as prompt text appended to the system prompt (no `--json-schema`, no strictify); server strips fences; validation is the consumer's |
+| Usage accounting | Responses usage reports input including cached input | Native Anthropic categories are mutually exclusive; qgrid sums them into total input |
 | Cost source | qgrid model price fallback | Prefer Claude Code `total_cost_usd`, else qgrid price fallback |
-| Settings isolation | Per-worker `CODEX_HOME` and config.toml | Shared project cwd plus per-token `CLAUDE_CONFIG_DIR` |
-| Streaming close | Can interrupt Codex turn with `turn/interrupt` | Abort kills the fresh child process |
-| Image generation | Implemented as an opt-in Codex `image_generation` tool path; non-stream only | Explicitly unsupported |
+| Settings isolation | Per-token credentials and permit metadata in memory | Shared project cwd plus per-token `CLAUDE_CONFIG_DIR` |
+| Streaming close | `AbortSignal` cancels queue wait, retry delay, or `fetch` | Abort kills the fresh child process |
+| Image generation | Implemented as an opt-in direct Responses `image_generation` tool path; non-stream only | Explicitly unsupported |
 
 ## Routing contract
 
@@ -48,7 +48,7 @@ Both providers return `GenerateResult` with:
 - canonical `model`
 - `threadCoord`
 
-`qgrid.dispatcher.ts` maps this into `QueryOutput`, applies tool-call emulation, calculates fallback cost, and issues a client-facing `QgridThreadCoord` by adding `systemHash`.
+`qgrid.dispatcher.ts` maps this into `QueryOutput`, applies tool-call emulation, calculates fallback cost, and keeps the legacy `QgridThreadCoord` response shape for opaque OpenAI cache affinity.
 
 Both providers receive strictified output schemas from `buildStrictOutputSchema`.
 

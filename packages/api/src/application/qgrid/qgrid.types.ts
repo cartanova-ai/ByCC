@@ -114,6 +114,11 @@ export const QueryInput = z.looseObject({
   serviceTier: ServiceTier.optional(),
   history: z.string().optional(),
   projectName: z.string().optional(),
+  // SDK-derived opaque affinity. It is intentionally distinct from the caller's sessionKey.
+  cacheAffinityKey: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   // 생략하면 로깅한다. false는 request log 쓰기만 끄고 dispatch/thread는 유지한다.
   logger: z.boolean().optional(),
   runContext: QgridRunContext.optional(),
@@ -148,6 +153,7 @@ export const QueryOutput = z.object({
   usage: z.object({
     input_tokens: z.number(),
     output_tokens: z.number(),
+    reasoning_tokens: z.number(),
     cache_creation_input_tokens: z.number(),
     cache_creation_5m_input_tokens: z.number().optional(),
     cache_creation_1h_input_tokens: z.number().optional(),
@@ -180,6 +186,7 @@ export const StreamEvents = z.object({
     usage: z.object({
       input_tokens: z.number(),
       output_tokens: z.number(),
+      reasoning_tokens: z.number(),
       cache_creation_input_tokens: z.number(),
       cache_creation_5m_input_tokens: z.number().optional(),
       cache_creation_1h_input_tokens: z.number().optional(),

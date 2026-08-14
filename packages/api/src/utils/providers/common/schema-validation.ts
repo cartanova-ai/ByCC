@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import { type JsonValue } from "../../../codex-protocol/serde_json/JsonValue";
+import { type JsonValue } from "./provider-types";
 
 /**
  * Caller-provided schemas are serialized, copied, and recursively normalized before dispatch.

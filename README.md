@@ -12,9 +12,9 @@ Call GPT-5.5, Claude Opus, and more on a **flat-rate subscription** instead of p
 
 Existing subscription-token proxies (claude-proxy and the like) are **single-turn text proxies** — they invoke a CLI once and return text. Subscription tokens aren't usable through an official API, only through the CLI/app, and a bare CLI invocation doesn't support API features like tool calls, structured output, or multi-turn agent loops.
 
-Qgrid solves this by implementing an AI SDK `LanguageModelV3` custom provider on top of two CLI runtimes:
+Qgrid solves this with an AI SDK `LanguageModelV3` custom provider over two subscription-backed runtimes:
 
-- **OpenAI** — [codex app-server](https://github.com/openai/codex), a JSON-RPC server that exposes the Responses API on a subscription token. Qgrid keeps persistent worker processes per token and reuses conversation threads for prompt caching.
+- **OpenAI** — Direct HTTPS requests to `https://chatgpt.com/backend-api/codex/responses`, with streaming responses decoded from SSE. Qgrid sends Codex CLI identity headers and replays the full conversation history on every turn. An opaque key derived from `sessionKey` supplies prompt-cache affinity without retaining provider threads.
 - **Anthropic** — Claude Code in `stream-json` mode. Qgrid spawns a fresh, isolated process per request and replays the full conversation history, so multi-turn works without persistent sessions.
 
 As a result:
@@ -22,7 +22,7 @@ As a result:
 - **Tool Calling** — The AI SDK's `tools` option works as-is on both providers. The server produces tool-call shapes through structured output emulation, and the AI SDK manages tool execution.
 - **Multi-step Agent Loop** — `stopWhen` and `maxSteps` automatically repeat tool-call → tool execution → next turn. You can build agents on a subscription token.
 - **Structured Output** — Request a JSON schema with `Output.object({ schema })`. OpenAI enforces it through codex constrained decoding; Anthropic delivers the schema as prompt guidance (Claude Code runs in plain text mode — no `--json-schema` scoring or hidden retries), and validation happens in the consumer's zod. Non-conforming Anthropic output fails honestly instead of returning broken JSON.
-- **Prompt Caching** — Pass a `sessionKey` and multi-turn conversations are routed back to the same codex thread, hitting the provider prompt cache (OpenAI).
+- **Prompt Caching** — Pass a `sessionKey` to derive stable, opaque OpenAI prompt-cache affinity while Qgrid replays the full history on every request.
 - **Streaming** — Real-time text streaming over SSE via the [Sonamu Framework](https://github.com/cartanova-ai/sonamu).
 
 ---
@@ -35,7 +35,7 @@ As a result:
   ```ts
   model: qgrid("openai/gpt-5.4-mini")  // just change this
   ```
-- **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Distribute concurrent requests across N workers per token, with per-token quota thresholds that automatically exclude overloaded tokens from routing.
+- **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Token-level concurrent permits and smooth weighted routing distribute requests, while per-token quota thresholds exclude overloaded tokens.
 - **Request Log dashboard** — Inspect token usage, cost, cache hits, TTFT, tool-call traces, and reasoning for every request in real time through a web UI.
 - **Image generation** — Opt into Codex's `image_generation` tool per request and receive PNG files through the standard AI SDK response.
 - **OpenAI + Anthropic** — Register subscription tokens for both. One-click OAuth login.
@@ -110,12 +110,12 @@ If you're already using the google/openai provider directly, **add one line** to
 
 ![Qgrid architecture](./assets/qgrid-architecture.en.svg)
 
-- **OpenAI** — Spawns N persistent codex app-server processes per token. Communicates over JSON-RPC. Routes requests round-robin across idle workers and queues when all are busy (60s timeout). Multi-turn conversations with a `sessionKey` are routed back to the same thread for prompt-cache hits.
+- **OpenAI** — Calls `https://chatgpt.com/backend-api/codex/responses` directly. The default `QGRID_OPENAI_TRANSPORT=websocket` mode scheme-swaps that URL to `wss` and reuses a connection for sequential requests with the same prompt-cache affinity. Requests without cache affinity use one connection each. `QGRID_OPENAI_TRANSPORT=https` remains available but does not preserve prompt-cache connection affinity. Qgrid does not replay ambiguous requests. Only a definitively rejected 401 handshake may refresh credentials and reconnect once. Each token has concurrent permits; new work uses smooth weighted routing across eligible tokens. Invalid selector values fail during dispatcher configuration.
 - **Anthropic** — Spawns a fresh, isolated Claude Code process per request (`stream-json` in/out) with per-token config isolation. Conversation history is replayed each turn; OAuth tokens are refreshed automatically.
 - **Quota threshold** — Each token has a utilization threshold (default 80%). Tokens over the threshold are excluded from routing until their rolling window recovers.
 - **Request Log** — Records each request's generate steps, tool-call steps, reasoning, token usage, cache metrics, TTFT, and cost in the DB. View them in the dashboard.
 
-> **Stripping the Codex built-in harness:** codex app-server auto-injects built-in tools (shell, web_search, apply_patch, and 14 others) and instruction blocks (permissions, environment_context, skills, ~10KB) on every request. Qgrid disables all of these via the worker's `config.toml` and runs with a minimal system prompt and no environment. As a result, codex behaves like a **plain text-generation endpoint rather than a coding agent**, with no unnecessary input-token overhead and no stray built-in tool calls. The only tools the model sees are the ones you pass through the AI SDK.
+> **Private backend notice:** The OpenAI route uses ChatGPT's private Codex backend rather than a documented public API. Its URL, request fields, identity-header requirements, SSE events, quota response, and availability may change without notice. This migration is covered by mocked protocol and transport tests; it is not a claim of verification against a live provider account.
 
 ---
 
@@ -182,7 +182,7 @@ const { text } = await generateText({
 ### Prompt caching (sessionKey)
 
 ```typescript
-// Route multi-turn conversations to the same codex thread → prompt cache hits (OpenAI)
+// Replay full history with stable opaque prompt-cache affinity (OpenAI)
 const { text } = await generateText({
   model: qgrid("openai/gpt-5.4-mini"),
   prompt: nextTurn,
@@ -284,13 +284,13 @@ In the dashboard you can filter the whole team's request logs by project — set
 
 ### GPT-5.6 specifications
 
-| Model | Context (qgrid/codex runtime) | Max output | Input / cached input / output per 1M tokens |
+| Model | Context (qgrid OpenAI route) | Max output | Input / cached input / output per 1M tokens |
 |---|---:|---:|---:|
 | `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
 | `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
 | `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
 
-All GPT-5.6 models support reasoning through `max`. The OpenAI native API spec is a 1.05M context window with 128K max output, but qgrid runs on the codex app-server subscription path, where all three models report a 372K context window (95% effective — about 353K of usable input) that cannot be raised by configuration. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
+All GPT-5.6 models support reasoning through `max`. Qgrid retains the observed subscription-route limits used by its model configuration: a 372K context window (95% effective — about 353K of usable input) and 128K maximum output. This is narrower than the 1.05M context listed for the public OpenAI API and is not attributed to a local runtime. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
 
 ---
 
@@ -335,15 +335,14 @@ packages/
 - Node.js >= 20
 - PostgreSQL
 - Docker (if running PostgreSQL locally as a container)
-- [Codex CLI](https://github.com/openai/codex) (for OpenAI models)
 - [Claude Code](https://www.anthropic.com/claude-code) (for Anthropic models)
 
 ---
 
 ## Notes
 
-- **OpenAI models**: codex app-server based. Sampling parameters like `temperature` and `maxOutputTokens` are not supported.
-- **Anthropic models**: Claude Code based. Requires OAuth login. Tool calling and object structured output are supported; `sessionKey` thread reuse does not apply because every request runs in a fresh process.
+- **OpenAI models**: use the direct private Codex Responses backend. Sampling parameters like `temperature` and `maxOutputTokens` are not supported by this route.
+- **Anthropic models**: Claude Code based. Requires OAuth login. Tool calling and object structured output are supported; OpenAI-style `sessionKey` cache affinity does not apply because every request runs in a fresh process.
 - **Structured output on Anthropic**: unlike codex (constrained decoding), the Anthropic route has no enforcement mechanism. Qgrid renders the caller's original schema — and the tool envelope contract when tools are present — as text at the end of the system prompt, runs Claude Code in plain text mode, and strips code fences from the reply. The response is JSON text guided by the schema, not server-validated JSON: **validate it with your own schema (the AI SDK's `Output.object` zod does this automatically)**. Non-conforming output surfaces as an explicit validation failure on your side instead of hidden Claude Code retries.
 - **Positional tuples (OpenAI)**: OpenAI normalizes and enforces positional tuple constraints in supported positive schema positions. Tuples in negative, conditional, or otherwise non-normalizable positions fail with HTTP 400 instead of being rewritten with changed semantics. References from those positions are rejected for the same reason; definitions are normalized globally. Tuple nodes must explicitly use `type: "array"`; nullable tuples use `anyOf`. The Anthropic route delivers the schema as prompt text without rewriting, so these restrictions do not apply there.
 - **Schema references (OpenAI)**: structured schemas accept only local root-relative JSON Pointer `$ref` values targeting the document root or a chain of `$defs`/`definitions` entry roots. References into properties, tuple internals, conditionals, or literal values fail with HTTP 400 because normalization can move or rewrite those targets. Resource IDs, anchors, external refs, dynamic refs, and recursive refs are also rejected. The Anthropic route passes the schema through verbatim, so any `$ref` form the model can read is accepted.

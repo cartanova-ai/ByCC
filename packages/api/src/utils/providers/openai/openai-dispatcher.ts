@@ -1,46 +1,33 @@
-/**
- * OpenAIDispatcher — codex app-server worker pool + 토큰 라우팅.
- *
- * - 토큰당 CodexAppServerWorker 자동 확장 (기본 1~3, hard cap 20)
- * - idle worker round-robin 선택 + 큐 대기 (전부 busy 시)
- * - TokenSubscriber 이벤트로 worker pool 동기화
- * - backpressure: 큐 full 또는 timeout 시 SERVER_BUSY
- */
-import { readFileSync } from "node:fs";
-import { freemem } from "node:os";
-
 import { getLogger } from "@logtape/logtape";
 
 import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
 import { TokenModel } from "../../../application/token/token.model";
 import { type OpenAICredentials } from "../../../application/token/token.types";
-import { type GetAccountRateLimitsResponse } from "../../../codex-protocol/v2/GetAccountRateLimitsResponse";
 import {
   type GenerateRequest,
   type GenerateResult,
   type GenerateStreamCallbacks,
+  type GeneratedImage,
   type ProviderDispatcher,
 } from "../common/provider-dispatcher";
 import { SmoothWeightedRoundRobin } from "../common/smooth-weighted-round-robin";
-import { CodexAppServerWorker, type StreamCallbacks, type TurnRequest } from "./codex-worker";
 import {
-  readOpenAIQuotaUsage,
-  type OpenAIQuotaUsageResult,
-  type OpenAIRateLimitsWithMeta,
-} from "./openai-quota";
+  type JsonValue,
+  type OpenAIResponseItem,
+  type OpenAIResponsesOptions,
+} from "./openai-backend-protocol";
+import { OpenAIDirectClient, type OpenAIDirectClientOptions } from "./openai-direct-client";
+import { type OpenAIPermitConfig, resolveOpenAIPermitConfig } from "./openai-permit-config";
+import { readOpenAIQuotaUsage, type OpenAIRateLimitsWithMeta } from "./openai-quota";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
-import {
-  estimateOpenAIWorkerRssGiB,
-  type OpenAIWorkerPoolConfig,
-  resolveOpenAIWorkerPoolConfig,
-} from "./openai-worker-pool-config";
 
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
+const QUEUE_TIMEOUT_MS = 60_000;
+const MAX_QUEUE_SIZE = 50;
+// 교체된 codex worker 가 강제하던 watchdog. 호출자가 timeoutMs 를 생략해도 permit 이
+// 영원히 붙잡히지 않도록 direct transport 도 유한한 기본 상한을 유지한다.
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
-// 이미지 생성 요청이 게이트/생성에 실패했을 때의 구분자.
-// - "gate": 사전 검증 실패(capability/모델 멀티모달 불충족) — turn 미실행.
-// - "not_called": turn 은 성공했으나 모델이 image tool 을 호출 안 함 — 재시도 무익(프롬프트 문제).
-// - "incomplete": tool 시도됐으나 완성 이미지 미도착 — 재시도 후보(서버측 실패/거부).
 export type ImageFailureKind = "gate" | "not_called" | "incomplete";
 
 export class ImageGenerationError extends Error {
@@ -53,54 +40,10 @@ export class ImageGenerationError extends Error {
   }
 }
 
-const DEFAULT_EFFORT = "low";
-const QUEUE_TIMEOUT_MS = 60_000;
-const MAX_QUEUE_SIZE = 50;
-const SPAWN_INTERVAL_MS = 500;
-
-function readHostAvailableGiB(): number {
-  try {
-    const match = readFileSync("/proc/meminfo", "utf8").match(/^MemAvailable:\s+(\d+)\s+kB$/m);
-    if (match?.[1]) return Number(match[1]) / 1024 / 1024;
-  } catch {}
-  return freemem() / 1024 / 1024 / 1024;
+/** Kept for callers which persisted the old worker coordinate encoding. */
+export function makeOpenAIWorkerId(tokenId: number, workerIndex = 0): number {
+  return tokenId * 100 + workerIndex;
 }
-
-// thread 재사용(prompt cache 고정). 끄면 기존 "매 turn 새 thread + history inject" 동작.
-const THREAD_REUSE_ENABLED = process.env.QGRID_OPENAI_THREAD_REUSE !== "false";
-// 좌표 worker 가 busy 일 때 free 를 기다리는 최대 시간. 초과 시 새 thread 로 폴백.
-const REUSE_WORKER_WAIT_MS = 5_000;
-const REUSE_WORKER_POLL_MS = 50;
-
-// workerId 합성: tokenId 와 workerIndex(0..19) 를 하나의 안정 숫자로 인코딩.
-const OPENAI_WORKER_ID_STRIDE = 100;
-export function makeOpenAIWorkerId(tokenId: number, workerIndex: number): number {
-  return tokenId * OPENAI_WORKER_ID_STRIDE + workerIndex;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function quotaThresholdExceededMessage(
-  provider: string,
-  tokens: Array<{ tokenName: string; threshold: number }>,
-): string {
-  const details = tokens
-    .map((token) => `${token.tokenName} (threshold ${token.threshold}%)`)
-    .join(", ");
-  return details.length > 0
-    ? `All ${provider} tokens exceeded quota threshold: ${details}`
-    : `All ${provider} tokens exceeded quota threshold`;
-}
-
-type QueueItem = {
-  resolve: (worker: CodexAppServerWorker) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-  abortCleanup?: () => void;
-  excludedTokenIds: Set<number>;
-};
 
 type TokenMetadata = {
   name: string;
@@ -108,98 +51,159 @@ type TokenMetadata = {
   quotaThreshold?: number | null;
   weight: number;
   active: boolean;
-};
-
-type TokenEligibility = {
-  readyActiveTokenIds: Set<number>;
-  eligibleTokenIds: Set<number>;
-  overThresholdTokens: Array<{ tokenName: string; threshold: number }>;
-  thresholdedTokenCount: number;
-};
-
-type RateLimitsCacheEntry = OpenAIRateLimitsWithMeta & {
+  capacity: number;
+  inUse: number;
   generation: number;
 };
 
+type Permit = { tokenId: number; metadata: TokenMetadata };
+type QueueItem = {
+  preferredTokenId?: number;
+  signal?: AbortSignal;
+  resolve: (permit: Permit) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+  abortCleanup?: () => void;
+};
+
+export type OpenAIDirectClientFactory = (
+  options: OpenAIDirectClientOptions,
+  tokenId: number,
+) => Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
+
+type ClientEntry = {
+  generation: number;
+  client: Pick<OpenAIDirectClient, "responses"> & { close?: () => void };
+  inFlight: number;
+  retired: boolean;
+};
+
+export interface OpenAIDispatcherDependencies {
+  clientFactory?: OpenAIDirectClientFactory;
+  fetch?: typeof fetch;
+  queueTimeoutMs?: number;
+}
+
+function abortError(signal?: AbortSignal): Error {
+  const reason = signal?.reason;
+  return reason instanceof Error ? reason : new DOMException("Aborted", "AbortError");
+}
+
+function activeSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+function quotaMessage(entries: Array<{ name: string; threshold: number }>): string {
+  const detail = entries.map((e) => `${e.name} (threshold ${e.threshold}%)`).join(", ");
+  return detail
+    ? `All openai tokens exceeded quota threshold: ${detail}`
+    : "All openai tokens exceeded quota threshold";
+}
+
+function inputItems(req: GenerateRequest): OpenAIResponseItem[] {
+  const history = (req.coldHistory ?? []) as OpenAIResponseItem[];
+  const content: OpenAIResponseItem[] = req.coldInput.map((input) => {
+    if (input.type === "text") return { type: "input_text", text: input.text };
+    if (input.type === "image") return { type: "input_image", image_url: input.url };
+    if (input.type === "localImage") return { type: "input_image", image_url: input.path };
+    return { type: "input_text", text: `${input.name}: ${input.path}` };
+  });
+  return [...history, { type: "message", role: "user", content }];
+}
+
+function asReasoning(req: GenerateRequest): OpenAIResponsesOptions["reasoning"] | undefined {
+  const summary =
+    req.reasoningSummary && req.reasoningSummary !== "none" ? req.reasoningSummary : undefined;
+  if (!req.effort && !summary) return undefined;
+  return {
+    ...(req.effort
+      ? { effort: req.effort as NonNullable<OpenAIResponsesOptions["reasoning"]>["effort"] }
+      : {}),
+    ...(summary
+      ? {
+          summary: summary as NonNullable<OpenAIResponsesOptions["reasoning"]>["summary"],
+        }
+      : {}),
+  };
+}
+
+function requestOptions(req: GenerateRequest): OpenAIResponsesOptions {
+  return {
+    model: req.model ?? "",
+    ...(req.systemPrompt ? { instructions: req.systemPrompt } : {}),
+    history: inputItems(req),
+    ...(asReasoning(req) ? { reasoning: asReasoning(req) } : {}),
+    ...(req.verbosity ? { verbosity: req.verbosity as OpenAIResponsesOptions["verbosity"] } : {}),
+    ...(req.serviceTier
+      ? { serviceTier: req.serviceTier === "fast" ? "priority" : req.serviceTier }
+      : {}),
+    ...(req.promptCacheKey ? { promptCacheKey: req.promptCacheKey } : {}),
+    ...(req.outputSchema ? { outputSchema: { schema: req.outputSchema as JsonValue } } : {}),
+    ...(req.imageGeneration
+      ? { imageGeneration: req.imageGenerationOptions ? { ...req.imageGenerationOptions } : true }
+      : {}),
+  };
+}
+
 export class OpenAIDispatcher implements ProviderDispatcher {
-  workerPool = new Map<number, CodexAppServerWorker[]>();
-  tokenMetadata = new Map<number, TokenMetadata>();
-  queue: QueueItem[] = [];
-  readonly poolConfig: OpenAIWorkerPoolConfig;
-  private readonly quotaBlockedTokenIds = new Set<number>();
-  private readonly startingTokenIds = new Set<number>();
-  private readonly rateLimitsGenerationByToken = new Map<number, number>();
-  private readonly weightedSelector = new SmoothWeightedRoundRobin();
-  private readonly workerCursorByToken = new Map<number, number>();
-  private readonly getHostAvailableGiB: () => number;
+  readonly tokenMetadata = new Map<number, TokenMetadata>();
+  readonly queue: QueueItem[] = [];
+  readonly permitConfig: OpenAIPermitConfig;
+  readonly rateLimitsCache = new Map<number, OpenAIRateLimitsWithMeta & { generation: number }>();
+  private readonly clients = new Map<number, ClientEntry>();
+  private readonly retiredClients = new Set<ClientEntry>();
+  static readonly RATE_LIMITS_CACHE_TTL = 60_000;
+
+  private readonly selector = new SmoothWeightedRoundRobin();
+  private readonly clientFactory: OpenAIDirectClientFactory;
+  private readonly fetchImpl: typeof fetch;
+  private readonly queueTimeoutMs: number;
+  private readonly quotaBlocked = new Set<number>();
   private draining = false;
   private drainAgain = false;
-  private scalerTimer: ReturnType<typeof setInterval> | null = null;
-  private scalingPromise: Promise<void> | null = null;
-  private lastRequestAt = Date.now();
-  private stopped = false;
 
   constructor(
-    poolConfig: OpenAIWorkerPoolConfig = resolveOpenAIWorkerPoolConfig(),
-    getHostAvailableGiB: () => number = readHostAvailableGiB,
+    permitConfig: OpenAIPermitConfig = resolveOpenAIPermitConfig(),
+    _legacyHostAvailable?: () => number,
+    dependencies: OpenAIDispatcherDependencies = {},
   ) {
-    this.poolConfig = poolConfig;
-    this.getHostAvailableGiB = getHostAvailableGiB;
+    this.permitConfig = permitConfig;
+    this.clientFactory =
+      dependencies.clientFactory ?? ((options) => new OpenAIDirectClient(options));
+    this.fetchImpl = dependencies.fetch ?? fetch;
+    this.queueTimeoutMs = dependencies.queueTimeoutMs ?? QUEUE_TIMEOUT_MS;
   }
 
   async start(): Promise<void> {
-    this.stopped = false;
     const { rows } = await TokenModel.findMany("A");
-    const openaiTokens = rows.filter((t) => t.provider === "openai");
+    for (const row of rows) {
+      if (row.provider !== "openai") continue;
+      this.setToken(
+        row.id,
+        row.name,
+        row.credentials as OpenAICredentials,
+        row.quota_threshold,
+        row.weight,
+        row.active,
+      );
+    }
     logger.info(
-      this.poolConfig.autoscale
-        ? `starting ${openaiTokens.length} openai tokens (${this.poolConfig.minWorkersPerToken}-${this.poolConfig.maxWorkersPerToken} workers each, autoscale)`
-        : `starting ${openaiTokens.length} openai tokens (${this.poolConfig.minWorkersPerToken} workers each)`,
+      `started direct OpenAI runtime with ${this.tokenMetadata.size} tokens and ${this.workerCount} permits`,
     );
-
-    await Promise.allSettled(
-      openaiTokens.map(async (t) => {
-        await this.spawnWorkers(
-          t.id,
-          t.name,
-          t.credentials as OpenAICredentials,
-          t.quota_threshold,
-          t.weight,
-        );
-        if (!t.active) this.onTokenDeactivated(t.id);
-      }),
-    );
-
-    // autoscale off도 fixed min의 health maintenance는 계속 필요하다.
-    this.scalerTimer = setInterval(
-      () => this.requestAutoscaleEvaluation(),
-      this.poolConfig.scaleIntervalMs,
-    );
-    this.scalerTimer.unref?.();
   }
 
   async stop(): Promise<void> {
-    this.stopped = true;
-    if (this.scalerTimer) {
-      clearInterval(this.scalerTimer);
-      this.scalerTimer = null;
-    }
-    await this.scalingPromise?.catch(() => {});
     this.rejectAllQueued("DISPATCHER_SHUTDOWN");
-    const kills = [...this.workerPool.values()].flat().map((w) => w.kill());
-    await Promise.allSettled(kills);
-    for (const id of this.tokenMetadata.keys()) this.weightedSelector.removeToken(id);
-    this.workerPool.clear();
+    for (const { client } of this.clients.values()) client.close?.();
+    this.clients.clear();
+    for (const entry of this.retiredClients) entry.client.close?.();
+    this.retiredClients.clear();
     this.tokenMetadata.clear();
-    this.workerCursorByToken.clear();
-    this.weightedSelector.resetScores();
     this.rateLimitsCache.clear();
-    this.rateLimitsGenerationByToken.clear();
-    this.quotaBlockedTokenIds.clear();
-    this.startingTokenIds.clear();
+    this.quotaBlocked.clear();
+    this.selector.resetScores();
   }
-
-  // ── Token events (from TokenSubscriber) ─────────────────────────
 
   async onTokenAdded(
     id: number,
@@ -208,30 +212,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     quotaThreshold?: number | null,
     weight = 1,
   ): Promise<void> {
-    this.quotaBlockedTokenIds.delete(id);
-    this.invalidateRateLimitsCache(id);
-    this.setTokenMetadata(id, name, credentials, quotaThreshold, weight);
-    if (this.workerPool.has(id)) return;
-    await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
-  }
-
-  async onTokenRemoved(id: number): Promise<void> {
-    const workers = this.workerPool.get(id) ?? [];
-    const tokenName = workers[0]?.tokenName;
-    this.workerPool.delete(id);
-    this.tokenMetadata.delete(id);
-    this.weightedSelector.removeToken(id);
-    this.workerCursorByToken.delete(id);
-    this.invalidateRateLimitsCache(id);
-    this.quotaBlockedTokenIds.delete(id);
-    await Promise.allSettled(workers.map((w) => w.kill()));
-    if (!this.hasActiveTokenCandidate(new Set())) {
-      this.rejectAllQueued("NO_OPENAI_WORKERS");
-    }
-    if (workers.length > 0) {
-      const label = tokenName ?? `token ${id}`;
-      logger.info(`workers removed: ${label} (${workers.length})`);
-    }
+    this.setToken(id, name, credentials, quotaThreshold, weight, true);
+    this.requestDrain();
   }
 
   async onTokenUpdated(
@@ -241,62 +223,34 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     quotaThreshold?: number | null,
     weight = 1,
   ): Promise<void> {
-    const existing = this.workerPool.get(id) ?? [];
-    const thresholdChanged = this.getQuotaThreshold(id) !== quotaThreshold;
-    if (thresholdChanged) this.quotaBlockedTokenIds.delete(id);
-    this.setTokenMetadata(id, name, credentials, quotaThreshold, weight);
+    const old = this.tokenMetadata.get(id);
+    this.setToken(id, name, credentials, quotaThreshold, weight, old?.active ?? true);
+    this.requestDrain();
+  }
 
-    if (existing.length === 0) {
-      this.invalidateRateLimitsCache(id);
-      await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
-      return;
-    }
-
-    if (existing.every((w) => w.canReuseForToken(name, credentials))) {
-      existing.forEach((w) => w.updateTokenState(name, credentials));
-      logger.info(`workers updated in-place: ${name}`);
-      this.requestDrainQueue();
-      return;
-    }
-
-    this.workerPool.delete(id);
+  async onTokenRemoved(id: number): Promise<void> {
+    this.retireClient(id);
+    this.tokenMetadata.delete(id);
+    this.selector.removeToken(id);
     this.invalidateRateLimitsCache(id);
-    this.quotaBlockedTokenIds.delete(id);
-    await Promise.allSettled(existing.map((w) => w.kill()));
-    await this.spawnWorkers(id, name, credentials, quotaThreshold, weight);
+    this.quotaBlocked.delete(id);
+    if (![...this.tokenMetadata.values()].some((t) => t.active))
+      this.rejectAllQueued("NO_OPENAI_WORKERS");
   }
 
   onTokenDeactivated(id: number): void {
-    const workers = this.workerPool.get(id) ?? [];
-    const tokenName = workers[0]?.tokenName;
-    const metadata = this.tokenMetadata.get(id);
-    if (metadata?.active) this.tokenMetadata.set(id, { ...metadata, active: false });
-    this.quotaBlockedTokenIds.delete(id);
-    const changed = workers.some((worker) => worker.active);
-    workers.forEach((w) => {
-      w.active = false;
-    });
-    if (changed) this.weightedSelector.resetScores();
-    if (!this.hasActiveTokenCandidate(new Set())) {
+    const token = this.tokenMetadata.get(id);
+    if (token) token.active = false;
+    this.selector.resetScores();
+    if (![...this.tokenMetadata.values()].some((t) => t.active))
       this.rejectAllQueued("NO_ACTIVE_WORKERS");
-    }
-    const label = tokenName ?? `token ${id}`;
-    logger.info(`workers deactivated: ${label}`);
   }
 
   onTokenActivated(id: number): void {
-    const workers = this.workerPool.get(id) ?? [];
-    const tokenName = workers[0]?.tokenName;
-    const metadata = this.tokenMetadata.get(id);
-    if (metadata && !metadata.active) this.tokenMetadata.set(id, { ...metadata, active: true });
-    const changed = workers.some((worker) => !worker.active);
-    workers.forEach((w) => {
-      w.active = true;
-    });
-    if (changed) this.weightedSelector.resetScores();
-    this.requestDrainQueue();
-    const label = tokenName ?? `token ${id}`;
-    logger.info(`workers activated: ${label}`);
+    const token = this.tokenMetadata.get(id);
+    if (token) token.active = true;
+    this.selector.resetScores();
+    this.requestDrain();
   }
 
   async replaceTokens(
@@ -308,1024 +262,445 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       weight: number;
     }>,
   ): Promise<void> {
-    const next = new Set(rows.map((r) => r.id));
-    for (const id of Array.from(this.workerPool.keys())) {
-      if (!next.has(id)) await this.onTokenRemoved(id);
-    }
-
-    for (const row of rows) {
-      if (this.workerPool.has(row.id)) {
-        await this.onTokenUpdated(
-          row.id,
-          row.name,
-          row.credentials,
-          row.quotaThreshold,
-          row.weight,
-        );
-      } else {
-        await this.onTokenAdded(row.id, row.name, row.credentials, row.quotaThreshold, row.weight);
-      }
-      this.onTokenActivated(row.id);
-    }
+    const ids = new Set(rows.map((r) => r.id));
+    for (const id of this.tokenMetadata.keys()) if (!ids.has(id)) await this.onTokenRemoved(id);
+    for (const row of rows)
+      await this.onTokenUpdated(row.id, row.name, row.credentials, row.quotaThreshold, row.weight);
   }
 
-  // ── Generate ────────────────────────────────────────────────────
-
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    this.lastRequestAt = Date.now();
-    const excludedTokenIds = new Set<number>();
-    // thread 재사용 경로: 좌표 worker 를 점유해 기존 thread 에 turn 만 실행.
-    const reuseWorker = await this.acquireReuseWorker(req, excludedTokenIds);
-    if (reuseWorker) {
-      logger.info(
-        `↻ ${reuseWorker.tokenName}[${reuseWorker.tokenId}] (reuse thread, ${req.model})`,
-      );
-      return this.executeAndRelease(reuseWorker, (w) =>
-        this.executeTurn(w, req, req.reuse!.threadId),
-      );
+    const signal = activeSignal(req.abortSignal, req.timeoutMs);
+    if (signal?.aborted) throw abortError(signal);
+    const permit = await this.acquire(req.preferredTokenId, signal);
+    try {
+      if (signal?.aborted) throw abortError(signal);
+      return await this.runDirect(permit, { ...req, abortSignal: signal });
+    } finally {
+      this.release(permit);
     }
-
-    const worker = await this.acquireIdleWorker(excludedTokenIds);
-    if (worker) {
-      logger.info(`→ ${worker.tokenName}[${worker.tokenId}] (model: ${req.model})`);
-      return this.executeAndRelease(worker, (w) => this.executeTurn(w, req));
-    }
-    return this.enqueue((w) => {
-      logger.info(`→ ${w.tokenName}[${w.tokenId}] (model: ${req.model}, queued)`);
-      return this.executeTurn(w, req);
-    }, excludedTokenIds);
   }
 
   async generateStream(req: GenerateRequest, cb: GenerateStreamCallbacks): Promise<void> {
-    this.lastRequestAt = Date.now();
-    // 이미지 생성은 non-stream 전용(R2): codex 가 이미지 델타를 주지 않고 완성 base64 를
-    // 한 번에 준다. 스트리밍 경로로 이미지 요청이 오면 명시적 에러.
-    if (req.imageGeneration) {
+    if (req.imageGeneration)
       throw new ImageGenerationError(
         "gate",
         "image generation is not supported on the streaming path",
       );
+    const signal = activeSignal(req.abortSignal, req.timeoutMs);
+    if (signal?.aborted) throw abortError(signal);
+    const permit = await this.acquire(req.preferredTokenId, signal);
+    try {
+      if (signal?.aborted) throw abortError(signal);
+      const result = await this.runDirect(permit, { ...req, abortSignal: signal }, cb.onDelta);
+      cb.onComplete(result);
+    } catch (error) {
+      cb.onError(error as Error);
+      throw error;
+    } finally {
+      this.release(permit);
     }
-    const excludedTokenIds = new Set<number>();
-    const reuseWorker = await this.acquireReuseWorker(req, excludedTokenIds);
-    if (reuseWorker) {
-      logger.info(`↻ ${reuseWorker.tokenName}[${reuseWorker.tokenId}] (reuse thread, [stream])`);
-      return this.executeAndRelease(reuseWorker, (w) =>
-        this.executeStreamTurn(w, req, cb, req.reuse!.threadId),
+  }
+
+  private async runDirect(
+    permit: Permit,
+    req: GenerateRequest,
+    onDelta?: (text: string) => void,
+  ): Promise<GenerateResult> {
+    const startedAt = Date.now();
+    let firstDeltaAt: number | undefined;
+    let text = "";
+    let usage = {
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      reasoningOutputTokens: 0,
+    };
+    const images: GeneratedImage[] = [];
+    let imageAttempted = false;
+    let servingModel = req.model ?? "";
+    const metadata = permit.metadata;
+    const clientEntry = this.acquireClient(permit);
+    try {
+      for await (const event of clientEntry.client.responses(
+        requestOptions(req),
+        req.abortSignal,
+      )) {
+        if (event.type === "text-delta") {
+          firstDeltaAt ??= Date.now();
+          text += event.text;
+          onDelta?.(event.text);
+        } else if (event.type === "image") {
+          imageAttempted = true;
+          images.push({ data: event.base64, revisedPrompt: event.revisedPrompt ?? null });
+        } else if (event.type === "output-item" && event.item.type === "image_generation_call") {
+          imageAttempted = true;
+        } else if (event.type === "completed" && event.usage) {
+          servingModel = event.model ?? servingModel;
+          usage = {
+            totalTokens: event.usage.totalTokens,
+            inputTokens: event.usage.inputTokens,
+            outputTokens: event.usage.outputTokens,
+            cachedInputTokens: event.usage.cachedInputTokens,
+            reasoningOutputTokens: event.usage.reasoningTokens,
+          };
+        } else if (event.type === "completed") {
+          servingModel = event.model ?? servingModel;
+        } else if (event.type === "error") {
+          if (req.imageGeneration)
+            throw new ImageGenerationError("incomplete", event.error.message);
+          throw event.error;
+        }
+      }
+    } finally {
+      this.releaseClient(clientEntry);
+    }
+    if (req.imageGeneration && images.length === 0) {
+      throw new ImageGenerationError(
+        imageAttempted ? "incomplete" : "not_called",
+        imageAttempted
+          ? "image generation did not complete"
+          : "model did not call image generation",
       );
     }
-
-    const worker = await this.acquireIdleWorker(excludedTokenIds);
-    if (worker) {
-      logger.info(`→ ${worker.tokenName}[${worker.tokenId}] (model: ${req.model}, [stream])`);
-      return this.executeAndRelease(worker, (w) => this.executeStreamTurn(w, req, cb));
-    }
-    return this.enqueue((w) => {
-      logger.info(`→ ${w.tokenName}[${w.tokenId}] (model: ${req.model}, [stream], queued)`);
-      return this.executeStreamTurn(w, req, cb);
-    }, excludedTokenIds);
+    return {
+      text,
+      tokenName: metadata.name,
+      usage,
+      durationMs: Date.now() - startedAt,
+      ttftMs: firstDeltaAt === undefined ? null : firstDeltaAt - startedAt,
+      model: servingModel,
+      threadCoord: { workerId: permit.tokenId, threadId: req.promptCacheKey ?? "", epoch: -1 },
+      ...(images.length ? { images } : {}),
+    };
   }
 
-  // reuse 좌표가 유효하면 그 worker 를 busy 점유해 반환. 없거나 폴백 대상이면 null.
-  // 폴백 사유: 기능 off / 좌표 없음 / worker 부재·죽음 / epoch 불일치(restart) / thread 소멸 /
-  //            busy 대기 타임아웃. null 반환 시 호출부는 새 thread 경로로 진행.
-  async acquireReuseWorker(
-    req: GenerateRequest,
-    excludedTokenIds = new Set<number>(),
-  ): Promise<CodexAppServerWorker | null> {
-    // 이미지 요청은 항상 cold thread(R8): 재사용 좌표가 있어도 건너뛴다.
-    // base64 가 thread 메모리·캐시 prefix 에 상주하는 것을 막는다.
-    if (req.imageGeneration) return null;
-    if (!THREAD_REUSE_ENABLED || !req.reuse) return null;
-    const { workerId, threadId, epoch } = req.reuse;
-
-    const worker = this.findWorkerById(workerId);
-    if (!worker || !worker.isReady || !worker.active) return null;
-    if (worker.epoch !== epoch) return null;
-    if (!worker.hasThread(threadId)) return null;
-    const quotaMetadata = this.tokenMetadata.get(worker.tokenId);
-    if (!(await this.isTokenQuotaEligible(worker.tokenId, worker.tokenName, excludedTokenIds))) {
-      return null;
+  /** 세대가 바뀐 client 는 사용 중인 요청이 끝난 뒤에 닫는다. */
+  private acquireClient(permit: Permit): ClientEntry {
+    const metadata = permit.metadata;
+    let entry = this.clients.get(permit.tokenId);
+    if (entry && entry.generation !== metadata.generation) {
+      this.retireClient(permit.tokenId);
+      entry = undefined;
     }
-    if (
-      !worker.isReady ||
-      !worker.active ||
-      this.tokenMetadata.get(worker.tokenId) !== quotaMetadata ||
-      this.quotaBlockedTokenIds.has(worker.tokenId)
-    ) {
-      if (this.quotaBlockedTokenIds.has(worker.tokenId)) {
-        excludedTokenIds.add(worker.tokenId);
-      }
-      return null;
-    }
-
-    const deadline = Date.now() + REUSE_WORKER_WAIT_MS;
-    for (;;) {
-      // restart(epoch 변경) / thread 소멸이 대기 중에 발생하면 폴백.
-      if (
-        !worker.isReady ||
-        !worker.active ||
-        worker.epoch !== epoch ||
-        !worker.hasThread(threadId) ||
-        this.tokenMetadata.get(worker.tokenId) !== quotaMetadata ||
-        this.quotaBlockedTokenIds.has(worker.tokenId)
-      ) {
-        if (this.quotaBlockedTokenIds.has(worker.tokenId)) {
-          excludedTokenIds.add(worker.tokenId);
-        }
-        return null;
-      }
-      if (worker.tryAcquireTurn()) return worker;
-      if (Date.now() >= deadline) return null;
-      await sleep(REUSE_WORKER_POLL_MS);
-    }
-  }
-
-  findWorkerById(workerId: number): CodexAppServerWorker | null {
-    for (const workers of this.workerPool.values()) {
-      for (const w of workers) {
-        if (makeOpenAIWorkerId(w.tokenId, w.workerIndex) === workerId) return w;
-      }
-    }
-    return null;
-  }
-
-  async interruptWorkerTurn(threadId: string, turnId: string): Promise<void> {
-    const allWorkers = [...this.workerPool.values()].flat().filter((w) => w.isReady);
-    await Promise.allSettled(allWorkers.map((w) => w.interruptTurn(threadId, turnId)));
-  }
-
-  // ── Worker selection ────────────────────────────────────────────
-  // Quota-eligible idle token을 weight로 고른 뒤, 그 token 안에서 worker를 순환한다.
-  async acquireIdleWorker(
-    excludedTokenIds = new Set<number>(),
-  ): Promise<CodexAppServerWorker | null> {
-    const eligibility = await this.resolveTokenEligibility(excludedTokenIds);
-    if (eligibility.readyActiveTokenIds.size === 0) return null;
-    if (eligibility.eligibleTokenIds.size === 0) this.throwQuotaThresholdExceeded(eligibility);
-
-    const workersByToken = new Map<number, CodexAppServerWorker[]>();
-    for (const worker of this.getAllReadyActiveWorkers()) {
-      if (!eligibility.eligibleTokenIds.has(worker.tokenId) || !worker.hasCapacity) continue;
-      const workers = workersByToken.get(worker.tokenId) ?? [];
-      workers.push(worker);
-      workersByToken.set(worker.tokenId, workers);
-    }
-
-    const selectedTokenId = this.weightedSelector.select(new Set(workersByToken.keys()));
-    if (selectedTokenId === null) return null;
-    const workers = workersByToken.get(selectedTokenId)!;
-    const cursor = this.workerCursorByToken.get(selectedTokenId) ?? 0;
-    for (let offset = 0; offset < workers.length; offset++) {
-      const index = (cursor + offset) % workers.length;
-      const worker = workers[index]!;
-      if (worker.tryAcquireTurn()) {
-        this.workerCursorByToken.set(selectedTokenId, (index + 1) % workers.length);
-        return worker;
-      }
-    }
-    throw new Error(
-      `weighted token ${selectedTokenId} lost idle capacity during synchronous acquire`,
-    );
-  }
-
-  getAllReadyActiveWorkers(): CodexAppServerWorker[] {
-    return [...this.workerPool.values()].flat().filter((w) => w.isReady && w.active);
-  }
-
-  // ── Queue ───────────────────────────────────────────────────────
-
-  async enqueue<T>(
-    execute: (worker: CodexAppServerWorker) => Promise<T>,
-    excludedTokenIds = new Set<number>(),
-  ): Promise<T> {
-    const eligibility = await this.resolveTokenEligibility(excludedTokenIds);
-    if (
-      eligibility.readyActiveTokenIds.size === 0 &&
-      !this.hasActiveTokenCandidate(excludedTokenIds)
-    ) {
-      throw new Error("NO_OPENAI_WORKERS");
-    }
-    if (eligibility.readyActiveTokenIds.size > 0 && eligibility.eligibleTokenIds.size === 0) {
-      this.throwQuotaThresholdExceeded(eligibility);
-    }
-    if (this.queue.length >= MAX_QUEUE_SIZE) {
-      throw new Error("SERVER_BUSY");
-    }
-
-    return new Promise<T>((resolve, reject) => {
-      const item: QueueItem = {
-        resolve: (worker) => {
-          clearTimeout(item.timer);
-          item.abortCleanup?.();
-          Promise.resolve()
-            .then(() => this.executeAndRelease(worker, execute))
-            .then(resolve, reject);
+    if (!entry) {
+      const client = this.clientFactory(
+        {
+          credentials: {
+            accessToken: metadata.credentials.accessToken,
+            accountId: metadata.credentials.accountId,
+          },
+          transportKind: this.permitConfig.transport,
+          fetch: this.fetchImpl,
+          refreshCredentials: async () => {
+            const refreshed = await handleChatgptAuthTokensRefresh(permit.tokenId);
+            const current = this.tokenMetadata.get(permit.tokenId);
+            if (current)
+              current.credentials = {
+                ...current.credentials,
+                accessToken: refreshed.accessToken,
+                accountId: refreshed.chatgptAccountId,
+              };
+            return { accessToken: refreshed.accessToken, accountId: refreshed.chatgptAccountId };
+          },
         },
-        reject: (err) => {
+        permit.tokenId,
+      );
+      entry = { generation: metadata.generation, client, inFlight: 0, retired: false };
+      this.clients.set(permit.tokenId, entry);
+    }
+    entry.inFlight++;
+    return entry;
+  }
+
+  private releaseClient(entry: ClientEntry): void {
+    entry.inFlight = Math.max(0, entry.inFlight - 1);
+    if (entry.retired && entry.inFlight === 0) {
+      this.retiredClients.delete(entry);
+      entry.client.close?.();
+    }
+  }
+
+  /** map 에서 떼어내고, 진행 중인 요청이 없을 때만 즉시 닫는다. */
+  private retireClient(tokenId: number): void {
+    const entry = this.clients.get(tokenId);
+    if (!entry) return;
+    this.clients.delete(tokenId);
+    entry.retired = true;
+    if (entry.inFlight === 0) entry.client.close?.();
+    else this.retiredClients.add(entry);
+  }
+
+  private async acquire(preferredTokenId?: number, signal?: AbortSignal): Promise<Permit> {
+    if (signal?.aborted) throw abortError(signal);
+    const permit = await this.selectPermit(preferredTokenId, signal);
+    if (permit) {
+      if (signal?.aborted) {
+        this.release(permit);
+        throw abortError(signal);
+      }
+      return permit;
+    }
+    if (signal?.aborted) throw abortError(signal);
+    if (this.queue.length >= MAX_QUEUE_SIZE) throw new Error("SERVER_BUSY");
+    if (![...this.tokenMetadata.values()].some((t) => t.active))
+      throw new Error("NO_OPENAI_WORKERS");
+    return new Promise<Permit>((resolve, reject) => {
+      const item: QueueItem = {
+        preferredTokenId,
+        signal,
+        resolve: (value) => {
           clearTimeout(item.timer);
           item.abortCleanup?.();
-          reject(err);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(item.timer);
+          item.abortCleanup?.();
+          reject(error);
         },
         timer: setTimeout(() => {
-          this.removeFromQueue(item);
+          this.removeQueueItem(item);
           reject(new Error("SERVER_BUSY"));
-        }, QUEUE_TIMEOUT_MS),
-        excludedTokenIds: new Set(excludedTokenIds),
+        }, this.queueTimeoutMs),
       };
-
+      if (signal) {
+        const abort = () => {
+          this.removeQueueItem(item);
+          reject(abortError(signal));
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        item.abortCleanup = () => signal.removeEventListener("abort", abort);
+        if (signal.aborted) {
+          abort();
+          return;
+        }
+      }
       this.queue.push(item);
-      // eligibility 확인과 queue 삽입 사이에 worker가 ready/idle이 된 경우의 lost wake-up을
-      // 닫는다. fixed mode에서도 idle worker가 즉시 queue를 가져가야 한다.
-      this.requestDrainQueue();
-      this.requestAutoscaleEvaluation();
+      this.requestDrain();
     });
   }
 
-  removeFromQueue(item: QueueItem): void {
-    clearTimeout(item.timer);
-    item.abortCleanup?.();
-    const idx = this.queue.indexOf(item);
-    if (idx !== -1) this.queue.splice(idx, 1);
+  private async selectPermit(
+    preferredTokenId?: number,
+    signal?: AbortSignal,
+  ): Promise<Permit | null> {
+    const eligible = new Set<number>();
+    const over: Array<{ name: string; threshold: number }> = [];
+    // permit 이 없어 지금 못 고르는 토큰도 quota 판정에는 포함한다. 바쁜 eligible 토큰을
+    // 빼고 판단하면 "전부 threshold 초과"로 오인해 큐잉해야 할 요청을 거절하게 된다.
+    let quotaEligibleExists = false;
+    for (const [id, token] of this.tokenMetadata) {
+      if (!token.active) continue;
+      if (await this.isQuotaEligible(id, token, signal)) {
+        quotaEligibleExists = true;
+        if (token.inUse < token.capacity) eligible.add(id);
+      } else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
+        over.push({ name: token.name, threshold: token.quotaThreshold });
+    }
+    const activeAvailable = [...this.tokenMetadata.values()].some(
+      (t) => t.active && t.inUse < t.capacity,
+    );
+    if (activeAvailable && !quotaEligibleExists && over.length) {
+      logger.warn("quota_threshold gate: all_exceeded", {
+        provider: "openai",
+        overThresholdTokens: over,
+      });
+      throw new QuotaThresholdExceededError(quotaMessage(over));
+    }
+    // Affinity does not mutate smooth weighted state.
+    const selected =
+      preferredTokenId !== undefined && eligible.has(preferredTokenId)
+        ? preferredTokenId
+        : this.selector.select(eligible);
+    if (selected === null) return null;
+    const metadata = this.tokenMetadata.get(selected);
+    if (!metadata || metadata.inUse >= metadata.capacity) return null;
+    metadata.inUse++;
+    return { tokenId: selected, metadata };
   }
 
-  rejectAllQueued(reason: string): void {
-    const err = new Error(reason);
-    this.queue.forEach((item) => {
-      clearTimeout(item.timer);
-      item.abortCleanup?.();
-      item.reject(err);
-    });
-    this.queue = [];
+  private release(permit: Permit): void {
+    permit.metadata.inUse = Math.max(0, permit.metadata.inUse - 1);
+    this.requestDrain();
   }
 
-  async drainQueue(): Promise<void> {
+  private requestDrain(): void {
     if (this.draining) {
       this.drainAgain = true;
       return;
     }
+    void this.drainQueue().catch((error) =>
+      logger.warn(`openai queue drain failed: ${(error as Error).message}`),
+    );
+  }
 
+  private async drainQueue(): Promise<void> {
+    if (this.draining) {
+      this.drainAgain = true;
+      return;
+    }
     this.draining = true;
     try {
       do {
         this.drainAgain = false;
-        await this.drainQueueOnce();
+        while (this.queue.length) {
+          const item = this.queue[0]!;
+          if (item.signal?.aborted) {
+            this.queue.shift();
+            item.reject(abortError(item.signal));
+            continue;
+          }
+          let permit: Permit | null;
+          try {
+            permit = await this.selectPermit(item.preferredTokenId, item.signal);
+          } catch (error) {
+            // await 중에 timeout/abort 로 이미 제거·거절된 항목이면 다음 head 로 넘어간다.
+            if (this.queue[0] !== item) continue;
+            this.queue.shift();
+            item.reject(error as Error);
+            continue;
+          }
+          if (!permit) break;
+          // head 가 바뀌었다면 이 permit 의 주인이 사라진 것이므로 반드시 반납한다.
+          if (this.queue[0] !== item) {
+            this.release(permit);
+            continue;
+          }
+          this.queue.shift();
+          item.resolve(permit);
+        }
       } while (this.drainAgain);
-    } catch (e) {
-      logger.warn(`drainQueue failed: ${(e as Error).message}`);
     } finally {
       this.draining = false;
     }
   }
 
-  private async drainQueueOnce(): Promise<void> {
-    while (this.queue.length > 0) {
-      const next = this.queue[0]!;
-      let worker: CodexAppServerWorker | null;
-      try {
-        worker = await this.acquireIdleWorker(next.excludedTokenIds);
-      } catch (e) {
-        if (e instanceof QuotaThresholdExceededError) {
-          this.queue.shift();
-          next.reject(e);
-          continue;
-        }
-        throw e;
-      }
-      if (!worker) break;
-      this.queue.shift();
-      next.resolve(worker);
-    }
+  private removeQueueItem(item: QueueItem): void {
+    clearTimeout(item.timer);
+    item.abortCleanup?.();
+    const index = this.queue.indexOf(item);
+    if (index >= 0) this.queue.splice(index, 1);
   }
 
-  // ── Execution ───────────────────────────────────────────────────
-
-  async executeAndRelease<T>(
-    worker: CodexAppServerWorker,
-    execute: (worker: CodexAppServerWorker) => Promise<T>,
-  ): Promise<T> {
-    try {
-      return await execute(worker);
-    } finally {
-      worker.releaseTurn();
-      this.requestDrainQueue();
-    }
+  private rejectAllQueued(reason: string): void {
+    const items = this.queue.splice(0);
+    for (const item of items) item.reject(new Error(reason));
   }
 
-  // reuseThreadId 가 있으면 기존 thread 에 delta(reuseInput)만, 없으면 새 thread 에 전체
-  // prompt(coldInput) + history inject. reuse 가 dispatcher 단에서 폴백되면 후자로 떨어진다.
-  private buildTurnRequest(req: GenerateRequest, reuseThreadId?: string): TurnRequest {
-    const reusing = reuseThreadId !== undefined;
-    return {
-      input: reusing && req.reuseInput ? req.reuseInput : req.coldInput,
-      history: reusing ? undefined : req.coldHistory,
-      developerInstructions: req.systemPrompt,
-      outputSchema: req.outputSchema,
-      effort: req.effort ?? DEFAULT_EFFORT,
-      model: req.model,
-      verbosity: req.verbosity,
-      reasoningSummary: req.reasoningSummary,
-      serviceTier: req.serviceTier,
-      imageGeneration: req.imageGeneration,
-      imageGenerationOptions: req.imageGenerationOptions,
-    };
-  }
-
-  async executeTurn(
-    worker: CodexAppServerWorker,
-    req: GenerateRequest,
-    reuseThreadId?: string,
-  ): Promise<GenerateResult> {
-    // 이미지 요청 사전 게이트(R5): 배정된 worker 의 capability + 적용 모델 멀티모달.
-    // 불충족이면 turn 을 실행하지 않고 명시적 에러.
-    if (req.imageGeneration) {
-      const reason = await worker.checkImageGenerationSupport(req.model);
-      if (reason) throw new ImageGenerationError("gate", reason);
-    }
-
-    const turnReq = this.buildTurnRequest(req, reuseThreadId);
-    const result = await worker.executeTurn(turnReq, reuseThreadId);
-
-    // 이미지 0개 실패 분류(R6): tool 미호출(재시도 무익) vs 시도 후 미완성(재시도 후보).
-    if (req.imageGeneration && (!result.images || result.images.length === 0)) {
-      throw result.imageAttempted
-        ? new ImageGenerationError("incomplete", "image tool ran but produced no completed image")
-        : new ImageGenerationError("not_called", "model did not call the image_generation tool");
-    }
-
-    return {
-      text: result.text,
-      tokenName: worker.tokenName,
-      usage: result.usage,
-      durationMs: result.durationMs,
-      ttftMs: result.ttftMs,
-      model: result.model,
-      threadCoord: {
-        workerId: makeOpenAIWorkerId(worker.tokenId, worker.workerIndex),
-        threadId: result.threadId,
-        epoch: worker.epoch,
-      },
-      images: result.images,
-    };
-  }
-
-  async executeStreamTurn(
-    worker: CodexAppServerWorker,
-    req: GenerateRequest,
-    cb: GenerateStreamCallbacks,
-    reuseThreadId?: string,
-  ): Promise<void> {
-    const turnReq = this.buildTurnRequest(req, reuseThreadId);
-    // worker 의 TurnResult 에 tokenName/threadCoord 를 붙여 상위(GenerateResult)로 올린다.
-    // threadId 는 새 thread 면 onThreadId 로 확정되므로 미리 보관해 두고 onComplete 때 읽는다.
-    let resolvedThreadId = reuseThreadId ?? "";
-    const wrappedCb: StreamCallbacks = {
-      ...cb,
-      onThreadId: (threadId) => {
-        resolvedThreadId = threadId;
-        cb.onThreadId?.(threadId);
-      },
-      onComplete: (result) => {
-        cb.onComplete({
-          ...result,
-          tokenName: worker.tokenName,
-          threadCoord: {
-            workerId: makeOpenAIWorkerId(worker.tokenId, worker.workerIndex),
-            threadId: resolvedThreadId,
-            epoch: worker.epoch,
-          },
-        });
-      },
-    };
-    await worker.executeTurnStream(turnReq, wrappedCb, reuseThreadId);
-  }
-
-  // ── Spawn ───────────────────────────────────────────────────────
-
-  async spawnWorkers(
-    tokenId: number,
-    tokenName: string,
-    credentials: OpenAICredentials,
-    quotaThreshold?: number | null,
-    weight = 1,
-  ): Promise<void> {
-    if (this.startingTokenIds.has(tokenId)) return;
-    this.startingTokenIds.add(tokenId);
-    this.setTokenMetadata(tokenId, tokenName, credentials, quotaThreshold, weight);
-    const expectedMetadata = this.tokenMetadata.get(tokenId);
-    const workers: CodexAppServerWorker[] = [];
-    try {
-      for (let i = 0; i < this.poolConfig.minWorkersPerToken; i++) {
-        if (i > 0) await sleep(SPAWN_INTERVAL_MS);
-        const worker = await this.spawnSingleWorker(tokenId, tokenName, credentials, i);
-        if (worker) workers.push(worker);
-      }
-
-      if (
-        !this.stopped &&
-        expectedMetadata?.active &&
-        this.tokenMetadata.get(tokenId) === expectedMetadata &&
-        !this.workerPool.has(tokenId)
-      ) {
-        if (workers.length > 0) this.workerPool.set(tokenId, workers);
-      } else {
-        await Promise.allSettled(workers.map((worker) => worker.kill()));
-      }
-    } finally {
-      this.startingTokenIds.delete(tokenId);
-    }
-  }
-
-  async spawnSingleWorker(
-    tokenId: number,
-    tokenName: string,
-    credentials: OpenAICredentials,
-    workerIndex: number,
-  ): Promise<CodexAppServerWorker | null> {
-    const worker = new CodexAppServerWorker({
-      tokenId,
-      tokenName,
-      accessToken: credentials.accessToken,
-      accountId: credentials.accountId,
-      planType: credentials.planType,
-      workerIndex,
-    });
-
-    worker.onReady = () => this.requestDrainQueue();
-    worker.onTerminalFailure = () => {
-      void this.handleWorkerTerminalFailure(worker).catch((e) =>
-        logger.warn(
-          `terminal worker cleanup failed: ${tokenName}[${workerIndex}]: ${(e as Error).message}`,
-        ),
-      );
-    };
-
-    worker.setServerRequestHandler(async (method) => {
-      if (method === "account/chatgptAuthTokens/refresh") {
-        return handleChatgptAuthTokensRefresh(tokenId);
-      }
-      throw new Error(`unhandled server-request: ${method}`);
-    });
-
-    try {
-      await worker.initialize();
-      logger.info(`worker spawned: ${tokenName}[${workerIndex}]`);
-      return worker;
-    } catch (e) {
-      logger.warn(`worker spawn failed: ${tokenName}[${workerIndex}]: ${(e as Error).message}`);
-      await worker.kill().catch(() => {});
-      return null;
-    }
-  }
-
-  async evaluateAutoscaling(): Promise<void> {
-    if (this.stopped) return;
-    this.sweepIdleWorkerThreads();
-    const minimumDeficitTokenIds = await this.ensureMinimumWorkersOneStep();
-    if (!this.poolConfig.autoscale || this.stopped) return;
-    if (this.queue.length > 0) {
-      // baseline 복구를 시도한 token만 같은 evaluation의 demand expansion에서 제외한다.
-      // 다른 정상 token의 확장까지 막지는 않는다.
-      await this.scaleUpOneStep(minimumDeficitTokenIds);
-      return;
-    }
-    if (Date.now() - this.lastRequestAt >= this.poolConfig.scaleDownIdleMs) {
-      await this.scaleDownOneStep();
-    }
-  }
-
-  async scaleUpOneStep(excludedTokenIds = new Set<number>()): Promise<void> {
-    if (!this.poolConfig.autoscale || this.stopped) return;
-    await this.runScaling(async () => {
-      const candidates = [...this.tokenMetadata.entries()].filter(([tokenId, metadata]) => {
-        if (
-          !metadata.active ||
-          this.startingTokenIds.has(tokenId) ||
-          excludedTokenIds.has(tokenId) ||
-          this.quotaBlockedTokenIds.has(tokenId)
-        ) {
-          return false;
-        }
-        return (this.workerPool.get(tokenId)?.length ?? 0) < this.poolConfig.maxWorkersPerToken;
-      });
-      if (candidates.length === 0) return;
-
-      const projectedWorkerCount = this.workerCount + candidates.length;
-      const projectedRssGiB = estimateOpenAIWorkerRssGiB(projectedWorkerCount);
-      if (projectedRssGiB > this.poolConfig.maxEstimatedRssGiB) {
-        logger.warn(
-          `openai autoscale blocked: estimated RSS ${projectedRssGiB.toFixed(2)}GiB exceeds ${this.poolConfig.maxEstimatedRssGiB.toFixed(2)}GiB`,
-        );
-        return;
-      }
-
-      const hostAvailableGiB = this.getHostAvailableGiB();
-      if (hostAvailableGiB < this.poolConfig.minHostAvailableGiB) {
-        logger.warn(
-          `openai autoscale blocked: host available ${hostAvailableGiB.toFixed(2)}GiB below ${this.poolConfig.minHostAvailableGiB.toFixed(2)}GiB`,
-        );
-        return;
-      }
-
-      const spawned = await Promise.all(
-        candidates.map(([tokenId, metadata]) => this.spawnAndCommitWorker(tokenId, metadata, true)),
-      );
-
-      const added = spawned.filter((worker) => worker !== null).length;
-      if (added > 0) {
-        logger.info(
-          `openai autoscale up: +${added} workers (${this.workerCount} total, queue ${this.queue.length})`,
-        );
-        this.requestDrainQueue();
-        if (this.queue.length > 0) {
-          const timer = setTimeout(
-            () => this.requestAutoscaleEvaluation(),
-            Math.min(this.poolConfig.scaleIntervalMs, 1_000),
-          );
-          timer.unref?.();
-        }
-      }
-    });
-  }
-
-  async ensureMinimumWorkersOneStep(): Promise<Set<number>> {
-    const minimumDeficitTokenIds = new Set<number>();
-    if (this.stopped) return minimumDeficitTokenIds;
-    await this.runScaling(async () => {
-      const candidates = [...this.tokenMetadata.entries()].filter(([tokenId, metadata]) => {
-        if (!metadata.active || this.startingTokenIds.has(tokenId)) return false;
-        return (this.workerPool.get(tokenId)?.length ?? 0) < this.poolConfig.minWorkersPerToken;
-      });
-      if (candidates.length === 0) return;
-      candidates.forEach(([tokenId]) => minimumDeficitTokenIds.add(tokenId));
-
-      const spawned = await Promise.all(
-        candidates.map(([tokenId, metadata]) =>
-          this.spawnAndCommitWorker(tokenId, metadata, false),
-        ),
-      );
-      const added = spawned.filter((worker) => worker !== null).length;
-      if (added > 0) {
-        logger.info(`openai worker pool repaired: +${added} workers (${this.workerCount} total)`);
-        this.requestDrainQueue();
-        if (this.queue.length > 0) {
-          const timer = setTimeout(
-            () => this.requestAutoscaleEvaluation(),
-            Math.min(this.poolConfig.scaleIntervalMs, 1_000),
-          );
-          timer.unref?.();
-        }
-      }
-    });
-    return minimumDeficitTokenIds;
-  }
-
-  async scaleDownOneStep(): Promise<void> {
-    if (!this.poolConfig.autoscale || this.stopped) return;
-    await this.runScaling(async () => {
-      const removed: CodexAppServerWorker[] = [];
-      for (const tokenId of this.tokenMetadata.keys()) {
-        const workers = this.workerPool.get(tokenId) ?? [];
-        if (workers.length <= this.poolConfig.minWorkersPerToken) continue;
-
-        const worker = workers
-          .toSorted((a, b) => b.workerIndex - a.workerIndex)
-          .find((entry) => entry.hasCapacity);
-        if (!worker) continue;
-
-        this.workerPool.set(
-          tokenId,
-          workers.filter((entry) => entry !== worker),
-        );
-        removed.push(worker);
-      }
-
-      if (removed.length === 0) return;
-      await Promise.allSettled(removed.map((worker) => worker.kill()));
-      logger.info(`openai autoscale down: -${removed.length} workers (${this.workerCount} total)`);
-    });
-  }
-
-  private nextAvailableWorkerIndex(workers: CodexAppServerWorker[]): number {
-    const used = new Set(workers.map((worker) => worker.workerIndex));
-    for (let index = 0; index < this.poolConfig.maxWorkersPerToken; index++) {
-      if (!used.has(index)) return index;
-    }
-    return this.poolConfig.maxWorkersPerToken;
-  }
-
-  private sweepIdleWorkerThreads(): void {
-    for (const worker of [...this.workerPool.values()].flat()) {
-      // turn 중 unsubscribe하면 해당 connection으로 notification이 더 오지 않아
-      // 실행 중 요청이 timeout될 수 있다. ready + idle worker만 sweep한다.
-      if (worker.isReady && worker.hasCapacity) worker.sweepIdleThreads();
-    }
-  }
-
-  private async spawnAndCommitWorker(
-    tokenId: number,
-    metadata: TokenMetadata,
-    respectQuotaBlock: boolean,
-  ): Promise<CodexAppServerWorker | null> {
-    const expectedWorkers = this.workerPool.get(tokenId);
-    const workerIndex = this.nextAvailableWorkerIndex(expectedWorkers ?? []);
-    if (workerIndex >= this.poolConfig.maxWorkersPerToken) return null;
-
-    const worker = await this.spawnSingleWorker(
-      tokenId,
-      metadata.name,
-      metadata.credentials,
-      workerIndex,
-    );
-    if (!worker) return null;
-
-    const currentMetadata = this.tokenMetadata.get(tokenId);
-    const currentWorkers = this.workerPool.get(tokenId);
-    if (
-      !currentMetadata?.active ||
-      currentMetadata !== metadata ||
-      currentWorkers !== expectedWorkers ||
-      (respectQuotaBlock && this.quotaBlockedTokenIds.has(tokenId)) ||
-      currentWorkers?.some((entry) => entry.workerIndex === workerIndex)
-    ) {
-      await worker.kill().catch(() => {});
-      return null;
-    }
-
-    const nextWorkers = currentWorkers ?? [];
-    nextWorkers.push(worker);
-    nextWorkers.sort((a, b) => a.workerIndex - b.workerIndex);
-    if (!currentWorkers) this.workerPool.set(tokenId, nextWorkers);
-    return worker;
-  }
-
-  async handleWorkerTerminalFailure(worker: CodexAppServerWorker): Promise<void> {
-    const workers = this.workerPool.get(worker.tokenId);
-    if (!workers?.includes(worker)) return;
-
-    await worker.kill().catch(() => {});
-
-    const currentWorkers = this.workerPool.get(worker.tokenId);
-    if (!currentWorkers?.includes(worker)) return;
-    const remaining = currentWorkers.filter((entry) => entry !== worker);
-    if (remaining.length > 0) {
-      this.workerPool.set(worker.tokenId, remaining);
-    } else {
-      this.workerPool.delete(worker.tokenId);
-    }
-    logger.warn(
-      `terminal worker removed: ${worker.tokenName}[${worker.workerIndex}] (${remaining.length} remaining)`,
-    );
-    this.requestAutoscaleEvaluation();
-  }
-
-  private requestAutoscaleEvaluation(): void {
-    if (this.stopped) return;
-    void this.evaluateAutoscaling().catch((e) =>
-      logger.warn(`openai autoscale evaluation failed: ${(e as Error).message}`),
-    );
-  }
-
-  private async runScaling(task: () => Promise<void>): Promise<void> {
-    if (this.scalingPromise) {
-      await this.scalingPromise;
-      return;
-    }
-    const scaling = task().finally(() => {
-      if (this.scalingPromise === scaling) this.scalingPromise = null;
-    });
-    this.scalingPromise = scaling;
-    await scaling;
-  }
-
-  // ── Rate limits ─────────────────────────────────────────────────
-
-  rateLimitsCache = new Map<number, RateLimitsCacheEntry>();
-  static readonly RATE_LIMITS_CACHE_TTL = 60_000;
-
-  async getRateLimitsByTokenId(tokenId: number): Promise<OpenAIRateLimitsWithMeta> {
-    const generation = this.rateLimitsGenerationByToken.get(tokenId) ?? 0;
-    const cached = this.rateLimitsCache.get(tokenId);
-    if (
-      cached &&
-      cached.generation === generation &&
-      Date.now() - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL
-    ) {
-      return { data: cached.data, cachedAt: cached.cachedAt };
-    }
-
-    const worker = (this.workerPool.get(tokenId) ?? []).find((w) => w.isReady);
-    if (!worker) throw new Error("no ready openai workers");
-    const data = (await worker.getRateLimits()) as GetAccountRateLimitsResponse;
-    const entry: RateLimitsCacheEntry = { data, cachedAt: Date.now(), generation };
-    if ((this.rateLimitsGenerationByToken.get(tokenId) ?? 0) === generation) {
-      this.rateLimitsCache.set(tokenId, entry);
-    }
-    return { data: entry.data, cachedAt: entry.cachedAt };
-  }
-
-  private requestDrainQueue(): void {
-    void this.drainQueue().catch((e) => logger.warn(`drainQueue failed: ${(e as Error).message}`));
-  }
-
-  private invalidateRateLimitsCache(tokenId: number): void {
-    this.rateLimitsCache.delete(tokenId);
-    this.rateLimitsGenerationByToken.set(
-      tokenId,
-      (this.rateLimitsGenerationByToken.get(tokenId) ?? 0) + 1,
-    );
-  }
-
-  private setTokenMetadata(
+  private setToken(
     id: number,
     name: string,
     credentials: OpenAICredentials,
     quotaThreshold: number | null | undefined,
     weight: number,
+    active: boolean,
   ): void {
-    this.tokenMetadata.set(id, {
-      name,
-      credentials,
-      quotaThreshold,
-      weight,
-      active: this.tokenMetadata.get(id)?.active ?? true,
-    });
-    this.weightedSelector.setToken(id, weight);
-  }
-
-  private hasActiveTokenCandidate(excludedTokenIds: Set<number>): boolean {
-    return [...this.tokenMetadata.entries()].some(
-      ([tokenId, metadata]) => metadata.active && !excludedTokenIds.has(tokenId),
-    );
-  }
-
-  private getQuotaThreshold(tokenId: number): number | null | undefined {
-    return this.tokenMetadata.get(tokenId)?.quotaThreshold;
-  }
-
-  private hasQuotaThreshold(tokenId: number): boolean {
-    const threshold = this.getQuotaThreshold(tokenId);
-    return threshold !== undefined && threshold !== null;
-  }
-
-  private async resolveTokenEligibility(excludedTokenIds: Set<number>): Promise<TokenEligibility> {
-    const workers = this.getAllReadyActiveWorkers();
-    const byToken = new Map<number, string>();
-    for (const worker of workers) {
-      if (!byToken.has(worker.tokenId)) byToken.set(worker.tokenId, worker.tokenName);
+    const old = this.tokenMetadata.get(id);
+    if (old) {
+      Object.assign(old, {
+        name,
+        credentials,
+        quotaThreshold,
+        weight,
+        active,
+        capacity: this.permitConfig.permitsPerToken,
+        generation: old.generation + 1,
+      });
+    } else {
+      this.tokenMetadata.set(id, {
+        name,
+        credentials,
+        quotaThreshold,
+        weight,
+        active,
+        capacity: this.permitConfig.permitsPerToken,
+        inUse: 0,
+        generation: 1,
+      });
     }
-
-    const readyActiveTokenIds = new Set(byToken.keys());
-    const eligibleTokenIds = new Set<number>();
-    const overThresholdTokens: Array<{ tokenName: string; threshold: number }> = [];
-    let thresholdedTokenCount = 0;
-
-    const entries = Array.from(byToken.entries());
-    const checks = await Promise.allSettled(
-      entries.map(async ([tokenId, tokenName]) => {
-        if (excludedTokenIds.has(tokenId)) {
-          thresholdedTokenCount++;
-          return { tokenId, tokenName, eligible: false };
-        }
-        if (!this.hasQuotaThreshold(tokenId)) {
-          return { tokenId, tokenName, eligible: true };
-        }
-        thresholdedTokenCount++;
-        return {
-          tokenId,
-          tokenName,
-          eligible: await this.isTokenQuotaEligible(tokenId, tokenName),
-        };
-      }),
-    );
-
-    checks.forEach((check, index) => {
-      if (check.status === "fulfilled") {
-        if (check.value.eligible) {
-          eligibleTokenIds.add(check.value.tokenId);
-        } else {
-          const threshold = this.getQuotaThreshold(check.value.tokenId);
-          if (threshold !== undefined && threshold !== null) {
-            overThresholdTokens.push({ tokenName: check.value.tokenName, threshold });
-          }
-        }
-        return;
-      }
-
-      const entry = entries[index];
-      if (entry) {
-        const [tokenId, tokenName] = entry;
-        this.logQuotaLookupFailOpen(tokenId, tokenName, String(check.reason));
-        eligibleTokenIds.add(tokenId);
-      }
-    });
-
-    return { readyActiveTokenIds, eligibleTokenIds, overThresholdTokens, thresholdedTokenCount };
+    this.selector.setToken(id, weight);
+    this.invalidateRateLimitsCache(id);
+    this.quotaBlocked.delete(id);
   }
 
-  private async isTokenQuotaEligible(
+  async getRateLimitsByTokenId(
     tokenId: number,
-    tokenName: string,
-    excludedTokenIds?: Set<number>,
+    signal?: AbortSignal,
+  ): Promise<OpenAIRateLimitsWithMeta> {
+    const token = this.tokenMetadata.get(tokenId);
+    if (!token) throw new Error(`openai token ${tokenId} not found`);
+    const cached = this.rateLimitsCache.get(tokenId);
+    if (
+      cached &&
+      cached.generation === token.generation &&
+      Date.now() - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL
+    )
+      return cached;
+    const result = await readOpenAIQuotaUsage({
+      credentials: token.credentials,
+      fetch: this.fetchImpl,
+      ...(signal ? { signal } : {}),
+    });
+    if (result.kind === "lookup_failed") throw new Error(result.reason);
+    if (!result.raw) throw new Error("OpenAI quota response missing raw rate limits");
+    const entry = { data: result.raw, cachedAt: Date.now(), generation: token.generation };
+    if (this.tokenMetadata.get(tokenId) === token) this.rateLimitsCache.set(tokenId, entry);
+    return entry;
+  }
+
+  private async isQuotaEligible(
+    id: number,
+    token: TokenMetadata,
+    signal?: AbortSignal,
   ): Promise<boolean> {
-    for (;;) {
-      const tokenMetadata = this.tokenMetadata.get(tokenId);
-      const threshold = tokenMetadata?.quotaThreshold;
-      if (!tokenMetadata?.active || threshold === undefined || threshold === null) {
-        this.quotaBlockedTokenIds.delete(tokenId);
-        return true;
-      }
-
-      let result: OpenAIQuotaUsageResult;
-      try {
-        result = await readOpenAIQuotaUsage(() => this.getRateLimitsByTokenId(tokenId));
-      } catch (e) {
-        if (this.tokenMetadata.get(tokenId) !== tokenMetadata) continue;
-        this.quotaBlockedTokenIds.delete(tokenId);
-        this.logQuotaLookupFailOpen(tokenId, tokenMetadata.name ?? tokenName, (e as Error).message);
-        return true;
-      }
-
-      if (this.tokenMetadata.get(tokenId) !== tokenMetadata) continue;
-
-      if (result.kind === "lookup_failed") {
-        this.quotaBlockedTokenIds.delete(tokenId);
-        this.logQuotaLookupFailOpen(tokenId, tokenMetadata.name ?? tokenName, result.reason);
-        return true;
-      }
-
-      if (result.utilizationPct >= threshold) {
-        const transitioned = !this.quotaBlockedTokenIds.has(tokenId);
-        this.quotaBlockedTokenIds.add(tokenId);
-        if (transitioned) {
-          this.logQuotaOverThreshold(tokenId, tokenMetadata.name ?? tokenName, threshold, result);
-        }
-        excludedTokenIds?.add(tokenId);
-        return false;
-      }
-
-      if (this.quotaBlockedTokenIds.delete(tokenId)) {
-        this.logQuotaRecovered(tokenId, tokenMetadata.name ?? tokenName, threshold, result);
-      }
+    if (token.quotaThreshold === null || token.quotaThreshold === undefined) return true;
+    const generation = token.generation;
+    const result = await readOpenAIQuotaUsage(async () => this.getRateLimitsByTokenId(id, signal));
+    if (this.tokenMetadata.get(id) !== token || token.generation !== generation) return false;
+    if (result.kind === "lookup_failed") {
+      this.quotaBlocked.delete(id);
+      logger.warn("quota_threshold gate: lookup_fail_open", {
+        tokenId: id,
+        tokenName: token.name,
+        lookupReason: result.reason,
+      });
       return true;
     }
-  }
-
-  private logQuotaOverThreshold(
-    tokenId: number,
-    tokenName: string,
-    threshold: number,
-    result: Extract<OpenAIQuotaUsageResult, { kind: "ok" }>,
-  ): void {
-    logger.info(
-      `quota_threshold gate: over_threshold ${tokenName}[${tokenId}] (${result.utilizationPct}% >= ${threshold}%)`,
-      {
-        tokenId,
-        tokenName,
-        provider: "openai",
-        threshold,
-        cachedUtilization: result.utilizationPct,
-        cacheAge: result.cacheAgeMs,
-        windowDurationMins: result.windowDurationMins,
-        resetsAt: result.resetsAt,
-        limitId: result.limitId,
-        reason: "over_threshold",
-      },
-    );
-  }
-
-  private logQuotaRecovered(
-    tokenId: number,
-    tokenName: string,
-    threshold: number,
-    result: Extract<OpenAIQuotaUsageResult, { kind: "ok" }>,
-  ): void {
-    logger.info(
-      `quota_threshold gate: recovered ${tokenName}[${tokenId}] (${result.utilizationPct}% < ${threshold}%)`,
-      {
-        tokenId,
-        tokenName,
-        provider: "openai",
-        threshold,
-        cachedUtilization: result.utilizationPct,
-        cacheAge: result.cacheAgeMs,
-        windowDurationMins: result.windowDurationMins,
-        resetsAt: result.resetsAt,
-        limitId: result.limitId,
-        reason: "recovered",
-      },
-    );
-  }
-
-  private logQuotaLookupFailOpen(tokenId: number, tokenName: string, reason: string): void {
-    const threshold = this.getQuotaThreshold(tokenId);
-    logger.warn("quota_threshold gate: lookup_fail_open", {
-      tokenId,
-      tokenName,
-      provider: "openai",
-      threshold,
-      reason: "lookup_fail_open",
-      lookupReason: reason,
-    });
-  }
-
-  private throwQuotaThresholdExceeded(eligibility: TokenEligibility): never {
-    logger.warn("quota_threshold gate: all_exceeded", {
-      provider: "openai",
-      tokenCount: eligibility.readyActiveTokenIds.size,
-      thresholdedTokenCount: eligibility.thresholdedTokenCount,
-      overThresholdTokens: eligibility.overThresholdTokens,
-      reason: "all_exceeded",
-    });
-    throw new QuotaThresholdExceededError(
-      quotaThresholdExceededMessage("openai", eligibility.overThresholdTokens),
-    );
-  }
-
-  // ── Browser login flow ───────────────────────────────────────────
-
-  pendingLogin: {
-    worker: CodexAppServerWorker;
-    name: string;
-    timer: ReturnType<typeof setTimeout>;
-  } | null = null;
-
-  async startBrowserLogin(name: string): Promise<{ authUrl: string }> {
-    if (this.pendingLogin) {
-      this.pendingLogin.worker.kill().catch(() => {});
-      clearTimeout(this.pendingLogin.timer);
-      this.pendingLogin = null;
+    if (result.utilizationPct >= token.quotaThreshold) {
+      if (!this.quotaBlocked.has(id))
+        logger.info(
+          `quota_threshold gate: over_threshold ${token.name}[${id}] (${result.utilizationPct}% >= ${token.quotaThreshold}%)`,
+        );
+      this.quotaBlocked.add(id);
+      return false;
     }
-
-    const tempId = Date.now();
-    const worker = new CodexAppServerWorker({
-      tokenId: tempId,
-      tokenName: name,
-      accessToken: "",
-      accountId: "",
-    });
-
-    const authUrl = await worker.startBrowserLogin();
-
-    const timer = setTimeout(() => {
-      if (this.pendingLogin?.worker === worker) {
-        logger.warn(`browser login timeout for ${name}, killing worker`);
-        worker.kill().catch(() => {});
-        this.pendingLogin = null;
-      }
-    }, 300_000);
-
-    this.pendingLogin = { worker, name, timer };
-    return { authUrl };
+    if (this.quotaBlocked.delete(id))
+      logger.info(
+        `quota_threshold gate: recovered ${token.name}[${id}] (${result.utilizationPct}% < ${token.quotaThreshold}%)`,
+      );
+    return true;
   }
 
-  get pendingLoginName(): string | null {
-    return this.pendingLogin?.name ?? null;
+  private invalidateRateLimitsCache(id: number): void {
+    this.rateLimitsCache.delete(id);
   }
-
-  async completeBrowserLogin(): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    idToken?: string;
-    accountId: string;
-  }> {
-    if (!this.pendingLogin) throw new Error("no pending login");
-    const { worker, timer } = this.pendingLogin;
-
-    try {
-      await worker.waitForBrowserLoginComplete();
-      const creds = await worker.readManagedCredentials();
-      if (!creds) throw new Error("failed to read credentials after login");
-      return creds;
-    } finally {
-      clearTimeout(timer);
-      this.pendingLogin = null;
-      await worker.kill().catch(() => {});
-    }
-  }
-
-  // ── Stats ───────────────────────────────────────────────────────
 
   get workerCount(): number {
-    return [...this.workerPool.values()].flat().length;
+    return [...this.tokenMetadata.values()].reduce((sum, t) => sum + t.capacity, 0);
   }
-
   get readyWorkerCount(): number {
-    return [...this.workerPool.values()].flat().filter((w) => w.isReady).length;
+    return [...this.tokenMetadata.values()].reduce(
+      (sum, t) => sum + (t.active ? t.capacity - t.inUse : 0),
+      0,
+    );
   }
-
   get queueLength(): number {
     return this.queue.length;
   }
-
-  // Monit 표시용 — 토큰별 현재 워커 수 스냅샷 (이름순 정렬)
   get workerCountsByToken(): Array<{ name: string; count: number }> {
-    return [...this.workerPool.entries()]
-      .map(([tokenId, workers]) => ({
-        name: workers[0]?.tokenName ?? `token ${tokenId}`,
-        count: workers.length,
-      }))
-      .filter((entry) => entry.count > 0)
+    return [...this.tokenMetadata.values()]
+      .map((t) => ({ name: t.name, count: t.capacity }))
       .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 }

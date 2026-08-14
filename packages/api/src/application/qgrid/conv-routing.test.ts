@@ -113,4 +113,71 @@ describe("decideConvRouting", () => {
     });
     expect(decision.coldInput[0]).not.toMatchObject({ type: "text", text: "" });
   });
+
+  it("direct OpenAI는 epoch=-1 좌표를 opaque cache affinity로 해석하고 전체 history를 유지한다", () => {
+    const cacheAffinityKey = "a".repeat(64);
+    const model = "openai/gpt-5.5";
+    const decision = decideConvRouting(
+      input({
+        prompt: "next",
+        model,
+        system: "same",
+        history: JSON.stringify([{ role: "user", content: "first" }]),
+        cacheAffinityKey,
+        runContext: {
+          threadCoord: {
+            workerId: 17,
+            threadId: cacheAffinityKey,
+            epoch: -1,
+            systemHash: systemHash("same", model),
+          },
+        },
+      }),
+      { directOpenAI: true, modelNamespace: model },
+    );
+
+    expect(decision.reuse).toBeUndefined();
+    expect(decision.reuseInput).toBeUndefined();
+    expect(decision.coldHistory).toEqual([{ role: "user", content: "first" }]);
+    expect(decision.coldInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
+    expect(decision.promptCacheKey).toBe(cacheAffinityKey);
+    expect(decision.preferredTokenId).toBe(17);
+  });
+
+  it("direct OpenAI rejects legacy or mismatched coords but keeps the request affinity key", () => {
+    const cacheAffinityKey = "b".repeat(64);
+    const decision = decideConvRouting(
+      input({
+        model: "openai/gpt-5.5",
+        cacheAffinityKey,
+        runContext: {
+          threadCoord: {
+            workerId: 4,
+            threadId: "legacy-thread",
+            epoch: 3,
+            systemHash: systemHash(undefined, "openai/gpt-5.5"),
+          },
+        },
+      }),
+      { directOpenAI: true, modelNamespace: "openai/gpt-5.5" },
+    );
+
+    expect(decision.promptCacheKey).toBe(cacheAffinityKey);
+    expect(decision.preferredTokenId).toBeUndefined();
+    expect(decision.reuse).toBeUndefined();
+  });
+
+  it("system hash separates model namespaces", () => {
+    expect(systemHash("same", "openai/gpt-5.5")).not.toBe(systemHash("same", "openai/gpt-5.4"));
+  });
+
+  it("direct OpenAI 요청에 affinity key 가 없으면 cache key 를 만들지 않는다", () => {
+    const decision = decideConvRouting(input({ model: "openai/gpt-5.5" }), {
+      directOpenAI: true,
+      modelNamespace: "openai/gpt-5.5",
+    });
+
+    expect(decision.promptCacheKey).toBeUndefined();
+    expect(decision.preferredTokenId).toBeUndefined();
+  });
 });
