@@ -37,7 +37,7 @@ function textBlock(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
 }
 
-// codex ResponseItem(coldHistory item) 최소 shape.
+// OpenAI Responses item(coldHistory item) 최소 shape.
 // extractPromptAndHistory(ai-sdk/utils.ts) 가 만드는 형식:
 //   { type:"message", role:"user", content:[{type:"input_text", text}] }
 //   { type:"message", role:"assistant", content:[{type:"output_text", text}] }

@@ -39,68 +39,18 @@ export type SettingDef = {
   help?: string;
 };
 
-/** 64 GiB 운영 호스트에서 세 자리 오입력을 막는 설정 상한. 안전을 보장하는 값은 아니다. */
-export const MAX_OPENAI_ESTIMATED_RSS_GIB = 32;
-export const MAX_OPENAI_MIN_HOST_AVAILABLE_GIB = 64;
-
 export const SETTING_DEFS: SettingDef[] = [
   {
-    key: "openai.autoscale",
-    fallback: "true",
-    group: "openai",
-    envKey: "QGRID_OPENAI_AUTOSCALE",
-    label: "레거시 워커 오토스케일 (비활성)",
-    kind: "boolean",
-    applies: "restart",
-    help: "직접 호출 모드에서는 사용하지 않습니다. 기존 설정 키와 환경 변수의 호환성을 위해 남아 있습니다",
-  },
-  {
-    key: "openai.minWorkersPerToken",
-    fallback: "1",
-    group: "openai",
-    envKey: "QGRID_OPENAI_MIN_WORKERS_PER_TOKEN",
-    label: "토큰당 최소 동시 요청 허용량",
-    kind: "integer",
-    applies: "restart",
-    min: 1,
-    max: 20,
-    help: "설정 키와 환경 변수 이름의 Workers는 호환성을 위해 유지됩니다",
-  },
-  {
-    key: "openai.maxWorkersPerToken",
+    key: "openai.permitsPerToken",
     fallback: "3",
     group: "openai",
-    envKey: "QGRID_OPENAI_MAX_WORKERS_PER_TOKEN",
-    label: "토큰당 최대 동시 요청 허용량",
+    envKey: "QGRID_OPENAI_PERMITS_PER_TOKEN",
+    label: "토큰당 동시 요청 permit 수",
     kind: "integer",
     applies: "restart",
     min: 1,
     max: 20,
-    help: "설정 키와 환경 변수 이름의 Workers는 호환성을 위해 유지됩니다",
-  },
-  {
-    key: "openai.maxEstimatedRssGiB",
-    fallback: "16",
-    group: "openai",
-    envKey: "QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB",
-    label: "레거시 워커 메모리 상한 (비활성)",
-    kind: "number",
-    applies: "restart",
-    min: 1,
-    max: MAX_OPENAI_ESTIMATED_RSS_GIB,
-    help: "직접 호출 모드에서는 사용하지 않습니다. 기존 설정 키와 환경 변수의 호환성을 위해 남아 있습니다",
-  },
-  {
-    key: "openai.minHostAvailableGiB",
-    fallback: "20",
-    group: "openai",
-    envKey: "QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB",
-    label: "레거시 호스트 여유 메모리 하한 (비활성)",
-    kind: "number",
-    applies: "restart",
-    min: 0,
-    max: MAX_OPENAI_MIN_HOST_AVAILABLE_GIB,
-    help: "직접 호출 모드에서는 사용하지 않습니다. 기존 설정 키와 환경 변수의 호환성을 위해 남아 있습니다",
+    help: "직접 호출 모드에서 한 토큰으로 동시에 내보낼 수 있는 요청 수입니다. 워커 시절 키(QGRID_OPENAI_MIN/MAX_WORKERS_PER_TOKEN, AUTOSCALE)는 이 값이 없을 때만 폴백으로 읽힙니다",
   },
   {
     key: "slack.enabled",

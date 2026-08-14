@@ -299,7 +299,7 @@ const entityLabels = {
   "entity.Setting": "Setting",
   "entity.Setting.id": "ID",
   "entity.Setting.created_at": "등록일시",
-  "entity.Setting.key": "설정 키 (예: openai.maxWorkersPerToken)",
+  "entity.Setting.key": "설정 키 (예: openai.permitsPerToken)",
   "entity.Setting.value": "설정 값 (문자열 저장, 앱에서 파싱·검증)",
   "entity.Setting.updated_at": "최종 수정일시",
   "enum.SettingOrderBy.key-asc": "키순",

@@ -64,13 +64,10 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 
 | Env | Default | Meaning |
 |---|---:|---|
-| `QGRID_OPENAI_AUTOSCALE` | enabled | Legacy capacity switch retained by the current configuration parser. It controls whether permit capacity resolves from the minimum or maximum value. |
-| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` | `1` | Minimum concurrent permits per active OpenAI token. The legacy env name is retained. Clamped to 1..20. |
-| `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `3` when autoscaling | Maximum concurrent permits per active OpenAI token. The legacy env name is retained and hard-capped at 20. |
-| `QGRID_OPENAI_SCALE_INTERVAL_MS` | `5000` | Legacy parsed setting retained for configuration compatibility; it does not schedule child-process health checks in the direct runtime. |
-| `QGRID_OPENAI_SCALE_DOWN_IDLE_MS` | `600000` | Legacy parsed setting retained for compatibility; direct requests do not own idle child processes. |
-| `QGRID_OPENAI_MAX_ESTIMATED_RSS_GIB` | `16` | Legacy parsed memory setting; the direct runtime does not estimate Codex child-process RSS. |
-| `QGRID_OPENAI_MIN_HOST_AVAILABLE_GIB` | `20` | Legacy parsed host-memory setting; the direct runtime does not gate child-process spawn. |
+| `QGRID_OPENAI_PERMITS_PER_TOKEN` | `3` | Canonical concurrent-permit capacity per active OpenAI token (dashboard setting `openai.permitsPerToken`). Clamped to 1..20. |
+| `QGRID_OPENAI_TRANSPORT` | `websocket` | OpenAI transport selector (`https` or `websocket`). Invalid values fail at dispatcher configuration time. |
+| `QGRID_OPENAI_AUTOSCALE` | unset | Deprecated fallback, read only when the canonical permits key is absent: `false`/`0` selects the legacy MIN key, otherwise the legacy MAX key. Logs a deprecation warning when used. |
+| `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` / `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` | `1` / `3` | Deprecated fallback keys from the worker-pool era; still honored (env and stored dashboard values) so existing deployments keep their capacity, but new setups must use `QGRID_OPENAI_PERMITS_PER_TOKEN`. |
 | `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic streaming calls | Claude Code structured-output retry count for streaming only, clamped to at least 1 by qgrid. Non-streaming `generate` leaves the variable unset and uses Claude Code's default retry budget. |
 
 ## Server boot lifecycle
@@ -89,9 +86,9 @@ On shutdown, it stops provider dispatchers and the token subscriber.
 
 ### Runtime settings
 
-Some env values are editable at runtime through the dashboard's Settings page, backed by the `settings` table (key-value). Resolution order is DB → env → code default: env stays as a fallback so a deploy that has not written any setting yet keeps working exactly as before. `loadSettings()` runs in `onStart` before the dispatchers are constructed, since the OpenAI dispatcher reads its legacy-named capacity settings in its constructor.
+Some env values are editable at runtime through the dashboard's Settings page, backed by the `settings` table (key-value). Resolution order is DB → env → code default: env stays as a fallback so a deploy that has not written any setting yet keeps working exactly as before. `loadSettings()` runs in `onStart` before the dispatchers are constructed, since the OpenAI dispatcher reads its permit capacity setting in its constructor.
 
-- Editable: OpenAI autoscale and legacy-named min/max permit capacity, the retained memory settings, Slack delivery control (master switch, reminder on/off, reminder interval, quiet-hours window, weekend behaviour), and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.constant.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart. The `settings` table itself (`setting.entity.json`) only stores `(key, value)` strings; everything the UI needs to render and validate a key lives in that constant, not in the schema.
+- Editable: OpenAI permit capacity (`openai.permitsPerToken`), Slack delivery control (master switch, reminder on/off, reminder interval, quiet-hours window, weekend behaviour), and the Slack channel/user-map/bot-token. `SETTING_DEFS` in `setting.constant.ts` is the single definition — key, env name, type, bounds, and whether the change applies immediately or needs a restart. The `settings` table itself (`setting.entity.json`) only stores `(key, value)` strings; everything the UI needs to render and validate a key lives in that constant, not in the schema.
 - Not editable: anything needed before the server can read its own database (`QGRID_DB_*`, `HOST`, `PORT`, `NODE_ENV`). These are exposed read-only on the same page so an operator can confirm which environment they are looking at; the DB password is masked.
 - OpenAI capacity settings are marked `restart` because `resolveOpenAIPermitConfig` resolves the permit capacity once in the dispatcher constructor. Changing them writes to the DB but does not resize the running permit capacity. `POST /api/setting/restartServer` is how those land without an SSH session.
 

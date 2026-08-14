@@ -15,16 +15,16 @@ export const MonitLogEntry = z.object({
 });
 export type MonitLogEntry = z.infer<typeof MonitLogEntry>;
 
-// 폴링에 편승하는 라이브 카운트 — 깊은 워커/큐 진단은 audit 대시보드(별도)의 몫이고,
-// 여기는 "지금 몇 개 돌고 큐가 쌓이나"만 가볍게 답한다.
+// 폴링에 편승하는 라이브 카운트 — 깊은 큐/토큰 진단은 audit 대시보드(별도)의 몫이고,
+// 여기는 "지금 permit 이 얼마나 차 있고 큐가 쌓이나"만 가볍게 답한다.
 export const MonitVitals = z.object({
-  openaiWorkerCount: z.number(),
-  openaiReadyWorkerCount: z.number(),
+  openaiTotalPermits: z.number(),
+  openaiAvailablePermits: z.number(),
   openaiQueueLength: z.number(),
-  // 토큰별 현재 워커 수 — autoscale 로 늘고 주는 것을 토큰 단위로 본다
-  openaiWorkersByToken: z.array(z.object({ name: z.string(), count: z.number() })),
+  // 토큰별 permit 용량 — 프로세스 수가 아니라 토큰당 동시 요청 상한이다
+  openaiPermitsByToken: z.array(z.object({ name: z.string(), count: z.number() })),
   anthropicTokenCount: z.number(),
-  // fresh-spawn 이라 워커 수는 없다 — 풀에 어떤 토큰이 있는지만 보여준다
+  // fresh-spawn 이라 상주 프로세스가 없다 — 풀에 어떤 토큰이 있는지만 보여준다
   anthropicTokenNames: z.array(z.string()),
 });
 export type MonitVitals = z.infer<typeof MonitVitals>;
@@ -46,9 +46,9 @@ export const MonitServerInfo = z.object({
   dbHost: z.string(),
   dbName: z.string(),
   openai: z.object({
-    minWorkersPerToken: z.number(),
-    maxWorkersPerToken: z.number(),
-    autoscale: z.boolean(),
+    // 토큰당 동시 요청 permit 수 — 직접 호출 모드라 워커 프로세스 개념이 없다
+    permitsPerToken: z.number(),
+    transport: z.string(),
   }),
 });
 export type MonitServerInfo = z.infer<typeof MonitServerInfo>;

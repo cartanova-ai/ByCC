@@ -189,7 +189,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       );
     }
     logger.info(
-      `started direct OpenAI runtime with ${this.tokenMetadata.size} tokens and ${this.workerCount} permits`,
+      `started direct OpenAI runtime with ${this.tokenMetadata.size} tokens and ${this.totalPermits} permits`,
     );
   }
 
@@ -686,10 +686,10 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.rateLimitsCache.delete(id);
   }
 
-  get workerCount(): number {
+  get totalPermits(): number {
     return [...this.tokenMetadata.values()].reduce((sum, t) => sum + t.capacity, 0);
   }
-  get readyWorkerCount(): number {
+  get availablePermits(): number {
     return [...this.tokenMetadata.values()].reduce(
       (sum, t) => sum + (t.active ? t.capacity - t.inUse : 0),
       0,
@@ -698,7 +698,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   get queueLength(): number {
     return this.queue.length;
   }
-  get workerCountsByToken(): Array<{ name: string; count: number }> {
+  get permitsByToken(): Array<{ name: string; count: number }> {
     return [...this.tokenMetadata.values()]
       .map((t) => ({ name: t.name, count: t.capacity }))
       .toSorted((a, b) => a.name.localeCompare(b.name));

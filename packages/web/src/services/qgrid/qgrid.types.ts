@@ -79,12 +79,12 @@ export const QueryTimeoutMs = z.number().int().positive().max(MAX_QUERY_TIMEOUT_
 
 // ─── Run Lifecycle Context (SDK ↔ Server contract) ───
 
-// codex thread 좌표. thread 재사용으로 conversation_id(=prompt_cache_key)를 고정해
+// OpenAI cache affinity 좌표(구 codex thread 좌표). prompt_cache_key 를 고정해
 // OpenAI prompt caching 을 살리기 위한 핸들. 서버가 발급하고 클라가 다음 요청에 그대로 회송한다.
 // 핸들 미전송 시 기존 "매 turn 새 thread + history inject" 동작으로 폴백(QgridRunContext 참조).
 export const QgridThreadCoord = z.object({
   workerId: z.number(), // 고정 라우팅 (thread 는 worker 프로세스 메모리에만 존재)
-  threadId: z.string(), // codex conversation_id = prompt_cache_key
+  threadId: z.string(), // opaque cache affinity key = prompt_cache_key
   epoch: z.number(), // worker spawn 카운터. restart 로 thread 증발 감지
   systemHash: z.string(), // system_prompt 해시. 다른 대화 오접속 방지
 });
@@ -119,11 +119,16 @@ export const QueryInput = z.looseObject({
   serviceTier: ServiceTier.optional(),
   history: z.string().optional(),
   projectName: z.string().optional(),
+  // SDK-derived opaque affinity. It is intentionally distinct from the caller's sessionKey.
+  cacheAffinityKey: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   // 생략하면 로깅한다. false는 request log 쓰기만 끄고 dispatch/thread는 유지한다.
   logger: z.boolean().optional(),
   runContext: QgridRunContext.optional(),
   toolResults: z.array(QgridToolResultInput).optional(),
-  // codex 내장 image_generation tool 을 켠다(OpenAI 경로 전용, opt-in, non-stream).
+  // OpenAI Responses image_generation tool 을 켠다(OpenAI 경로 전용, opt-in, non-stream).
   imageGeneration: z.boolean().optional(),
   // qgrid 가격 추정 및 Codex 이미지 요청 힌트. 이미지 모델은 gpt-image-2 로 고정 가정한다.
   imageGenerationOptions: ImageGenerationOptions.optional(),
@@ -282,7 +287,7 @@ export type TokenStats = z.infer<typeof TokenStats>;
 export const OAuthStartResult = z.object({
   authUrl: z.string(),
   // redirect: 브라우저 자동 복귀(루프백 접속). code: 콘솔 콜백 + 코드 붙여넣기(원격 접속).
-  // OpenAI 경로는 codex 가 콜백을 처리하므로 항상 redirect 를 반환한다.
+  // OpenAI 경로는 고정 loopback 콜백의 직접 PKCE 라 항상 redirect 를 반환한다.
   mode: z.enum(["redirect", "code"]),
 });
 export type OAuthStartResult = z.infer<typeof OAuthStartResult>;

@@ -31,7 +31,7 @@ class MonitFrameClass extends BaseFrameClass {
   // 프로세스 정적 정보 — 폴링 불필요, 페이지당 1회 조회.
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async monitInfo(): Promise<MonitServerInfo> {
-    const permits = resolveOpenAIPermitConfig();
+    const permitConfig = resolveOpenAIPermitConfig();
     const host = process.env.HOST ?? "localhost";
     const port = process.env.PORT ?? "44900";
     const conn = activeDbConnection();
@@ -40,9 +40,8 @@ class MonitFrameClass extends BaseFrameClass {
       dbHost: conn.host ?? "localhost",
       dbName: conn.database ?? "qgrid",
       openai: {
-        minWorkersPerToken: permits.permitsPerToken,
-        maxWorkersPerToken: permits.permitsPerToken,
-        autoscale: false,
+        permitsPerToken: permitConfig.permitsPerToken,
+        transport: permitConfig.transport,
       },
     };
   }
@@ -51,10 +50,10 @@ class MonitFrameClass extends BaseFrameClass {
 // dispatcher 미초기화(부팅 직후) 시 0 으로 응답한다 — 가벼운 스냅샷이라 오류로 만들지 않는다.
 function currentVitals(): MonitVitals {
   return {
-    openaiWorkerCount: QgridDispatcher.openaiDispatcher?.workerCount ?? 0,
-    openaiReadyWorkerCount: QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0,
+    openaiTotalPermits: QgridDispatcher.openaiDispatcher?.totalPermits ?? 0,
+    openaiAvailablePermits: QgridDispatcher.openaiDispatcher?.availablePermits ?? 0,
     openaiQueueLength: QgridDispatcher.openaiDispatcher?.queueLength ?? 0,
-    openaiWorkersByToken: QgridDispatcher.openaiDispatcher?.workerCountsByToken ?? [],
+    openaiPermitsByToken: QgridDispatcher.openaiDispatcher?.permitsByToken ?? [],
     anthropicTokenCount: QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0,
     anthropicTokenNames: QgridDispatcher.anthropicDispatcher?.tokenNames ?? [],
   };

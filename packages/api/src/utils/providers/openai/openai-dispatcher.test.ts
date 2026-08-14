@@ -225,12 +225,12 @@ describe("OpenAIDispatcher direct runtime", () => {
   it("times out queued admission and exposes permit compatibility stats without spawning", async () => {
     const d = dispatcher(() => ({ async *[Symbol.asyncIterator]() { await new Promise(() => {}); } }), 2, 5);
     await d.onTokenAdded(1, "one", credentials);
-    expect(d.workerCount).toBe(2);
-    expect(d.readyWorkerCount).toBe(2);
+    expect(d.totalPermits).toBe(2);
+    expect(d.availablePermits).toBe(2);
     void d.generate(request());
     void d.generate(request());
     await expect(d.generate(request())).rejects.toThrow("SERVER_BUSY");
-    expect(d.workerCountsByToken).toEqual([{ name: "one", count: 2 }]);
+    expect(d.permitsByToken).toEqual([{ name: "one", count: 2 }]);
   });
 
   it("applies credential metadata updates without leaking an active permit", async () => {

@@ -16,18 +16,18 @@ export type QgridProviderOptions = {
    */
   logger?: boolean;
   /**
-   * 멀티턴 시 codex thread reuse를 위한 대화 식별자, 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면
+   * 멀티턴 프롬프트 캐시 어피니티용 대화 식별자, 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면
    * provider가 model+sessionKey에서 opaque cache affinity를 결정적으로 파생해 회송한다.
    * 원문 sessionKey는 서버에 전송하지 않으며 좌표는 model+sessionKey 별로 격리된다.
    */
   sessionKey?: string;
   /** reasoning 모델의 추론 깊이. 기본값은 qgrid config의 defaultEffort. */
   effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  /** 응답 텍스트의 상세도. OpenAI/codex route에서만 적용된다. */
+  /** 응답 텍스트의 상세도. OpenAI route에서만 적용된다. */
   verbosity?: "low" | "medium" | "high";
-  /** reasoning 모델의 추론 요약 출력 방식. OpenAI/codex route에서만 적용된다. */
+  /** reasoning 모델의 추론 요약 출력 방식. OpenAI route에서만 적용된다. */
   reasoningSummary?: "auto" | "concise" | "detailed" | "none";
-  /** OpenAI/codex service tier. OpenAI/codex route에서만 적용된다. */
+  /** OpenAI service tier. OpenAI route에서만 적용된다. */
   serviceTier?: string;
   /**
    * qgrid 서버의 provider 실행 제한(ms). Anthropic 경로에서는 Claude Code 프로세스 타이머로
@@ -42,7 +42,7 @@ export type QgridProviderOptions = {
    */
   fallbackModels?: string[];
   /**
-   * codex 내장 image_generation tool 을 켠다. OpenAI/codex route + non-stream 전용.
+   * OpenAI Responses image_generation tool 을 켠다. OpenAI route + non-stream 전용.
    * generateText 결과의 files 로 이미지를 받는다. streaming(streamText)에서는 거부된다.
    */
   imageGeneration?: boolean;
@@ -58,7 +58,7 @@ export type QgridProviderOptions = {
 };
 
 /**
- * codex thread 좌표
+ * OpenAI cache affinity 좌표(구 codex thread 좌표)
  * epoch=-1은 direct provider cache affinity 좌표다. workerId는 preferred token ID이고,
  * threadId는 opaque cache key다. epoch>=0은 이전 서버와의 wire compatibility를 위해 유지한다.
  */

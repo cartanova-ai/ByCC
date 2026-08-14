@@ -4,8 +4,13 @@ import { z } from "zod";
 import { MonitConsole } from "@/components/qgrid/MonitConsole";
 
 const monitSearchSchema = z.object({
-  // scaling 은 레벨이 아니라 뷰 모드 — autoscale/worker 증감 라인만 보여준다.
-  level: z.enum(["all", "scaling", "warn", "error"]).optional().default("all"),
+  // 직접 호출 모드 전환으로 scaling 뷰(워커 증감 관측)는 사라졌다.
+  // 북마크된 ?level=scaling 같은 옛 URL 은 all 로 조용히 강등한다.
+  level: z
+    .enum(["all", "warn", "error"])
+    .optional()
+    .default("all")
+    .catch(() => "all" as const),
 });
 export type MonitSearch = z.infer<typeof monitSearchSchema>;
 

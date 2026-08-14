@@ -201,7 +201,7 @@ export function extractPromptAndHistory(
       const extracted = extractUserContent(msg.content, includeImages);
       imageUrls.push(...extracted.imageUrls);
       droppedImageCount += extracted.droppedImageCount;
-      const content = codexContentItemsFromExtracted(extracted.parts);
+      const content = responsesContentItemsFromExtracted(extracted.parts);
       history.push({
         type: "message",
         role: "user",
@@ -319,7 +319,7 @@ function inputPartsFromExtracted(
   return parts.some((part) => part.type === "image") ? parts : undefined;
 }
 
-function codexContentItemsFromExtracted(
+function responsesContentItemsFromExtracted(
   parts: ExtractedPromptPart[],
 ): Array<{ type: "input_text"; text: string } | { type: "input_image"; image_url: string }> {
   const items: Array<

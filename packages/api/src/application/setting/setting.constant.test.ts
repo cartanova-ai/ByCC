@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.constant";
 
 describe("validateSettingValue", () => {
-  const intDef = findSettingDef("openai.maxWorkersPerToken")!;
-  const boolDef = findSettingDef("openai.autoscale")!;
-  const numDef = findSettingDef("openai.maxEstimatedRssGiB")!;
+  const intDef = findSettingDef("openai.permitsPerToken")!;
+  const boolDef = findSettingDef("slack.enabled")!;
+  const numDef = findSettingDef("slack.quietFromHour")!;
 
   it("정수 범위를 벗어나면 거부한다", () => {
     // 저장을 막지 않으면 런타임에서 조용히 기본값으로 떨어져 원인을 찾기 어렵다.
@@ -22,8 +22,9 @@ describe("validateSettingValue", () => {
     expect(validateSettingValue(intDef, "많이")).toMatchObject({ ok: false });
   });
 
-  it("실수 설정은 소수를 허용한다", () => {
-    expect(validateSettingValue(numDef, "16.5")).toMatchObject({ ok: true, value: "16.5" });
+  it("정수 설정은 소수를 거부하고 범위 내 정수만 받는다", () => {
+    expect(validateSettingValue(numDef, "16.5")).toMatchObject({ ok: false });
+    expect(validateSettingValue(numDef, "16")).toMatchObject({ ok: true, value: "16" });
   });
 
   it("boolean 은 true/false 만 받는다", () => {
@@ -89,45 +90,26 @@ describe("SETTING_DEFS", () => {
     expect(new Set(envKeys).size).toBe(envKeys.length);
   });
 
-  it("OpenAI 호환 키는 유지하면서 동시 요청 허용량으로 안내한다", () => {
-    const min = findSettingDef("openai.minWorkersPerToken")!;
-    const max = findSettingDef("openai.maxWorkersPerToken")!;
+  it("OpenAI 동시 요청은 permit 캐노니컬 키 하나만 노출한다", () => {
+    const permits = findSettingDef("openai.permitsPerToken")!;
+    expect(permits.envKey).toBe("QGRID_OPENAI_PERMITS_PER_TOKEN");
+    expect(permits.min).toBe(1);
+    expect(permits.max).toBe(20);
+    expect(permits.fallback).toBe("3");
 
-    expect(min.envKey).toBe("QGRID_OPENAI_MIN_WORKERS_PER_TOKEN");
-    expect(max.envKey).toBe("QGRID_OPENAI_MAX_WORKERS_PER_TOKEN");
-    expect(min.label).toContain("최소 동시 요청 허용량");
-    expect(max.label).toContain("최대 동시 요청 허용량");
-  });
-
-  it("직접 호출 모드에서 레거시 오토스케일과 메모리 설정을 비활성으로 안내한다", () => {
-    const legacyKeys = [
+    // 워커 시절 키는 화면에서 제거됐다 — resolveOpenAIPermitConfig 의 env 폴백으로만 남는다.
+    for (const key of [
       "openai.autoscale",
+      "openai.minWorkersPerToken",
+      "openai.maxWorkersPerToken",
       "openai.maxEstimatedRssGiB",
       "openai.minHostAvailableGiB",
-    ];
-
-    for (const key of legacyKeys) {
-      const def = findSettingDef(key)!;
-      expect(def.label).toContain("비활성");
-      expect(def.help).toContain("직접 호출 모드에서는 사용하지 않습니다");
+    ]) {
+      expect(findSettingDef(key)).toBeUndefined();
     }
   });
 
   it("정의되지 않은 키는 찾지 못한다", () => {
     expect(findSettingDef("nope.bad")).toBeUndefined();
-  });
-
-  it("64 GiB 호스트 기준 메모리 설정의 오입력 상한을 둔다", () => {
-    const rss = findSettingDef("openai.maxEstimatedRssGiB")!;
-    const available = findSettingDef("openai.minHostAvailableGiB")!;
-
-    expect(rss.max).toBe(32);
-    expect(available.max).toBe(64);
-    expect(validateSettingValue(rss, "32")).toMatchObject({ ok: true });
-    expect(validateSettingValue(rss, "32.5")).toMatchObject({ ok: false });
-    expect(validateSettingValue(available, "64")).toMatchObject({ ok: true });
-    expect(validateSettingValue(available, "64.5")).toMatchObject({ ok: false });
-    expect(rss.help).toContain("직접 호출 모드에서는 사용하지 않습니다");
-    expect(available.help).toContain("직접 호출 모드에서는 사용하지 않습니다");
   });
 });

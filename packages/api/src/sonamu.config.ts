@@ -216,8 +216,8 @@ export default defineConfig({
         startExpiredTokenReminder();
 
         const anthropicCount = QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0;
-        const openaiReadyPermits = QgridDispatcher.openaiDispatcher?.readyWorkerCount ?? 0;
-        const openaiTotalPermits = QgridDispatcher.openaiDispatcher?.workerCount ?? 0;
+        const openaiReadyPermits = QgridDispatcher.openaiDispatcher?.availablePermits ?? 0;
+        const openaiTotalPermits = QgridDispatcher.openaiDispatcher?.totalPermits ?? 0;
 
         log.info(`listening on http://${host}:${port}`);
         log.info(`anthropic: ${anthropicCount} tokens ready`);

@@ -314,6 +314,7 @@ Content-Type: application/json
     "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
+    "cacheAffinityKey": "CACHEAFFINITYKEY",
     "logger": false,
     "runContext": {
       "requestLogId": 0,
@@ -374,6 +375,7 @@ Content-Type: application/json
     "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
+    "cacheAffinityKey": "CACHEAFFINITYKEY",
     "logger": false,
     "runContext": {
       "requestLogId": 0,

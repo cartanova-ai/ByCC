@@ -278,7 +278,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     onDelta: (t: string) => void,
     opts?: { includePartialMessages?: boolean },
   ): Promise<GenerateResult> {
-    // 이미지 생성은 OpenAI(codex) 경로 전용. Anthropic 라우팅에 이미지 플래그가
+    // 이미지 생성은 OpenAI 경로 전용. Anthropic 라우팅에 이미지 플래그가
     // 도달하면 조용히 텍스트로 폴백하지 않고 명시적으로 거부한다.
     if (req.imageGeneration) {
       throw new Error("image generation is not supported on the Anthropic route");

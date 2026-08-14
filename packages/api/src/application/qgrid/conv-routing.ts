@@ -1,5 +1,5 @@
 /**
- * conv-routing — conversation(=codex thread) 재사용을 위한 thread 좌표 검증/구성.
+ * conv-routing — 대화 연속성(cache affinity) 좌표 검증/구성.
  *
  * 목표: thread(=conversation_id=prompt_cache_key)를 재사용해 OpenAI prompt caching 적중.
  * - 후속 turn: 기존 thread 에 delta(마지막 user / tool 결과)만 보냄 (history inject 없음).
@@ -21,7 +21,7 @@ export function systemHash(system?: string, modelNamespace?: string): string {
     .slice(0, 16);
 }
 
-// tool 결과를 다음 turn 의 input text 로 변환 (codex turn/start.input 은 UserInput 만 받음).
+// tool 결과를 다음 turn 의 input text 로 변환 (provider 입력은 UserInput 만 받음).
 function toolResultsToText(toolResults: QgridToolResultInput[]): string {
   const lines = toolResults.map((tr) => {
     const name = tr.toolName ? ` (${tr.toolName})` : "";
@@ -71,7 +71,7 @@ export function decideConvRouting(
   const coord = input.runContext?.threadCoord;
 
   // 재사용 자격: 좌표 존재 + system 동일. sessionKey 격리 + systemHash 로 대화 동일성이
-  // 보장되고, 공통 prefix 는 codex 가 prompt_cache_key 고정으로 알아서 캐시한다.
+  // 보장되고, 공통 prefix 는 백엔드가 prompt_cache_key 고정으로 알아서 캐시한다.
   const directCoordEligible =
     options.directOpenAI === true &&
     coord?.epoch === -1 &&

@@ -114,10 +114,10 @@ describe("MonitFrame.monitLogs", () => {
 
   it("piggybacks live vitals on every chunk, zeroed before dispatchers boot", async () => {
     QgridDispatcher.openaiDispatcher = {
-      workerCount: 25,
-      readyWorkerCount: 24,
+      totalPermits: 25,
+      availablePermits: 24,
       queueLength: 3,
-      workerCountsByToken: [
+      permitsByToken: [
         { name: "openai/haze", count: 12 },
         { name: "openai/nk", count: 13 },
       ],
@@ -129,10 +129,10 @@ describe("MonitFrame.monitLogs", () => {
     try {
       const chunk = await MonitFrame.monitLogs();
       expect(chunk.vitals).toEqual({
-        openaiWorkerCount: 25,
-        openaiReadyWorkerCount: 24,
+        openaiTotalPermits: 25,
+        openaiAvailablePermits: 24,
         openaiQueueLength: 3,
-        openaiWorkersByToken: [
+        openaiPermitsByToken: [
           { name: "openai/haze", count: 12 },
           { name: "openai/nk", count: 13 },
         ],
@@ -145,8 +145,8 @@ describe("MonitFrame.monitLogs", () => {
     }
 
     const empty = await MonitFrame.monitLogs();
-    expect(empty.vitals.openaiWorkerCount).toBe(0);
-    expect(empty.vitals.openaiWorkersByToken).toEqual([]);
+    expect(empty.vitals.openaiTotalPermits).toBe(0);
+    expect(empty.vitals.openaiPermitsByToken).toEqual([]);
     expect(empty.vitals.anthropicTokenCount).toBe(0);
     expect(empty.vitals.anthropicTokenNames).toEqual([]);
   });
@@ -165,9 +165,8 @@ describe("MonitFrame.monitInfo", () => {
     expect(info.serverUrl).toBe("http://0.0.0.0:45000");
     expect(info.dbHost).toBe("db.internal");
     expect(info.dbName).toBe("qgrid_dev");
-    expect(info.openai.minWorkersPerToken).toBeGreaterThan(0);
-    expect(info.openai.maxWorkersPerToken).toBe(info.openai.minWorkersPerToken);
-    expect(info.openai.autoscale).toBe(false);
+    expect(info.openai.permitsPerToken).toBeGreaterThan(0);
+    expect(["https", "websocket"]).toContain(info.openai.transport);
     // allowlist — 연결 객체의 password/user 등은 절대 실리지 않는다.
     expect(Object.keys(info).toSorted()).toEqual(["dbHost", "dbName", "openai", "serverUrl"]);
     expect(JSON.stringify(info)).not.toContain("password");

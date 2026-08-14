@@ -132,7 +132,7 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 `NO_OPENAI_WORKERS`:
 
 - The request path returns this immediately only when there is no active OpenAI token candidate. If active metadata exists but all permits are occupied, qgrid queues.
-- Check active OpenAI tokens, credential state, and `OpenAIDispatcher.workerCount` permit capacity.
+- Check active OpenAI tokens, credential state, and `OpenAIDispatcher.totalPermits` permit capacity.
 - If tokens were recently changed, inspect `TokenSubscriber` status and reconcile behavior.
 
 `NO_ACTIVE_WORKERS`:

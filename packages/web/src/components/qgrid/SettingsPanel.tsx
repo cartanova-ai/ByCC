@@ -12,7 +12,7 @@ import { type SettingItem, type SupervisorKind } from "@/services/setting/settin
 import { isSonamuError } from "@/services/sonamu.shared";
 
 const GROUP_LABELS: Record<string, string> = {
-  openai: "OpenAI 워커",
+  openai: "OpenAI 동시 요청",
   slack: "Slack 알림",
   slackConnection: "Slack 연결",
 };
