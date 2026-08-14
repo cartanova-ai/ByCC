@@ -5,11 +5,11 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 | Topic | OpenAI via Codex | Anthropic via Claude Code |
 |---|---|---|
 | Process lifetime | No child process; direct HTTPS/SSE request | Fresh `claude` process per request |
-| Worker pool | Token-level concurrent permits; existing capacity settings determine the permit count | No workers; in-memory token pool only |
+| Worker pool | None; in-memory token pool only | None; in-memory token pool only |
 | Worker id | Legacy coordinate field carries token id | `tokenId` |
 | Epoch | Legacy compatibility value; not a process generation | Always `0` |
-| Request concurrency | One permit per active request; 50-item, 60-second queue when all eligible permits are occupied | Fresh process per request |
-| Token selection | Smooth weighted RR over quota-eligible tokens with free permits; valid affinity may prefer its token | Smooth weighted RR over quota-eligible tokens per request |
+| Request concurrency | Uncapped; stateless HTTPS/WS request per call | Uncapped; fresh process per request |
+| Token selection | Smooth weighted RR over quota-eligible tokens; valid affinity may prefer its token | Smooth weighted RR over quota-eligible tokens per request |
 | Model routing | `openai/*`; qgrid strips provider prefix before provider call | `anthropic/*`; provider canonicalizes model and strips prefix/`[1m]` |
 | Prefix-less models | Fallback not implemented | Fallback not implemented |
 | Thread/session | No provider thread retained | Fresh Claude `--session-id` per request |
@@ -21,7 +21,7 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 | Structured output | Strict JSON schema is sent in the direct Responses request; schema changes can affect prefix cache | Schema delivered as prompt text appended to the system prompt (no `--json-schema`, no strictify); server strips fences; validation is the consumer's |
 | Usage accounting | Responses usage reports input including cached input | Native Anthropic categories are mutually exclusive; qgrid sums them into total input |
 | Cost source | qgrid model price fallback | Prefer Claude Code `total_cost_usd`, else qgrid price fallback |
-| Settings isolation | Per-token credentials and permit metadata in memory | Shared project cwd plus per-token `CLAUDE_CONFIG_DIR` |
+| Settings isolation | Per-token credentials in memory | Shared project cwd plus per-token `CLAUDE_CONFIG_DIR` |
 | Streaming close | `AbortSignal` cancels queue wait, retry delay, or `fetch` | Abort kills the fresh child process |
 | Image generation | Implemented as an opt-in direct Responses `image_generation` tool path; non-stream only | Explicitly unsupported |
 

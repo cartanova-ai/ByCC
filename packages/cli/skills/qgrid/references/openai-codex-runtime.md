@@ -4,7 +4,7 @@ Use this reference before changing OpenAI transport, concurrency, routing, promp
 
 ## Source files
 
-- Dispatcher and permits: `packages/api/src/utils/providers/openai/openai-dispatcher.ts`.
+- Dispatcher and token routing: `packages/api/src/utils/providers/openai/openai-dispatcher.ts`.
 - Direct client and transport interface: `openai-direct-client.ts`.
 - Request, identity headers, and normalized events: `openai-backend-protocol.ts`.
 - SSE decoding: `openai-sse.ts`.
@@ -28,21 +28,13 @@ Every request sends `store: false`, `stream: true`, full Responses-format histor
 
 `normalizeOpenAISSE` handles chunk boundaries and converts private backend events into qgrid's normalized text, output-item, image, usage, completion, and error events. The HTTPS transport may retry a failure only before any visible event. It refreshes credentials once on a pre-event 401. Once output is visible, an error is returned rather than replaying a request that may already have produced output.
 
-The caller's `AbortSignal` is passed through permit acquisition, retry delay, and `fetch`. Cancellation removes a queued item or aborts active transport work; permits are released in `finally`.
+The caller's `AbortSignal` is passed through token selection (including a pending quota lookup) and `fetch`. Cancellation aborts active transport work.
 
-## Token permits, routing, and queue
+## Token routing
 
-Concurrency is token-level. Each active OpenAI token owns a bounded number of permits from the existing OpenAI capacity settings; permits are counters, not child processes.
+Execution is stateless per request, the same model as the Anthropic runtime: select a token, send the request. There is no concurrency cap, no permit, and no queue — transport is a single HTTPS/WS request, so nothing local is scarce, and upstream limits surface as backend responses (429 etc.), which qgrid does not retry.
 
-New requests use smooth weighted round-robin among active, quota-eligible tokens with a free permit. Token weights set relative routing share. A preferred token from cache affinity is attempted first when it remains eligible; otherwise correctness falls back to normal weighted selection.
-
-When no eligible permit is free:
-
-- the queue accepts at most 50 items;
-- each item waits at most 60 seconds by default;
-- abort removes and rejects the item immediately;
-- releasing a permit drains queued work;
-- shutdown or loss of all active tokens rejects queued work.
+Selection picks among active, quota-eligible tokens: a cache-affinity-preferred token is used when eligible; otherwise smooth weighted round-robin (token weights set relative share; affinity hits do not advance weighted state). If every active token is over its quota threshold, the request fails with `QuotaThresholdExceededError`; with no active tokens it fails with `NO_OPENAI_WORKERS`.
 
 Quota lookup failures fail open. A successful lookup over a token's configured threshold excludes that token until the cached usage is refreshed.
 

@@ -216,14 +216,11 @@ export default defineConfig({
         startExpiredTokenReminder();
 
         const anthropicCount = QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0;
-        const openaiReadyPermits = QgridDispatcher.openaiDispatcher?.availablePermits ?? 0;
-        const openaiTotalPermits = QgridDispatcher.openaiDispatcher?.totalPermits ?? 0;
+        const openaiCount = QgridDispatcher.openaiDispatcher?.tokenCount ?? 0;
 
         log.info(`listening on http://${host}:${port}`);
         log.info(`anthropic: ${anthropicCount} tokens ready`);
-        log.info(
-          `openai: ${openaiReadyPermits}/${openaiTotalPermits} concurrent request permits ready`,
-        );
+        log.info(`openai: ${openaiCount} tokens ready`);
         log.info(
           `subscriber: ${started ? "LISTEN active" : "degraded"}${triggerReady ? "" : ", trigger failed"}`,
         );

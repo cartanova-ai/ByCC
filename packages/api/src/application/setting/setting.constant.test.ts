@@ -3,15 +3,14 @@ import { describe, expect, it } from "vitest";
 import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.constant";
 
 describe("validateSettingValue", () => {
-  const intDef = findSettingDef("openai.permitsPerToken")!;
+  const intDef = findSettingDef("slack.quietFromHour")!;
   const boolDef = findSettingDef("slack.enabled")!;
-  const numDef = findSettingDef("slack.quietFromHour")!;
 
   it("정수 범위를 벗어나면 거부한다", () => {
     // 저장을 막지 않으면 런타임에서 조용히 기본값으로 떨어져 원인을 찾기 어렵다.
-    expect(validateSettingValue(intDef, "21")).toMatchObject({ ok: false });
-    expect(validateSettingValue(intDef, "0")).toMatchObject({ ok: false });
-    expect(validateSettingValue(intDef, "20")).toMatchObject({ ok: true, value: "20" });
+    expect(validateSettingValue(intDef, "24")).toMatchObject({ ok: false });
+    expect(validateSettingValue(intDef, "-1")).toMatchObject({ ok: false });
+    expect(validateSettingValue(intDef, "23")).toMatchObject({ ok: true, value: "23" });
   });
 
   it("정수 자리에 소수를 넣으면 거부한다", () => {
@@ -20,11 +19,6 @@ describe("validateSettingValue", () => {
 
   it("숫자가 아닌 값을 거부한다", () => {
     expect(validateSettingValue(intDef, "많이")).toMatchObject({ ok: false });
-  });
-
-  it("정수 설정은 소수를 거부하고 범위 내 정수만 받는다", () => {
-    expect(validateSettingValue(numDef, "16.5")).toMatchObject({ ok: false });
-    expect(validateSettingValue(numDef, "16")).toMatchObject({ ok: true, value: "16" });
   });
 
   it("boolean 은 true/false 만 받는다", () => {
@@ -90,15 +84,12 @@ describe("SETTING_DEFS", () => {
     expect(new Set(envKeys).size).toBe(envKeys.length);
   });
 
-  it("OpenAI 동시 요청은 permit 캐노니컬 키 하나만 노출한다", () => {
-    const permits = findSettingDef("openai.permitsPerToken")!;
-    expect(permits.envKey).toBe("QGRID_OPENAI_PERMITS_PER_TOKEN");
-    expect(permits.min).toBe(1);
-    expect(permits.max).toBe(20);
-    expect(permits.fallback).toBe("3");
-
-    // 워커 시절 키는 화면에서 제거됐다 — resolveOpenAIPermitConfig 의 env 폴백으로만 남는다.
+  it("OpenAI 동시성 설정 키는 더 이상 존재하지 않는다", () => {
+    // direct 전환으로 요청은 Anthropic 과 동일하게 상한 없이 나간다 — permit/워커
+    // 시절의 어떤 키도 화면에 노출하지 않는다. 전송 방식(QGRID_OPENAI_TRANSPORT)은
+    // env 전용이라 설정 화면 대상이 아니다.
     for (const key of [
+      "openai.permitsPerToken",
       "openai.autoscale",
       "openai.minWorkersPerToken",
       "openai.maxWorkersPerToken",
@@ -107,6 +98,7 @@ describe("SETTING_DEFS", () => {
     ]) {
       expect(findSettingDef(key)).toBeUndefined();
     }
+    expect(SETTING_DEFS.every((d) => !d.key.startsWith("openai."))).toBe(true);
   });
 
   it("정의되지 않은 키는 찾지 못한다", () => {

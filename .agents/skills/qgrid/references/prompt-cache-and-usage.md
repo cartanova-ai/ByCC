@@ -33,7 +33,7 @@ A cache hit can occur when both the opaque affinity key and serialized prefix st
 
 Affinity is a hint, not a cache-hit guarantee. The direct endpoint is a private ChatGPT backend and can change without notice. Mocked tests verify qgrid's key derivation and request mapping, not live provider cache behavior.
 
-New requests use smooth weighted routing across quota-eligible tokens with available permits. A compatible coordinate may prefer its prior token, but lack of that permit falls back to eligible routing while preserving the same opaque affinity key and full history.
+New requests use smooth weighted routing across quota-eligible tokens. A compatible coordinate prefers its prior token whenever that token stays eligible, preserving the same opaque affinity key and full history.
 
 ## Anthropic cache behavior
 

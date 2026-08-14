@@ -64,7 +64,7 @@ Choose by affected area:
 | token weight migration/trigger split | `packages/api/src/application/qgrid/token-weight-migration.test.ts`, `token-trigger-setup.test.ts` |
 | boot order and startup migrations | `packages/api/src/server-bootstrap.test.ts`, `startup-migrations.test.ts` |
 | request log queries/legacy normalization | `packages/api/src/application/request-log/request-log.model.test.ts` |
-| OpenAI dispatcher permits/routing/queue/quota | `packages/api/src/utils/providers/openai/openai-dispatcher.test.ts` |
+| OpenAI dispatcher routing/quota | `packages/api/src/utils/providers/openai/openai-dispatcher.test.ts` |
 | OpenAI protocol, direct HTTPS, and SSE | `packages/api/src/utils/providers/openai/openai-backend-protocol.test.ts`, `openai-direct-client.test.ts`, `openai-sse.test.ts` |
 | OpenAI direct PKCE OAuth | `packages/api/src/utils/providers/openai/openai-oauth.test.ts` |
 | OpenAI quota parser | `packages/api/src/utils/providers/openai/openai-quota.test.ts` |
@@ -131,8 +131,8 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 `NO_OPENAI_WORKERS`:
 
-- The request path returns this immediately only when there is no active OpenAI token candidate. If active metadata exists but all permits are occupied, qgrid queues.
-- Check active OpenAI tokens, credential state, and `OpenAIDispatcher.totalPermits` permit capacity.
+- The request path returns this only when there is no active OpenAI token candidate; there is no queue and no busy state.
+- Check active OpenAI tokens and credential state (`OpenAIDispatcher.tokenCount`).
 - If tokens were recently changed, inspect `TokenSubscriber` status and reconcile behavior.
 
 `NO_ACTIVE_WORKERS`:
@@ -142,8 +142,7 @@ Other scripts under `scripts/smoke-test-*` and `scripts/debug-*` are ad hoc prob
 
 `SERVER_BUSY`:
 
-- OpenAI permit queue is full or a queued request timed out.
-- Check the legacy-named min/max capacity settings, occupied permits, long-running requests, and queue pressure.
+- Removed with the permit/queue layer. Current builds never emit this error; seeing it means an old server build.
 
 `QuotaThresholdExceededError` or `quota_threshold gate: all_exceeded`:
 

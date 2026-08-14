@@ -17,15 +17,16 @@ import {
   type OpenAIResponsesOptions,
 } from "./openai-backend-protocol";
 import { OpenAIDirectClient, type OpenAIDirectClientOptions } from "./openai-direct-client";
-import { type OpenAIPermitConfig, resolveOpenAIPermitConfig } from "./openai-permit-config";
 import { readOpenAIQuotaUsage, type OpenAIRateLimitsWithMeta } from "./openai-quota";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
+import {
+  type OpenAITransportConfig,
+  resolveOpenAITransportConfig,
+} from "./openai-transport-config";
 
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
-const QUEUE_TIMEOUT_MS = 60_000;
-const MAX_QUEUE_SIZE = 50;
-// 교체된 codex worker 가 강제하던 watchdog. 호출자가 timeoutMs 를 생략해도 permit 이
-// 영원히 붙잡히지 않도록 direct transport 도 유한한 기본 상한을 유지한다.
+// 교체된 codex worker 가 강제하던 watchdog. 호출자가 timeoutMs 를 생략해도 요청이
+// 영원히 매달리지 않도록 direct transport 도 유한한 기본 상한을 유지한다.
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
 export type ImageFailureKind = "gate" | "not_called" | "incomplete";
@@ -51,20 +52,12 @@ type TokenMetadata = {
   quotaThreshold?: number | null;
   weight: number;
   active: boolean;
-  capacity: number;
-  inUse: number;
+  // 표시용 카운터 — 동시성 상한이 아니다. Anthropic 과 동일하게 요청은 제한 없이 나간다.
+  inFlight: number;
   generation: number;
 };
 
-type Permit = { tokenId: number; metadata: TokenMetadata };
-type QueueItem = {
-  preferredTokenId?: number;
-  signal?: AbortSignal;
-  resolve: (permit: Permit) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-  abortCleanup?: () => void;
-};
+type TokenSelection = { tokenId: number; metadata: TokenMetadata };
 
 export type OpenAIDirectClientFactory = (
   options: OpenAIDirectClientOptions,
@@ -81,7 +74,6 @@ type ClientEntry = {
 export interface OpenAIDispatcherDependencies {
   clientFactory?: OpenAIDirectClientFactory;
   fetch?: typeof fetch;
-  queueTimeoutMs?: number;
 }
 
 function abortError(signal?: AbortSignal): Error {
@@ -146,10 +138,17 @@ function requestOptions(req: GenerateRequest): OpenAIResponsesOptions {
   };
 }
 
+/**
+ * Direct OpenAI dispatcher — Anthropic 과 동일한 stateless 실행 모델.
+ *
+ * 요청 = 토큰 선택(quota gate + weighted round-robin + cache affinity 선호) → HTTPS/WS
+ * 전송. permit/큐 같은 동시성 상한은 두지 않는다: 전송은 fetch 한 번이라 로컬 자원이
+ * 희소하지 않고, 상류 제한은 백엔드의 응답(429 등)이 진실이다. worker pool 시절의
+ * 큐 의미론(SERVER_BUSY, 큐 타임아웃)은 이 전환으로 제거됐다.
+ */
 export class OpenAIDispatcher implements ProviderDispatcher {
   readonly tokenMetadata = new Map<number, TokenMetadata>();
-  readonly queue: QueueItem[] = [];
-  readonly permitConfig: OpenAIPermitConfig;
+  readonly transportConfig: OpenAITransportConfig;
   readonly rateLimitsCache = new Map<number, OpenAIRateLimitsWithMeta & { generation: number }>();
   private readonly clients = new Map<number, ClientEntry>();
   private readonly retiredClients = new Set<ClientEntry>();
@@ -158,21 +157,16 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   private readonly selector = new SmoothWeightedRoundRobin();
   private readonly clientFactory: OpenAIDirectClientFactory;
   private readonly fetchImpl: typeof fetch;
-  private readonly queueTimeoutMs: number;
   private readonly quotaBlocked = new Set<number>();
-  private draining = false;
-  private drainAgain = false;
 
   constructor(
-    permitConfig: OpenAIPermitConfig = resolveOpenAIPermitConfig(),
-    _legacyHostAvailable?: () => number,
+    transportConfig: OpenAITransportConfig = resolveOpenAITransportConfig(),
     dependencies: OpenAIDispatcherDependencies = {},
   ) {
-    this.permitConfig = permitConfig;
+    this.transportConfig = transportConfig;
     this.clientFactory =
       dependencies.clientFactory ?? ((options) => new OpenAIDirectClient(options));
     this.fetchImpl = dependencies.fetch ?? fetch;
-    this.queueTimeoutMs = dependencies.queueTimeoutMs ?? QUEUE_TIMEOUT_MS;
   }
 
   async start(): Promise<void> {
@@ -188,13 +182,10 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         row.active,
       );
     }
-    logger.info(
-      `started direct OpenAI runtime with ${this.tokenMetadata.size} tokens and ${this.totalPermits} permits`,
-    );
+    logger.info(`started direct OpenAI runtime with ${this.tokenMetadata.size} tokens`);
   }
 
   async stop(): Promise<void> {
-    this.rejectAllQueued("DISPATCHER_SHUTDOWN");
     for (const { client } of this.clients.values()) client.close?.();
     this.clients.clear();
     for (const entry of this.retiredClients) entry.client.close?.();
@@ -213,7 +204,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     weight = 1,
   ): Promise<void> {
     this.setToken(id, name, credentials, quotaThreshold, weight, true);
-    this.requestDrain();
   }
 
   async onTokenUpdated(
@@ -225,7 +215,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   ): Promise<void> {
     const old = this.tokenMetadata.get(id);
     this.setToken(id, name, credentials, quotaThreshold, weight, old?.active ?? true);
-    this.requestDrain();
   }
 
   async onTokenRemoved(id: number): Promise<void> {
@@ -234,23 +223,18 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.selector.removeToken(id);
     this.invalidateRateLimitsCache(id);
     this.quotaBlocked.delete(id);
-    if (![...this.tokenMetadata.values()].some((t) => t.active))
-      this.rejectAllQueued("NO_OPENAI_WORKERS");
   }
 
   onTokenDeactivated(id: number): void {
     const token = this.tokenMetadata.get(id);
     if (token) token.active = false;
     this.selector.resetScores();
-    if (![...this.tokenMetadata.values()].some((t) => t.active))
-      this.rejectAllQueued("NO_ACTIVE_WORKERS");
   }
 
   onTokenActivated(id: number): void {
     const token = this.tokenMetadata.get(id);
     if (token) token.active = true;
     this.selector.resetScores();
-    this.requestDrain();
   }
 
   async replaceTokens(
@@ -270,13 +254,14 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     const signal = activeSignal(req.abortSignal, req.timeoutMs);
-    if (signal?.aborted) throw abortError(signal);
-    const permit = await this.acquire(req.preferredTokenId, signal);
+    if (signal.aborted) throw abortError(signal);
+    const selection = await this.selectToken(req.preferredTokenId, signal);
+    selection.metadata.inFlight++;
     try {
-      if (signal?.aborted) throw abortError(signal);
-      return await this.runDirect(permit, { ...req, abortSignal: signal });
+      if (signal.aborted) throw abortError(signal);
+      return await this.runDirect(selection, { ...req, abortSignal: signal });
     } finally {
-      this.release(permit);
+      selection.metadata.inFlight = Math.max(0, selection.metadata.inFlight - 1);
     }
   }
 
@@ -287,22 +272,23 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         "image generation is not supported on the streaming path",
       );
     const signal = activeSignal(req.abortSignal, req.timeoutMs);
-    if (signal?.aborted) throw abortError(signal);
-    const permit = await this.acquire(req.preferredTokenId, signal);
+    if (signal.aborted) throw abortError(signal);
+    const selection = await this.selectToken(req.preferredTokenId, signal);
+    selection.metadata.inFlight++;
     try {
-      if (signal?.aborted) throw abortError(signal);
-      const result = await this.runDirect(permit, { ...req, abortSignal: signal }, cb.onDelta);
+      if (signal.aborted) throw abortError(signal);
+      const result = await this.runDirect(selection, { ...req, abortSignal: signal }, cb.onDelta);
       cb.onComplete(result);
     } catch (error) {
       cb.onError(error as Error);
       throw error;
     } finally {
-      this.release(permit);
+      selection.metadata.inFlight = Math.max(0, selection.metadata.inFlight - 1);
     }
   }
 
   private async runDirect(
-    permit: Permit,
+    selection: TokenSelection,
     req: GenerateRequest,
     onDelta?: (text: string) => void,
   ): Promise<GenerateResult> {
@@ -319,8 +305,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     const images: GeneratedImage[] = [];
     let imageAttempted = false;
     let servingModel = req.model ?? "";
-    const metadata = permit.metadata;
-    const clientEntry = this.acquireClient(permit);
+    const metadata = selection.metadata;
+    const clientEntry = this.acquireClient(selection);
     try {
       for await (const event of clientEntry.client.responses(
         requestOptions(req),
@@ -370,17 +356,17 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       durationMs: Date.now() - startedAt,
       ttftMs: firstDeltaAt === undefined ? null : firstDeltaAt - startedAt,
       model: servingModel,
-      threadCoord: { workerId: permit.tokenId, threadId: req.promptCacheKey ?? "", epoch: -1 },
+      threadCoord: { workerId: selection.tokenId, threadId: req.promptCacheKey ?? "", epoch: -1 },
       ...(images.length ? { images } : {}),
     };
   }
 
   /** 세대가 바뀐 client 는 사용 중인 요청이 끝난 뒤에 닫는다. */
-  private acquireClient(permit: Permit): ClientEntry {
-    const metadata = permit.metadata;
-    let entry = this.clients.get(permit.tokenId);
+  private acquireClient(selection: TokenSelection): ClientEntry {
+    const metadata = selection.metadata;
+    let entry = this.clients.get(selection.tokenId);
     if (entry && entry.generation !== metadata.generation) {
-      this.retireClient(permit.tokenId);
+      this.retireClient(selection.tokenId);
       entry = undefined;
     }
     if (!entry) {
@@ -390,11 +376,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
             accessToken: metadata.credentials.accessToken,
             accountId: metadata.credentials.accountId,
           },
-          transportKind: this.permitConfig.transport,
+          transportKind: this.transportConfig.transport,
           fetch: this.fetchImpl,
           refreshCredentials: async () => {
-            const refreshed = await handleChatgptAuthTokensRefresh(permit.tokenId);
-            const current = this.tokenMetadata.get(permit.tokenId);
+            const refreshed = await handleChatgptAuthTokensRefresh(selection.tokenId);
+            const current = this.tokenMetadata.get(selection.tokenId);
             if (current)
               current.credentials = {
                 ...current.credentials,
@@ -404,10 +390,10 @@ export class OpenAIDispatcher implements ProviderDispatcher {
             return { accessToken: refreshed.accessToken, accountId: refreshed.chatgptAccountId };
           },
         },
-        permit.tokenId,
+        selection.tokenId,
       );
       entry = { generation: metadata.generation, client, inFlight: 0, retired: false };
-      this.clients.set(permit.tokenId, entry);
+      this.clients.set(selection.tokenId, entry);
     }
     entry.inFlight++;
     return entry;
@@ -431,161 +417,41 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     else this.retiredClients.add(entry);
   }
 
-  private async acquire(preferredTokenId?: number, signal?: AbortSignal): Promise<Permit> {
-    if (signal?.aborted) throw abortError(signal);
-    const permit = await this.selectPermit(preferredTokenId, signal);
-    if (permit) {
-      if (signal?.aborted) {
-        this.release(permit);
-        throw abortError(signal);
-      }
-      return permit;
-    }
-    if (signal?.aborted) throw abortError(signal);
-    if (this.queue.length >= MAX_QUEUE_SIZE) throw new Error("SERVER_BUSY");
-    if (![...this.tokenMetadata.values()].some((t) => t.active))
-      throw new Error("NO_OPENAI_WORKERS");
-    return new Promise<Permit>((resolve, reject) => {
-      const item: QueueItem = {
-        preferredTokenId,
-        signal,
-        resolve: (value) => {
-          clearTimeout(item.timer);
-          item.abortCleanup?.();
-          resolve(value);
-        },
-        reject: (error) => {
-          clearTimeout(item.timer);
-          item.abortCleanup?.();
-          reject(error);
-        },
-        timer: setTimeout(() => {
-          this.removeQueueItem(item);
-          reject(new Error("SERVER_BUSY"));
-        }, this.queueTimeoutMs),
-      };
-      if (signal) {
-        const abort = () => {
-          this.removeQueueItem(item);
-          reject(abortError(signal));
-        };
-        signal.addEventListener("abort", abort, { once: true });
-        item.abortCleanup = () => signal.removeEventListener("abort", abort);
-        if (signal.aborted) {
-          abort();
-          return;
-        }
-      }
-      this.queue.push(item);
-      this.requestDrain();
-    });
-  }
-
-  private async selectPermit(
+  /**
+   * 토큰 선택 — quota gate 를 통과한 active 토큰 중에서 고른다. cache affinity 선호
+   * 토큰이 eligible 하면 그쪽으로, 아니면 smooth weighted round-robin. 동시성 상한이
+   * 없으므로 "빈 자리" 개념도 없다 — 선택 즉시 실행이다.
+   */
+  private async selectToken(
     preferredTokenId?: number,
     signal?: AbortSignal,
-  ): Promise<Permit | null> {
+  ): Promise<TokenSelection> {
     const eligible = new Set<number>();
     const over: Array<{ name: string; threshold: number }> = [];
-    // permit 이 없어 지금 못 고르는 토큰도 quota 판정에는 포함한다. 바쁜 eligible 토큰을
-    // 빼고 판단하면 "전부 threshold 초과"로 오인해 큐잉해야 할 요청을 거절하게 된다.
-    let quotaEligibleExists = false;
     for (const [id, token] of this.tokenMetadata) {
       if (!token.active) continue;
-      if (await this.isQuotaEligible(id, token, signal)) {
-        quotaEligibleExists = true;
-        if (token.inUse < token.capacity) eligible.add(id);
-      } else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
+      if (await this.isQuotaEligible(id, token, signal)) eligible.add(id);
+      else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
         over.push({ name: token.name, threshold: token.quotaThreshold });
     }
-    const activeAvailable = [...this.tokenMetadata.values()].some(
-      (t) => t.active && t.inUse < t.capacity,
-    );
-    if (activeAvailable && !quotaEligibleExists && over.length) {
-      logger.warn("quota_threshold gate: all_exceeded", {
-        provider: "openai",
-        overThresholdTokens: over,
-      });
-      throw new QuotaThresholdExceededError(quotaMessage(over));
+    if (eligible.size === 0) {
+      if (over.length) {
+        logger.warn("quota_threshold gate: all_exceeded", {
+          provider: "openai",
+          overThresholdTokens: over,
+        });
+        throw new QuotaThresholdExceededError(quotaMessage(over));
+      }
+      throw new Error("NO_OPENAI_WORKERS");
     }
     // Affinity does not mutate smooth weighted state.
     const selected =
       preferredTokenId !== undefined && eligible.has(preferredTokenId)
         ? preferredTokenId
         : this.selector.select(eligible);
-    if (selected === null) return null;
-    const metadata = this.tokenMetadata.get(selected);
-    if (!metadata || metadata.inUse >= metadata.capacity) return null;
-    metadata.inUse++;
+    const metadata = selected === null ? undefined : this.tokenMetadata.get(selected);
+    if (selected === null || !metadata) throw new Error("NO_OPENAI_WORKERS");
     return { tokenId: selected, metadata };
-  }
-
-  private release(permit: Permit): void {
-    permit.metadata.inUse = Math.max(0, permit.metadata.inUse - 1);
-    this.requestDrain();
-  }
-
-  private requestDrain(): void {
-    if (this.draining) {
-      this.drainAgain = true;
-      return;
-    }
-    void this.drainQueue().catch((error) =>
-      logger.warn(`openai queue drain failed: ${(error as Error).message}`),
-    );
-  }
-
-  private async drainQueue(): Promise<void> {
-    if (this.draining) {
-      this.drainAgain = true;
-      return;
-    }
-    this.draining = true;
-    try {
-      do {
-        this.drainAgain = false;
-        while (this.queue.length) {
-          const item = this.queue[0]!;
-          if (item.signal?.aborted) {
-            this.queue.shift();
-            item.reject(abortError(item.signal));
-            continue;
-          }
-          let permit: Permit | null;
-          try {
-            permit = await this.selectPermit(item.preferredTokenId, item.signal);
-          } catch (error) {
-            // await 중에 timeout/abort 로 이미 제거·거절된 항목이면 다음 head 로 넘어간다.
-            if (this.queue[0] !== item) continue;
-            this.queue.shift();
-            item.reject(error as Error);
-            continue;
-          }
-          if (!permit) break;
-          // head 가 바뀌었다면 이 permit 의 주인이 사라진 것이므로 반드시 반납한다.
-          if (this.queue[0] !== item) {
-            this.release(permit);
-            continue;
-          }
-          this.queue.shift();
-          item.resolve(permit);
-        }
-      } while (this.drainAgain);
-    } finally {
-      this.draining = false;
-    }
-  }
-
-  private removeQueueItem(item: QueueItem): void {
-    clearTimeout(item.timer);
-    item.abortCleanup?.();
-    const index = this.queue.indexOf(item);
-    if (index >= 0) this.queue.splice(index, 1);
-  }
-
-  private rejectAllQueued(reason: string): void {
-    const items = this.queue.splice(0);
-    for (const item of items) item.reject(new Error(reason));
   }
 
   private setToken(
@@ -604,7 +470,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         quotaThreshold,
         weight,
         active,
-        capacity: this.permitConfig.permitsPerToken,
         generation: old.generation + 1,
       });
     } else {
@@ -614,8 +479,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         quotaThreshold,
         weight,
         active,
-        capacity: this.permitConfig.permitsPerToken,
-        inUse: 0,
+        inFlight: 0,
         generation: 1,
       });
     }
@@ -686,22 +550,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     this.rateLimitsCache.delete(id);
   }
 
-  get totalPermits(): number {
-    return [...this.tokenMetadata.values()].reduce((sum, t) => sum + t.capacity, 0);
+  get tokenCount(): number {
+    return [...this.tokenMetadata.values()].filter((t) => t.active).length;
   }
-  get availablePermits(): number {
-    return [...this.tokenMetadata.values()].reduce(
-      (sum, t) => sum + (t.active ? t.capacity - t.inUse : 0),
-      0,
-    );
-  }
-  get queueLength(): number {
-    return this.queue.length;
-  }
-  get permitsByToken(): Array<{ name: string; inUse: number; capacity: number }> {
-    return [...this.tokenMetadata.values()]
-      .map((t) => ({ name: t.name, inUse: t.inUse, capacity: t.capacity }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
+  get inFlight(): number {
+    return [...this.tokenMetadata.values()].reduce((sum, t) => sum + t.inFlight, 0);
   }
 
   /**

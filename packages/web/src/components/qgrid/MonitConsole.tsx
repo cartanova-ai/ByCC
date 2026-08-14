@@ -182,12 +182,10 @@ export function MonitConsole({
   const stats = statsQuery.data;
 
   // 스파크라인 표본 — 렌더는 매 폴마다 query.data 변경으로 일어나므로 ref 로 충분하다.
-  const queueSparkRef = useRef<number[]>([]);
-  const permitSparkRef = useRef<number[]>([]);
+  const inFlightSparkRef = useRef<number[]>([]);
   useEffect(() => {
     if (!vitals) return;
-    pushSample(queueSparkRef.current, vitals.openaiQueueLength);
-    pushSample(permitSparkRef.current, vitals.openaiTotalPermits - vitals.openaiAvailablePermits);
+    pushSample(inFlightSparkRef.current, vitals.openaiInFlight);
   }, [vitals]);
 
   useEffect(() => {
@@ -328,33 +326,15 @@ export function MonitConsole({
             </span>
           </span>
           <span>
-            permits/token{" "}
-            <span className="font-mono text-sand-800">{info.openai.permitsPerToken}</span>{" "}
-            {info.openai.transport}
+            openai transport{" "}
+            <span className="font-mono text-sand-800">{info.openai.transport}</span>
           </span>
           {vitals && (
             <>
               <span className="inline-flex items-center gap-1.5">
-                openai in-use{" "}
-                <span className="font-mono text-sand-800">
-                  {vitals.openaiTotalPermits - vitals.openaiAvailablePermits}/
-                  {vitals.openaiTotalPermits}
-                </span>
-                <Sparkline values={permitSparkRef.current} />
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                queue{" "}
-                <span
-                  className={clsx(
-                    "font-mono",
-                    vitals.openaiQueueLength > 0
-                      ? "font-semibold text-caution-500"
-                      : "text-sand-800",
-                  )}
-                >
-                  {vitals.openaiQueueLength}
-                </span>
-                <Sparkline values={queueSparkRef.current} />
+                openai in-flight{" "}
+                <span className="font-mono text-sand-800">{vitals.openaiInFlight}</span>
+                <Sparkline values={inFlightSparkRef.current} />
               </span>
               {vitals.anthropicTokenCount > 0 && (
                 <span>
@@ -390,17 +370,16 @@ export function MonitConsole({
       )}
 
       {vitals &&
-        (vitals.openaiPermitsByToken.length > 0 || vitals.anthropicTokenNames.length > 0) && (
+        (vitals.openaiQuotaByToken.length > 0 || vitals.anthropicTokenNames.length > 0) && (
           <div className="space-y-1.5 border-b border-sand-100 px-4 py-2.5 sm:px-5">
-            {vitals.openaiPermitsByToken.length > 0 && (
+            {vitals.openaiQuotaByToken.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="w-[4.5rem] shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-sand-400">
                   openai
                 </span>
-                {vitals.openaiPermitsByToken.map((token) => {
-                  const quota = vitals.openaiQuotaByToken.find((q) => q.name === token.name);
+                {vitals.openaiQuotaByToken.map((quota) => {
                   const quotaTitle =
-                    quota?.usedPercent === null || quota === undefined
+                    quota.usedPercent === null
                       ? "quota not sampled yet"
                       : `quota ${Math.round(quota.usedPercent)}%${
                           quota.threshold !== null ? ` / threshold ${quota.threshold}%` : ""
@@ -412,29 +391,19 @@ export function MonitConsole({
                         }`;
                   return (
                     <span
-                      key={token.name}
-                      title={`${token.name}: ${token.inUse}/${token.capacity} permits in use · ${quotaTitle}`}
+                      key={quota.name}
+                      title={`${quota.name} · ${quotaTitle}`}
                       className="inline-flex items-center gap-1.5 rounded-md border border-sand-200 bg-white px-2 py-1"
                     >
                       <span className="font-mono text-[11px] text-sand-600">
-                        {token.name.split("/").pop()}
+                        {quota.name.split("/").pop()}
                       </span>
-                      <span
-                        className={clsx(
-                          "font-mono text-[13px] font-semibold tracking-[-0.02em]",
-                          token.inUse >= token.capacity ? "text-caution-500" : "text-sand-900",
-                        )}
-                      >
-                        {token.inUse}/{token.capacity}
-                      </span>
-                      {quota && (
-                        <QuotaGauge
-                          usedPercent={quota.usedPercent}
-                          threshold={quota.threshold}
-                          blocked={quota.blocked}
-                        />
-                      )}
-                      {quota?.blocked && (
+                      <QuotaGauge
+                        usedPercent={quota.usedPercent}
+                        threshold={quota.threshold}
+                        blocked={quota.blocked}
+                      />
+                      {quota.blocked && (
                         <span className="rounded-full bg-caution-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-caution-500">
                           quota
                         </span>

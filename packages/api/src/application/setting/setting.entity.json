@@ -18,7 +18,7 @@
       "name": "key",
       "type": "string",
       "length": 100,
-      "desc": "설정 키 (예: openai.permitsPerToken)",
+      "desc": "설정 키 (예: slack.enabled)",
       "toFilter": true
     },
     {

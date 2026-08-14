@@ -35,7 +35,7 @@ Qgrid는 두 구독 기반 런타임 위에 AI SDK `LanguageModelV3` custom prov
   ```ts
   model: qgrid("openai/gpt-5.4-mini")  // 이것만 바꾸면 됨
   ```
-- **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. 토큰 단위 concurrent permit과 smooth weighted routing으로 요청을 분산. 토큰별 quota threshold로 사용률 초과 토큰은 라우팅에서 자동 제외.
+- **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. smooth weighted routing으로 요청을 토큰에 분산. 토큰별 quota threshold로 사용률 초과 토큰은 라우팅에서 자동 제외.
 - **Request Log 대시보드** — 매 요청의 토큰 사용량, 비용, 캐시 적중, TTFT, tool-call 내역, reasoning을 웹 UI에서 실시간 확인.
 - **이미지 생성** — 요청 단위로 codex `image_generation` tool을 켜고 표준 AI SDK 응답으로 PNG 파일 수신.
 - **OpenAI + Anthropic** — 양쪽 구독 토큰 모두 등록 가능. OAuth 원클릭 로그인.

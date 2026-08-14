@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { type GenerateRequest } from "../common/provider-dispatcher";
-import { type OpenAINormalizedEvent, type OpenAIResponsesOptions } from "./openai-backend-protocol";
+import {
+  type OpenAINormalizedEvent,
+  type OpenAIResponsesOptions,
+} from "./openai-backend-protocol";
 import { ImageGenerationError, OpenAIDispatcher } from "./openai-dispatcher";
-import { type OpenAIPermitConfig } from "./openai-permit-config";
+import { type OpenAITransportConfig } from "./openai-transport-config";
 
 const credentials = {
   accessToken: "access",
@@ -12,8 +15,8 @@ const credentials = {
   accountId: "acct",
 };
 
-function config(capacity = 1): OpenAIPermitConfig {
-  return { permitsPerToken: capacity, transport: "https" };
+function config(): OpenAITransportConfig {
+  return { transport: "https" };
 }
 
 function request(overrides: Partial<GenerateRequest> = {}): GenerateRequest {
@@ -26,25 +29,16 @@ function request(overrides: Partial<GenerateRequest> = {}): GenerateRequest {
 }
 
 function dispatcher(
-  run: (options: OpenAIResponsesOptions, signal?: AbortSignal) => AsyncIterable<OpenAINormalizedEvent>,
-  capacity = 1,
-  timeout = 60_000,
+  run: (
+    options: OpenAIResponsesOptions,
+    signal?: AbortSignal,
+  ) => AsyncIterable<OpenAINormalizedEvent>,
 ) {
-  return new OpenAIDispatcher(config(capacity), undefined, {
-    queueTimeoutMs: timeout,
-    clientFactory: () => ({ responses: run }),
-  });
+  return new OpenAIDispatcher(config(), { clientFactory: () => ({ responses: run }) });
 }
 
 async function* events(...values: OpenAINormalizedEvent[]) {
   yield* values;
-}
-
-function quotaResponse(usedPercent = 1): Response {
-  return new Response(JSON.stringify({ rate_limits: { primary_window: { used_percent: usedPercent } } }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
 }
 
 async function tickTimer(): Promise<void> {
@@ -53,14 +47,12 @@ async function tickTimer(): Promise<void> {
 
 describe("OpenAIDispatcher direct runtime", () => {
   it("passes the resolved transport to the injectable client factory", async () => {
-    const factory = vi.fn((_options: import("./openai-direct-client").OpenAIDirectClientOptions) => ({
-      responses: () => events({ type: "completed", responseId: "r" }),
-    }));
-    const d = new OpenAIDispatcher(
-      { permitsPerToken: 1, transport: "websocket" },
-      undefined,
-      { clientFactory: factory },
+    const factory = vi.fn(
+      (_options: import("./openai-direct-client").OpenAIDirectClientOptions) => ({
+        responses: () => events({ type: "completed", responseId: "r" }),
+      }),
     );
+    const d = new OpenAIDispatcher({ transport: "websocket" }, { clientFactory: factory });
     await d.onTokenAdded(1, "one", credentials);
     await d.generate(request());
     await d.generate(request());
@@ -77,21 +69,29 @@ describe("OpenAIDispatcher direct runtime", () => {
         {
           type: "completed",
           responseId: "r1",
-          usage: { inputTokens: 8, cachedInputTokens: 3, outputTokens: 2, reasoningTokens: 1, totalTokens: 10 },
+          usage: {
+            inputTokens: 8,
+            cachedInputTokens: 3,
+            outputTokens: 2,
+            reasoningTokens: 1,
+            totalTokens: 10,
+          },
         },
       );
     });
     await d.onTokenAdded(7, "primary", credentials, null, 1);
 
-    const result = await d.generate(request({
-      systemPrompt: "system",
-      effort: "high",
-      reasoningSummary: "none",
-      verbosity: "low",
-      serviceTier: "fast",
-      promptCacheKey: "cache-key",
-      outputSchema: { type: "object", additionalProperties: false },
-    }));
+    const result = await d.generate(
+      request({
+        systemPrompt: "system",
+        effort: "high",
+        reasoningSummary: "none",
+        verbosity: "low",
+        serviceTier: "fast",
+        promptCacheKey: "cache-key",
+        outputSchema: { type: "object", additionalProperties: false },
+      }),
+    );
 
     expect(mapped).toMatchObject({
       model: "gpt-test",
@@ -110,40 +110,64 @@ describe("OpenAIDispatcher direct runtime", () => {
     expect(result).toMatchObject({
       text: "hello",
       tokenName: "primary",
-      usage: { inputTokens: 8, cachedInputTokens: 3, outputTokens: 2, reasoningOutputTokens: 1, totalTokens: 10 },
+      usage: {
+        inputTokens: 8,
+        cachedInputTokens: 3,
+        outputTokens: 2,
+        reasoningOutputTokens: 1,
+        totalTokens: 10,
+      },
       threadCoord: { workerId: 7, threadId: "cache-key", epoch: -1 },
     });
   });
 
   it("streams deltas and reports completion", async () => {
-    const d = dispatcher(() => events(
-      { type: "text-delta", text: "a" },
-      { type: "text-delta", text: "b" },
-      { type: "completed", responseId: "r" },
-    ));
+    const d = dispatcher(() =>
+      events(
+        { type: "text-delta", text: "a" },
+        { type: "text-delta", text: "b" },
+        { type: "completed", responseId: "r" },
+      ),
+    );
     await d.onTokenAdded(1, "one", credentials);
     const deltas: string[] = [];
     const complete = vi.fn();
-    await d.generateStream(request(), { onDelta: (v) => deltas.push(v), onComplete: complete, onError: vi.fn() });
+    await d.generateStream(request(), {
+      onDelta: (v) => deltas.push(v),
+      onComplete: complete,
+      onError: vi.fn(),
+    });
     expect(deltas).toEqual(["a", "b"]);
     expect(complete).toHaveBeenCalledWith(expect.objectContaining({ text: "ab" }));
   });
 
   it("maps images and preserves image failure classifications", async () => {
-    const success = dispatcher(() => events(
-      { type: "image", id: "i", base64: "png", mimeType: "image/png" },
-      { type: "completed", responseId: "r" },
-    ));
+    const success = dispatcher(() =>
+      events(
+        { type: "image", id: "i", base64: "png", mimeType: "image/png" },
+        { type: "completed", responseId: "r" },
+      ),
+    );
     await success.onTokenAdded(1, "one", credentials);
-    await expect(success.generate(request({ imageGeneration: true }))).resolves.toMatchObject({ images: [{ data: "png" }] });
+    await expect(success.generate(request({ imageGeneration: true }))).resolves.toMatchObject({
+      images: [{ data: "png" }],
+    });
 
     const notCalled = dispatcher(() => events({ type: "completed", responseId: "r" }));
     await notCalled.onTokenAdded(1, "one", credentials);
-    await expect(notCalled.generate(request({ imageGeneration: true }))).rejects.toMatchObject({ kind: "not_called" });
-    await expect(notCalled.generateStream(request({ imageGeneration: true }), { onDelta: vi.fn(), onComplete: vi.fn(), onError: vi.fn() })).rejects.toEqual(expect.any(ImageGenerationError));
+    await expect(notCalled.generate(request({ imageGeneration: true }))).rejects.toMatchObject({
+      kind: "not_called",
+    });
+    await expect(
+      notCalled.generateStream(request({ imageGeneration: true }), {
+        onDelta: vi.fn(),
+        onComplete: vi.fn(),
+        onError: vi.fn(),
+      }),
+    ).rejects.toEqual(expect.any(ImageGenerationError));
   });
 
-  it("uses weighted permits, while preferred affinity does not advance weighted state", async () => {
+  it("uses weighted routing, while preferred affinity does not advance weighted state", async () => {
     const names: string[] = [];
     const d = dispatcher(() => events({ type: "completed", responseId: "r" }));
     await d.onTokenAdded(1, "one", credentials, null, 1);
@@ -154,43 +178,63 @@ describe("OpenAIDispatcher direct runtime", () => {
     expect((await d.generate(request())).tokenName).toBe("two");
   });
 
-  it("queues FIFO, reselects on release, and aborts queued and active HTTPS work", async () => {
+  it("runs concurrent requests without queueing and tracks in-flight counts", async () => {
     const releases: Array<() => void> = [];
+    const d = dispatcher(() => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise<void>((resolve) => releases.push(resolve));
+        yield { type: "completed", responseId: "r" } as const;
+      },
+    }));
+    await d.onTokenAdded(1, "one", credentials);
+
+    // 동시성 상한이 없다: 토큰 하나에 세 요청이 즉시 모두 시작된다.
+    const first = d.generate(request());
+    const second = d.generate(request());
+    const third = d.generate(request());
+    await vi.waitFor(() => expect(releases).toHaveLength(3));
+    expect(d.inFlight).toBe(3);
+
+    for (const release of releases.splice(0)) release();
+    await Promise.all([first, second, third]);
+    expect(d.inFlight).toBe(0);
+  });
+
+  it("aborts active transport work through the caller signal", async () => {
     const d = dispatcher((_options, signal) => ({
       async *[Symbol.asyncIterator]() {
-        await new Promise<void>((resolve, reject) => {
-          releases.push(resolve);
-          signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
         });
         yield { type: "completed", responseId: "r" } as const;
       },
     }));
     await d.onTokenAdded(1, "one", credentials);
-    const first = d.generate(request());
-    await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const queuedAbort = new AbortController();
-    const second = d.generate(request({ abortSignal: queuedAbort.signal }));
-    queuedAbort.abort();
-    await expect(second).rejects.toMatchObject({ name: "AbortError" });
-    const activeAbort = new AbortController();
-    const third = d.generate(request({ abortSignal: activeAbort.signal }));
-    releases.shift()?.();
-    await first;
-    await vi.waitFor(() => expect(releases).toHaveLength(1));
-    activeAbort.abort();
-    await expect(third).rejects.toMatchObject({ name: "AbortError" });
+    const controller = new AbortController();
+    const pending = d.generate(request({ abortSignal: controller.signal }));
+    await tickTimer();
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(d.inFlight).toBe(0);
   });
 
-  it("rechecks abort after delayed quota selection and does not start or leak a permit", async () => {
+  it("rechecks abort after delayed quota selection and does not start the request", async () => {
     let releaseQuota!: () => void;
     const started = vi.fn(() => events({ type: "completed", responseId: "r" }));
-    const d = new OpenAIDispatcher(config(), undefined, {
+    const d = new OpenAIDispatcher(config(), {
       clientFactory: () => ({ responses: started }),
       fetch: async () => {
         await new Promise<void>((resolve) => (releaseQuota = resolve));
-        return new Response(JSON.stringify({
-          rate_limits: { primary_window: { used_percent: 1 } },
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            rate_limits: { primary_window: { used_percent: 1 } },
+          }),
+          { status: 200 },
+        );
       },
     });
     await d.onTokenAdded(1, "one", credentials, 80);
@@ -204,7 +248,7 @@ describe("OpenAIDispatcher direct runtime", () => {
     await expect(d.generate(request())).resolves.toMatchObject({ tokenName: "one" });
   });
 
-  it("enforces timeout during an active response stream and releases the permit", async () => {
+  it("enforces timeout during an active response stream", async () => {
     let calls = 0;
     const d = dispatcher((_options, signal) => ({
       async *[Symbol.asyncIterator]() {
@@ -218,22 +262,13 @@ describe("OpenAIDispatcher direct runtime", () => {
       },
     }));
     await d.onTokenAdded(1, "one", credentials);
-    await expect(d.generate(request({ timeoutMs: 5 }))).rejects.toMatchObject({ name: "TimeoutError" });
+    await expect(d.generate(request({ timeoutMs: 5 }))).rejects.toMatchObject({
+      name: "TimeoutError",
+    });
     await expect(d.generate(request())).resolves.toMatchObject({ tokenName: "one" });
   });
 
-  it("times out queued admission and exposes permit compatibility stats without spawning", async () => {
-    const d = dispatcher(() => ({ async *[Symbol.asyncIterator]() { await new Promise(() => {}); } }), 2, 5);
-    await d.onTokenAdded(1, "one", credentials);
-    expect(d.totalPermits).toBe(2);
-    expect(d.availablePermits).toBe(2);
-    void d.generate(request());
-    void d.generate(request());
-    await expect(d.generate(request())).rejects.toThrow("SERVER_BUSY");
-    expect(d.permitsByToken).toEqual([{ name: "one", inUse: 2, capacity: 2 }]);
-  });
-
-  it("applies credential metadata updates without leaking an active permit", async () => {
+  it("applies credential metadata updates while requests are active", async () => {
     let release!: () => void;
     let call = 0;
     const d = dispatcher(() => ({
@@ -256,7 +291,7 @@ describe("OpenAIDispatcher direct runtime", () => {
     let release!: () => void;
     let call = 0;
     const close = vi.fn();
-    const d = new OpenAIDispatcher(config(2), undefined, {
+    const d = new OpenAIDispatcher(config(), {
       clientFactory: () => ({
         responses: () => ({
           async *[Symbol.asyncIterator]() {
@@ -284,7 +319,7 @@ describe("OpenAIDispatcher direct runtime", () => {
 
   it("cancels a hung quota lookup when the caller aborts", async () => {
     const started = vi.fn(() => events({ type: "completed", responseId: "r" }));
-    const d = new OpenAIDispatcher(config(), undefined, {
+    const d = new OpenAIDispatcher(config(), {
       clientFactory: () => ({ responses: started }),
       fetch: async (_input, init) =>
         new Promise<Response>((_resolve, reject) => {
@@ -302,94 +337,35 @@ describe("OpenAIDispatcher direct runtime", () => {
     expect(started).not.toHaveBeenCalled();
   });
 
-  it("keeps the next queued request when the queue head is aborted during quota selection", async () => {
-    const releases: Array<() => void> = [];
-    let releaseQuota: (() => void) | undefined;
-    let quotaCalls = 0;
-    const d = new OpenAIDispatcher(config(), undefined, {
-      clientFactory: () => ({
-        responses: () => ({
-          async *[Symbol.asyncIterator]() {
-            await new Promise<void>((resolve) => releases.push(resolve));
-            yield { type: "completed", responseId: "r" } as const;
-          },
-        }),
-      }),
-      fetch: async () => {
-        quotaCalls++;
-        // 두 번째 lookup(=head 를 위한 drain)만 붙잡아 abort 와 경합시킨다.
-        if (quotaCalls === 2) await new Promise<void>((resolve) => (releaseQuota = resolve));
-        return quotaResponse();
-      },
+  it("routes past an over-threshold token instead of treating it as capacity", async () => {
+    const names: string[] = [];
+    const d = new OpenAIDispatcher(config(), {
+      clientFactory: () => ({ responses: () => events({ type: "completed", responseId: "r" }) }),
+      fetch: async () =>
+        new Response(
+          JSON.stringify({ rate_limits: { primary_window: { used_percent: 90 } } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
     });
-    await d.onTokenAdded(1, "one", credentials, 80);
-
-    const active = d.generate(request());
-    await vi.waitFor(() => expect(releases).toHaveLength(1));
-    const headAbort = new AbortController();
-    const head = d.generate(request({ abortSignal: headAbort.signal }));
-    const next = d.generate(request());
-    await tickTimer();
-    // quota 캐시를 무효화해 다음 selectPermit 이 실제 lookup 을 타게 한다.
-    await d.onTokenUpdated(1, "one", credentials, 80);
-
-    // 첫 permit 반납 → drain 이 head 를 위해 quota lookup 을 기다리는 사이 head 가 abort 된다.
-    releases.shift()!();
-    await active;
-    await vi.waitFor(() => expect(releaseQuota).toBeTypeOf("function"));
-    headAbort.abort();
-    await expect(head).rejects.toMatchObject({ name: "AbortError" });
-    releaseQuota!();
-
-    await vi.waitFor(() => expect(releases).toHaveLength(1));
-    releases.shift()!();
-    await expect(next).resolves.toMatchObject({ tokenName: "one" });
-  });
-
-  it("queues instead of rejecting when the only eligible token is busy", async () => {
-    let release!: () => void;
-    let call = 0;
-    const d = new OpenAIDispatcher(config(), undefined, {
-      clientFactory: () => ({
-        responses: () => ({
-          async *[Symbol.asyncIterator]() {
-            call++;
-            if (call === 1) await new Promise<void>((resolve) => (release = resolve));
-            yield { type: "completed", responseId: "r" } as const;
-          },
-        }),
-      }),
-      fetch: async () => quotaResponse(90),
-    });
-    // one: threshold 없음(항상 eligible), two: threshold 초과 상태로 permit 은 비어 있음.
+    // one: threshold 없음(항상 eligible), two: threshold 초과 → 항상 one 으로 라우팅된다.
     await d.onTokenAdded(1, "one", credentials, null);
     await d.onTokenAdded(2, "two", { ...credentials, accountId: "acct2" }, 80);
-
-    const active = d.generate(request());
-    await vi.waitFor(() => expect(call).toBe(1));
-
-    // one 이 바쁘다는 이유로 "전부 threshold 초과"라고 판정하면 안 된다 → 큐잉되어야 한다.
-    const queued = d.generate(request());
-    await tickTimer();
-    expect(d.queueLength).toBe(1);
-
-    release();
-    await active;
-    await expect(queued).resolves.toMatchObject({ tokenName: "one" });
+    for (let i = 0; i < 4; i++) names.push((await d.generate(request())).tokenName);
+    expect(names).toEqual(["one", "one", "one", "one"]);
   });
 
   it("fails quota lookup open, gates all exceeded tokens, and recovers after lifecycle update", async () => {
     const completeClient = () => ({
       responses: () => events({ type: "completed", responseId: "r" }),
     });
-    const failOpen = new OpenAIDispatcher(config(), undefined, {
+    const failOpen = new OpenAIDispatcher(config(), {
       clientFactory: completeClient,
       fetch: async () => new Response("down", { status: 503 }),
     });
     await failOpen.onTokenAdded(1, "one", credentials, 80);
     await expect(failOpen.generate(request())).resolves.toMatchObject({ tokenName: "one" });
 
-    const blocked = new OpenAIDispatcher(config(), undefined, {
+    const blocked = new OpenAIDispatcher(config(), {
       clientFactory: completeClient,
       fetch: async () =>
         new Response(

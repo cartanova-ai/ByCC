@@ -17,7 +17,7 @@ export type SettingKind = "boolean" | "integer" | "number" | "string" | "secret"
  * Slack 은 "언제 보낼까"(slack)와 "어디로 보낼까"(slackConnection)를 나눈다 — 앞은 운영
  * 중 자주 만지고 뒤는 한 번 맞추면 끝이라 수명이 다르다.
  */
-export type SettingGroup = "openai" | "slack" | "slackConnection";
+export type SettingGroup = "slack" | "slackConnection";
 
 export type SettingDef = {
   key: string;
@@ -25,7 +25,7 @@ export type SettingDef = {
   envKey: string;
   label: string;
   kind: SettingKind;
-  /** 적용 시점. 워커 설정은 dispatcher 생성자에서 한 번만 읽혀 재시작이 필요하다. */
+  /** 적용 시점. 부팅 시 한 번만 읽히는 값은 재시작이 필요하다. */
   applies: "immediate" | "restart";
   min?: number;
   max?: number;
@@ -40,18 +40,6 @@ export type SettingDef = {
 };
 
 export const SETTING_DEFS: SettingDef[] = [
-  {
-    key: "openai.permitsPerToken",
-    fallback: "3",
-    group: "openai",
-    envKey: "QGRID_OPENAI_PERMITS_PER_TOKEN",
-    label: "토큰당 동시 요청 permit 수",
-    kind: "integer",
-    applies: "restart",
-    min: 1,
-    max: 20,
-    help: "직접 호출 모드에서 한 토큰으로 동시에 내보낼 수 있는 요청 수입니다. 워커 시절 키(QGRID_OPENAI_MIN/MAX_WORKERS_PER_TOKEN, AUTOSCALE)는 이 값이 없을 때만 폴백으로 읽힙니다",
-  },
   {
     key: "slack.enabled",
     fallback: "true",

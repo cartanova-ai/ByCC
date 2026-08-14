@@ -183,7 +183,7 @@ Anthropic row changes:
 
 ## Provider Runtime Consequences
 
-OpenAI token changes create, update, deactivate, or remove in-memory credential and permit metadata.
+OpenAI token changes create, update, deactivate, or remove in-memory credential metadata.
 
 - Weight-only changes update token metadata and reset the weighted selector's scores.
 - Credential changes replace the direct client's credentials without spawning a process.

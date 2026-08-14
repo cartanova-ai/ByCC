@@ -35,7 +35,7 @@ As a result:
   ```ts
   model: qgrid("openai/gpt-5.4-mini")  // just change this
   ```
-- **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Token-level concurrent permits and smooth weighted routing distribute requests, while per-token quota thresholds exclude overloaded tokens.
+- **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Smooth weighted routing distributes requests across tokens, while per-token quota thresholds exclude overloaded tokens.
 - **Request Log dashboard** — Inspect token usage, cost, cache hits, TTFT, tool-call traces, and reasoning for every request in real time through a web UI.
 - **Image generation** — Opt into Codex's `image_generation` tool per request and receive PNG files through the standard AI SDK response.
 - **OpenAI + Anthropic** — Register subscription tokens for both. One-click OAuth login.
@@ -110,7 +110,7 @@ If you're already using the google/openai provider directly, **add one line** to
 
 ![Qgrid architecture](./assets/qgrid-architecture.en.svg)
 
-- **OpenAI** — Calls `https://chatgpt.com/backend-api/codex/responses` directly. The default `QGRID_OPENAI_TRANSPORT=websocket` mode scheme-swaps that URL to `wss` and reuses a connection for sequential requests with the same prompt-cache affinity. Requests without cache affinity use one connection each. `QGRID_OPENAI_TRANSPORT=https` remains available but does not preserve prompt-cache connection affinity. Qgrid does not replay ambiguous requests. Only a definitively rejected 401 handshake may refresh credentials and reconnect once. Each token has concurrent permits; new work uses smooth weighted routing across eligible tokens. Invalid selector values fail during dispatcher configuration.
+- **OpenAI** — Calls `https://chatgpt.com/backend-api/codex/responses` directly. The default `QGRID_OPENAI_TRANSPORT=websocket` mode scheme-swaps that URL to `wss` and reuses a connection for sequential requests with the same prompt-cache affinity. Requests without cache affinity use one connection each. `QGRID_OPENAI_TRANSPORT=https` remains available but does not preserve prompt-cache connection affinity. Qgrid does not replay ambiguous requests. Only a definitively rejected 401 handshake may refresh credentials and reconnect once. Requests run uncapped; new work uses smooth weighted routing across eligible tokens. Invalid selector values fail during dispatcher configuration.
 - **Anthropic** — Spawns a fresh, isolated Claude Code process per request (`stream-json` in/out) with per-token config isolation. Conversation history is replayed each turn; OAuth tokens are refreshed automatically.
 - **Quota threshold** — Each token has a utilization threshold (default 80%). Tokens over the threshold are excluded from routing until their rolling window recovers.
 - **Request Log** — Records each request's generate steps, tool-call steps, reasoning, token usage, cache metrics, TTFT, and cost in the DB. View them in the dashboard.

@@ -1,11 +1,11 @@
 [
   {
     "path": "api/src/application/monit/monit.frame.ts",
-    "checksum": "4211362e79e34e5bd452deb0f7ad03db0ae57097"
+    "checksum": "2a270ff1041e206736a178ce69881b8bfb30d87c"
   },
   {
     "path": "api/src/application/monit/monit.types.ts",
-    "checksum": "0a886042cf89654dcad7b96249daa31a4d6bb9a3"
+    "checksum": "64736dcb549222c5c65f096f577d7882e1106751"
   },
   {
     "path": "api/src/application/qgrid/qgrid.frame.ts",
@@ -45,7 +45,7 @@
   },
   {
     "path": "api/src/application/setting/setting.entity.json",
-    "checksum": "6b48d7304b2540ce9abb7bc633eaaa72f59a932b"
+    "checksum": "d7dea4137e10271f53b777676ec718ef55af5492"
   },
   {
     "path": "api/src/application/setting/setting.model.ts",
@@ -89,11 +89,11 @@
   },
   {
     "path": "api/src/i18n/sd.generated.ts",
-    "checksum": "4166c47b094a8c7c99178c22728851fca6c477c3"
+    "checksum": "802eb0e05d08b9090a3c95c8b0866a4817519740"
   },
   {
     "path": "api/src/sonamu.config.ts",
-    "checksum": "ed8360f549473293cf8842b8ddf6a4b3af270acb"
+    "checksum": "38a1f8bded9728b954d6ee01bbaca6141a68d728"
   },
   {
     "path": "web/src/i18n/en.ts",
@@ -105,11 +105,11 @@
   },
   {
     "path": "web/src/i18n/sd.generated.ts",
-    "checksum": "b03cbedcf7f08664b86c5fc716bc63b06a72a088"
+    "checksum": "4b769c58582456be8a7fe4389591ec6fa70dc271"
   },
   {
     "path": "web/src/services/monit/monit.types.ts",
-    "checksum": "e86f91927427ecaa054cc1d7709955be6acd4851"
+    "checksum": "442e3ecd94e38cd57690523066a35704e2a6fe8b"
   },
   {
     "path": "web/src/services/qgrid/qgrid.types.ts",

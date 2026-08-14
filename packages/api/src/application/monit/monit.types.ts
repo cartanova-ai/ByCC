@@ -18,13 +18,10 @@ export type MonitLogEntry = z.infer<typeof MonitLogEntry>;
 // 폴링에 편승하는 라이브 카운트 — 깊은 큐/토큰 진단은 audit 대시보드(별도)의 몫이고,
 // 여기는 "지금 permit 이 얼마나 차 있고 큐가 쌓이나"만 가볍게 답한다.
 export const MonitVitals = z.object({
-  openaiTotalPermits: z.number(),
-  openaiAvailablePermits: z.number(),
-  openaiQueueLength: z.number(),
-  // 토큰별 permit 사용량 — inUse 는 지금 나가 있는 동시 요청, capacity 는 상한
-  openaiPermitsByToken: z.array(
-    z.object({ name: z.string(), inUse: z.number(), capacity: z.number() }),
-  ),
+  // 지금 나가 있는 동시 요청 수 — 상한 없음(Anthropic 과 동일한 stateless 실행 모델).
+  // 토큰별 숫자는 노출하지 않는다: Anthropic 칩과 동일하게 이름 나열이 기본이고,
+  // 토큰 단위로 의미 있는 상태는 쿼터 스냅샷이 맡는다.
+  openaiInFlight: z.number(),
   // 토큰별 쿼터 스냅샷 — dispatcher 의 60초 rate-limits 캐시에서만 읽는다(비신선이면 null).
   // threshold 미설정 토큰은 쿼터 판정을 돌지 않아 usedPercent 가 계속 null 일 수 있다.
   openaiQuotaByToken: z.array(
@@ -60,9 +57,8 @@ export const MonitServerInfo = z.object({
   serverUrl: z.string(),
   dbHost: z.string(),
   dbName: z.string(),
+  // permit/큐 제거 후 남은 정적 설정은 전송 방식뿐이다. 동시성 상한은 없다.
   openai: z.object({
-    // 토큰당 동시 요청 permit 수 — 직접 호출 모드라 워커 프로세스 개념이 없다
-    permitsPerToken: z.number(),
     transport: z.string(),
   }),
 });

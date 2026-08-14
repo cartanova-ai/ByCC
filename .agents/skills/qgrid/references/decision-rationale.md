@@ -80,7 +80,7 @@ Key decisions:
 
 - OpenAI uses direct HTTPS `POST` to the private ChatGPT Codex Responses backend and decodes SSE. It does not spawn Codex child processes.
 - Direct PKCE OAuth, refresh, and `wham/usage` quota lookup replace delegated runtime calls. Generation and quota requests send Codex CLI identity headers.
-- Token-level concurrent permits retain bounded capacity. Smooth weighted routing chooses among active, quota-eligible tokens with free permits; the shared queue is capped at 50 items and 60 seconds.
+- Requests run uncapped, matching the Anthropic runtime: transport is a single HTTPS/WS request, so no local resource justifies a cap, and upstream limits are the backend's responses. The worker-era permit/queue layer was removed once this became clear.
 - Every turn sends full Responses-format history. A model-scoped opaque value derived from `sessionKey` is forwarded as `prompt_cache_key`; it is not a provider thread address.
 - `AbortSignal` cancellation covers queue wait, retry delay, and active HTTPS transport.
 - The transport interface is independent of HTTPS so a future WebSocket implementation can preserve dispatcher behavior.
@@ -143,7 +143,7 @@ Key decisions:
 - Provider criteria differ by primary window: Anthropic uses `five_hour.utilization`; OpenAI uses `primary.usedPercent`.
 - Threshold gates are by token id, not token name. Names are display/logging labels and can change.
 - Lookup failure is fail-open with logs/metrics. Hard failure happens only when usage was read successfully and the token is over threshold.
-- OpenAI applies the gate during permit selection and queue drain. An affinity-preferred token over threshold must fall back to another eligible token when possible.
+- OpenAI applies the gate during token selection. An affinity-preferred token over threshold must fall back to another eligible token when possible.
 
 ## Weighted Token Routing
 
@@ -157,8 +157,8 @@ Key decisions:
 - `tokens.weight` is a per-token integer from 1 to 100 defaulting to 1. It is a relative routing share for new requests, not an enable/disable switch. Weight 0 is invalid; disabling a token stays on `active`.
 - Both providers share one smooth weighted round-robin selector in the provider common layer. The selector knows only token ids, weights, and current scores. Dispatchers own quota, lifecycle, and worker availability, and pass in only the eligible token id set per selection. Do not teach the selector about credentials, workers, or queues.
 - The quota threshold gate runs before weighted selection. An over-threshold token receives no weighted assignment regardless of weight, and the schedule is computed from the remaining eligible tokens.
-- OpenAI cache affinity may prefer its prior token when that token remains eligible and has a free permit; otherwise routing remains work-conserving and uses weighted selection.
-- A token whose permits are all busy is omitted from the current selection round. Queue drain re-runs weighted selection for the head item.
+- OpenAI cache affinity prefers its prior token whenever that token remains eligible; otherwise routing uses weighted selection.
+- Busyness never excludes a token: with no concurrency cap there is no queue and no drain.
 - Candidate collection, selector mutation, and worker acquisition must run without an intervening `await`. A weighted score is consumed only when the dispatcher can commit the assignment synchronously; this is what keeps concurrent Anthropic selections spread correctly.
 - Selector scores reset when token topology or configured weights change. Temporary ineligibility from quota or busy workers only excludes the token from that selection's candidate set and does not reset schedule state.
 - Weight-change notification is owned by the versioned migration trigger (`tokens_weight_changed_upd`); the boot-time trigger setup SQL intentionally excludes `weight` from its WHEN clause, and a test pins this so exactly one trigger fires per weight-only change.

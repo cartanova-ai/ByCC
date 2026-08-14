@@ -114,13 +114,7 @@ describe("MonitFrame.monitLogs", () => {
 
   it("piggybacks live vitals on every chunk, zeroed before dispatchers boot", async () => {
     QgridDispatcher.openaiDispatcher = {
-      totalPermits: 25,
-      availablePermits: 24,
-      queueLength: 3,
-      permitsByToken: [
-        { name: "openai/haze", inUse: 1, capacity: 12 },
-        { name: "openai/nk", inUse: 0, capacity: 13 },
-      ],
+      inFlight: 3,
       quotaByToken: [
         { name: "openai/haze", usedPercent: 41, threshold: 80, blocked: false, resetsAt: null },
         { name: "openai/nk", usedPercent: null, threshold: null, blocked: false, resetsAt: null },
@@ -134,13 +128,7 @@ describe("MonitFrame.monitLogs", () => {
     try {
       const chunk = await MonitFrame.monitLogs();
       expect(chunk.vitals).toEqual({
-        openaiTotalPermits: 25,
-        openaiAvailablePermits: 24,
-        openaiQueueLength: 3,
-        openaiPermitsByToken: [
-          { name: "openai/haze", inUse: 1, capacity: 12 },
-          { name: "openai/nk", inUse: 0, capacity: 13 },
-        ],
+        openaiInFlight: 3,
         openaiQuotaByToken: [
           { name: "openai/haze", usedPercent: 41, threshold: 80, blocked: false, resetsAt: null },
           { name: "openai/nk", usedPercent: null, threshold: null, blocked: false, resetsAt: null },
@@ -155,8 +143,8 @@ describe("MonitFrame.monitLogs", () => {
     }
 
     const empty = await MonitFrame.monitLogs();
-    expect(empty.vitals.openaiTotalPermits).toBe(0);
-    expect(empty.vitals.openaiPermitsByToken).toEqual([]);
+    expect(empty.vitals.openaiInFlight).toBe(0);
+    expect(empty.vitals.openaiQuotaByToken).toEqual([]);
     expect(empty.vitals.anthropicTokenCount).toBe(0);
     expect(empty.vitals.anthropicTokenNames).toEqual([]);
   });
@@ -175,7 +163,6 @@ describe("MonitFrame.monitInfo", () => {
     expect(info.serverUrl).toBe("http://0.0.0.0:45000");
     expect(info.dbHost).toBe("db.internal");
     expect(info.dbName).toBe("qgrid_dev");
-    expect(info.openai.permitsPerToken).toBeGreaterThan(0);
     expect(["https", "websocket"]).toContain(info.openai.transport);
     // allowlist — 연결 객체의 password/user 등은 절대 실리지 않는다.
     expect(Object.keys(info).toSorted()).toEqual(["dbHost", "dbName", "openai", "serverUrl"]);

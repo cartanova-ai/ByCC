@@ -129,7 +129,7 @@ Fast mode contract:
 - It works on both `generateText` and `streamText`; image generation remains non-stream for unrelated reasons.
 - Omit `serviceTier` for normal/default routing. qgrid's current API accepts `"fast"` and `"flex"`; callers should not send Codex's normalized `"priority"` value directly.
 - qgrid is a pass-through for this selection. Codex applies the tier only when its Fast mode feature is enabled and the selected model advertises support; otherwise Codex can omit the unsupported tier.
-- Fast mode changes upstream service-tier routing, not qgrid permit capacity. It does not change token weights, client concurrency, or queue behavior.
+- Fast mode changes upstream service-tier routing only. It does not change token weights or client concurrency.
 - Do not promise a fixed latency improvement. Verify TTFT, duration, throughput, and quota consumption with a workload-specific A/B test.
 
 ## Request construction

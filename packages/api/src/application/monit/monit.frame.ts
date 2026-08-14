@@ -6,7 +6,7 @@
  */
 import { api, BaseFrameClass, DB } from "sonamu";
 
-import { resolveOpenAIPermitConfig } from "../../utils/providers/openai/openai-permit-config";
+import { resolveOpenAITransportConfig } from "../../utils/providers/openai/openai-transport-config";
 import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
 import { RequestLogModel } from "../request-log/request-log.model";
 import { monitLogBuffer } from "./log-buffer";
@@ -37,7 +37,7 @@ class MonitFrameClass extends BaseFrameClass {
   // 프로세스 정적 정보 — 폴링 불필요, 페이지당 1회 조회.
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async monitInfo(): Promise<MonitServerInfo> {
-    const permitConfig = resolveOpenAIPermitConfig();
+    const transportConfig = resolveOpenAITransportConfig();
     const host = process.env.HOST ?? "localhost";
     const port = process.env.PORT ?? "44900";
     const conn = activeDbConnection();
@@ -46,8 +46,7 @@ class MonitFrameClass extends BaseFrameClass {
       dbHost: conn.host ?? "localhost",
       dbName: conn.database ?? "qgrid",
       openai: {
-        permitsPerToken: permitConfig.permitsPerToken,
-        transport: permitConfig.transport,
+        transport: transportConfig.transport,
       },
     };
   }
@@ -66,10 +65,7 @@ class MonitFrameClass extends BaseFrameClass {
 // dispatcher 미초기화(부팅 직후) 시 0 으로 응답한다 — 가벼운 스냅샷이라 오류로 만들지 않는다.
 function currentVitals(): MonitVitals {
   return {
-    openaiTotalPermits: QgridDispatcher.openaiDispatcher?.totalPermits ?? 0,
-    openaiAvailablePermits: QgridDispatcher.openaiDispatcher?.availablePermits ?? 0,
-    openaiQueueLength: QgridDispatcher.openaiDispatcher?.queueLength ?? 0,
-    openaiPermitsByToken: QgridDispatcher.openaiDispatcher?.permitsByToken ?? [],
+    openaiInFlight: QgridDispatcher.openaiDispatcher?.inFlight ?? 0,
     openaiQuotaByToken: QgridDispatcher.openaiDispatcher?.quotaByToken ?? [],
     anthropicTokenCount: QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0,
     anthropicTokenNames: QgridDispatcher.anthropicDispatcher?.tokenNames ?? [],
