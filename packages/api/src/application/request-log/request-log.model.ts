@@ -260,6 +260,11 @@ class RequestLogModelClass extends BaseModelClass<
       qb.where("request_logs.model_name", params.model_name);
     }
 
+    // structured 응답이 JSON 파싱에 실패한 행만 — broken 배치 조사용 필터.
+    if (params.response_json_broken) {
+      qb.where("request_logs.response_json_ok", false);
+    }
+
     if (params.search && params.keyword && params.keyword.length > 0) {
       if (params.search === "id") {
         qb.where("request_logs.id", Number(params.keyword));
@@ -457,6 +462,7 @@ class RequestLogModelClass extends BaseModelClass<
       tool_call_count?: number;
       image_cost_usd?: number | null;
       image_cost_method?: string | null;
+      response_json_ok?: boolean | null;
     },
   ): Promise<void> {
     if (params.status === "succeeded" && !params.token_name) {
@@ -482,6 +488,7 @@ class RequestLogModelClass extends BaseModelClass<
       "tool_call_count",
       "image_cost_usd",
       "image_cost_method",
+      "response_json_ok",
     ] as const;
     for (const key of fields) {
       if (params[key] !== undefined) update[key] = params[key];

@@ -87,6 +87,15 @@ function filterHistoryForStorage(rawHistory: string | undefined): unknown {
   }
 }
 
+function isParseableJson(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type RunLifecycleResult = {
   runContext?: QgridRunContext;
 };
@@ -208,9 +217,13 @@ export async function afterQuery(
 
       // finishReason === "stop" → run 종료 (전체 step usage 합산)
       const agg = await RequestLogModel.aggregateStepUsage(requestLogId);
+      const responseText = formatResponseForLog(result);
       await RequestLogModel.finishRun(requestLogId, {
         status: "succeeded",
-        response: formatResponseForLog(result),
+        response: responseText,
+        // structured 요청만 판정한다. deti 배치의 broken JSON 류를 목록에서 바로
+        // 구별하기 위한 기록이며, 비structured 요청은 null 로 남는다.
+        response_json_ok: args.jsonSchema ? isParseableJson(responseText) : null,
         token_name: result.tokenName,
         input_tokens: agg.input_tokens,
         output_tokens: agg.output_tokens,

@@ -173,6 +173,7 @@ export const RequestLogBaseSchema = z.object({
   tools: ToolDefinitions.nullable(),
   status: RequestLogStatus,
   error_message: z.string().nullable(),
+  response_json_ok: z.boolean().nullable(),
   tool_call_count: z.int(),
   is_image_generation: z.boolean(),
 });
@@ -204,6 +205,7 @@ export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
     "tools",
     "status",
     "error_message",
+    "response_json_ok",
     "tool_call_count",
     "is_image_generation",
     "id",
@@ -399,6 +401,7 @@ export const RequestLogSubsetA = z.object({
   history: HistoryItems.nullable(),
   tools: ToolDefinitions.nullable(),
   status: RequestLogStatus,
+  response_json_ok: z.boolean().nullable(),
   error_message: z.string().nullable(),
   tool_call_count: z.int(),
   is_image_generation: z.boolean(),
@@ -426,6 +429,7 @@ export const RequestLogSubsetP = z.object({
   image_cost_method: z.string().max(100).nullable(),
   effort: z.string().max(10).nullable(),
   status: RequestLogStatus,
+  response_json_ok: z.boolean().nullable(),
   tool_call_count: z.int(),
   is_image_generation: z.boolean(),
 });

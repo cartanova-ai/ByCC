@@ -236,6 +236,8 @@ const entityLabels = {
   "entity.RequestLog.tools": "요청에 장착된 tool 정의 목록",
   "entity.RequestLog.status": "실행 상태",
   "entity.RequestLog.error_message": "에러 메시지",
+  "entity.RequestLog.response_json_ok":
+    "structured(jsonSchema) 요청의 응답 JSON 파싱 성공 여부. 비structured 요청은 null",
   "entity.RequestLog.tool_call_count": "tool call 횟수",
   "entity.RequestLog.is_image_generation": "이미지 생성 turn 여부 (quota 귀속용)",
   "enum.RequestLogOrderBy.id-desc": "ID최신순",

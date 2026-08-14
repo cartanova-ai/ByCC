@@ -133,6 +133,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
     ...(tokenFilter ? { token_name: tokenFilter } : {}),
     ...projectFilterParam,
     ...(modelFilter ? { model_name: modelFilter } : {}),
+    ...(search.broken ? { response_json_broken: true } : {}),
   };
 
   const sort = search.sort ?? "id-desc";
@@ -199,6 +200,16 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          data-active={search.broken === true}
+          onClick={() => updateFilter({ broken: search.broken ? undefined : true })}
+          // structured 응답이 JSON 파싱에 실패한 행만. 과거 행(컬럼 도입 전)은 null 이라
+          // 이 필터에 잡히지 않는다 — 도입 이후 기록부터 유효하다.
+          className="rounded-lg border border-sand-200/80 bg-sand-50/50 px-2.5 py-1.5 text-[11px] text-sand-700 transition-colors hover:border-caution-500/40 data-[active=true]:border-caution-500/60 data-[active=true]:bg-caution-500/10 data-[active=true]:font-medium data-[active=true]:text-caution-500"
+        >
+          Broken JSON
+        </button>
         <div className="flex-1" />
         <span className="text-[11px] text-sand-400">{total} results</span>
         <span className="text-[11px] tabular-nums font-medium text-sienna-600">
@@ -304,6 +315,14 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                         servedModel={row.model_name}
                         fallbackCount={row.fallback_count}
                       />
+                      {row.response_json_ok === false && (
+                        <span
+                          title="structured 요청의 응답이 JSON 파싱에 실패했습니다"
+                          className="ml-1.5 rounded-full bg-caution-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-caution-500"
+                        >
+                          broken
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-1.5 text-right tabular-nums text-sand-500 whitespace-nowrap">
                       {formatTtft(row.ttft_ms)}

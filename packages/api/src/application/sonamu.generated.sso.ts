@@ -46,6 +46,7 @@ export const requestLogSubsetQueries = {
       history: "request_logs.history",
       tools: "request_logs.tools",
       status: "request_logs.status",
+      response_json_ok: "request_logs.response_json_ok",
       error_message: "request_logs.error_message",
       tool_call_count: "request_logs.tool_call_count",
       is_image_generation: "request_logs.is_image_generation",
@@ -74,6 +75,7 @@ export const requestLogSubsetQueries = {
       image_cost_method: "request_logs.image_cost_method",
       effort: "request_logs.effort",
       status: "request_logs.status",
+      response_json_ok: "request_logs.response_json_ok",
       tool_call_count: "request_logs.tool_call_count",
       is_image_generation: "request_logs.is_image_generation",
     });
