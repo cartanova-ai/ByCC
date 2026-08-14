@@ -1,3 +1,4 @@
+import { jsonSchemaToZod } from "json-schema-to-zod";
 import {
   api,
   asArray,
@@ -19,6 +20,7 @@ import {
   type RequestLogSaveParams,
   type ToolDefinitions,
 } from "./request-log.types";
+import { formatZodCode } from "./zod-code-format";
 
 // cost_usd는 정수 micro-USD로 저장. 실제 USD = cost_usd / MICRO_USD.
 export const MICRO_USD = 1_000_000;
@@ -389,19 +391,31 @@ class RequestLogModelClass extends BaseModelClass<
   }
 
   /**
-   * structured output 요청의 JSON Schema 를 간결한 `type` 선언 텍스트로 변환한다.
-   * 스키마가 없거나 변환 실패면 null — 화면은 표시 자체를 생략한다.
+   * structured output 요청의 JSON Schema 를 표시용 타입 텍스트로 변환한다.
+   * typescript 는 간결한 `type` 선언, zod 는 재구성된 zod 표현식이다 — 원본 zod
+   * 소스는 wire 를 건너오며 소실되므로 refine/transform 류는 복원되지 않는다.
+   * 스키마가 없거나 변환 실패면 null — 화면은 해당 블록 표시를 생략한다.
    */
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
-  async responseTypeTs(id: number): Promise<{ typescript: string | null }> {
+  async responseTypeTs(id: number): Promise<{
+    typescript: string | null;
+    zod: string | null;
+  }> {
     const wdb = this.getPuri("w");
     const rows = (await wdb
       .from("request_logs")
       .select({ json_schema: "request_logs.json_schema" })
       .where("request_logs.id", id)) as unknown as Array<{ json_schema: string | null }>;
     const schema = rows[0]?.json_schema;
-    if (!schema) return { typescript: null };
-    return { typescript: renderJsonSchemaTypeText(schema) };
+    if (!schema) return { typescript: null, zod: null };
+
+    let zod: string | null = null;
+    try {
+      zod = formatZodCode(jsonSchemaToZod(JSON.parse(schema), { module: "none" }));
+    } catch {
+      zod = null;
+    }
+    return { typescript: renderJsonSchemaTypeText(schema), zod };
   }
 
   // ── Run Lifecycle ──────────────────────────────────────────────

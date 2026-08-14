@@ -615,7 +615,9 @@ export namespace RequestLogService {
       mutationFn: (params: { spa: RequestLogSaveParams[] }) => save(params.spa),
     });
 
-  export async function responseTypeTs(id: number): Promise<{ typescript: string | null }> {
+  export async function responseTypeTs(
+    id: number,
+  ): Promise<{ typescript: string | null; zod: string | null }> {
     return fetch({
       method: "GET",
       url: `/api/requestLog/responseTypeTs?${qs.stringify({ id })}`,

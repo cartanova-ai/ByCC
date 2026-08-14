@@ -985,10 +985,10 @@ function ToolsSection({ tools }: { tools: ToolDefinitions }) {
   );
 }
 
-// 서버가 생성한 type 선언 텍스트의 토큰 분류. 우리가 만든 통제된 문법이라
-// 하이라이트 라이브러리 없이 정규식 하나로 정확하게 나뉜다.
+// 서버가 생성한 type 선언·zod 표현식 텍스트의 토큰 분류. 우리가 만든 통제된
+// 문법이라 하이라이트 라이브러리 없이 정규식 하나로 정확하게 나뉜다.
 const TYPE_TOKEN_RE =
-  /("(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|(\btype\b)|(\b(?:string|number|boolean|null|unknown|Record)\b)|([{}[\]<>|?:,])|([A-Za-z_$][\w$]*)|(\s+|.)/g;
+  /("(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|(\btype\b|\bz\b(?=\.))|(\b(?:string|number|boolean|null|unknown|Record)\b)|([{}[\]()<>|?:,.=])|([A-Za-z_$][\w$]*)|(\s+|.)/g;
 
 function highlightTypeText(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -1003,7 +1003,8 @@ function highlightTypeText(text: string): ReactNode[] {
         </span>,
       );
     } else if (kw) {
-      afterTypeKeyword = true;
+      // `type` 키워드만 다음 식별자를 타입 이름으로 승격한다. `z.`는 접두 토큰일 뿐.
+      afterTypeKeyword = token === "type";
       nodes.push(
         <span key={key} className="text-sienna-400">
           {token}
@@ -1036,25 +1037,51 @@ function highlightTypeText(text: string): ReactNode[] {
   return nodes;
 }
 
-// structured output 요청의 응답 타입을 간결한 `type` 선언으로 보여주는 요약 패널.
-// 변환은 서버가 한다 — 스키마가 없거나 변환 실패면 아무것도 그리지 않는다.
+// structured output 요청의 응답 타입 요약 — JSON Schema 에서 재구성한 zod 표현식이
+// 기본이고, 간결한 `type` 선언으로 전환할 수 있다(refine/transform 은 직렬화 시점에
+// 소실되므로 미포함). 변환은 서버가 한다 — 스키마가 없거나 변환 실패면 그리지 않는다.
 function ResponseTypePanel({ id, enabled }: { id: number; enabled: boolean }) {
   const { data } = RequestLogService.useResponseTypeTs(id, { enabled });
-  const typescript = data?.typescript ?? null;
-  if (!enabled || typescript === null) return null;
+  const [mode, setMode] = useState<"zod" | "ts">("zod");
+  if (!enabled || !data) return null;
+  const { zod, typescript } = data;
+  if (zod === null && typescript === null) return null;
 
+  const code = mode === "zod" ? (zod ?? typescript!) : (typescript ?? zod!);
   return (
     <div className="panel overflow-hidden">
-      <div className="panel-header px-4 py-2">
+      <div className="panel-header flex items-center px-4 py-2">
         <span className="text-[11px] uppercase tracking-wider text-sand-500 font-medium">
           Response Type
         </span>
+        <div className="ml-auto flex gap-1">
+          {(
+            [
+              { value: "zod", label: "zod", available: zod !== null },
+              { value: "ts", label: "ts", available: typescript !== null },
+            ] as const
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              disabled={!option.available}
+              className={`px-2 py-0.5 text-[10px] font-mono rounded-md transition-colors ${
+                mode === option.value
+                  ? "bg-sand-200 text-sand-700"
+                  : "text-sand-400 hover:text-sand-600 disabled:text-sand-300 disabled:cursor-not-allowed"
+              }`}
+              onClick={() => setMode(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="relative">
-        <CopyButton text={typescript} dark />
+        <CopyButton text={code} dark />
         {/* monit 터미널(bg-sand-900)과 같은 다크 코드블록 톤 */}
         <pre className="bg-sand-900 px-4 py-3 text-[12px] text-sand-200 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-64 overflow-auto">
-          {highlightTypeText(typescript)}
+          {highlightTypeText(code)}
         </pre>
       </div>
     </div>
