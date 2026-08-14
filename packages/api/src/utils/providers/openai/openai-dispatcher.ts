@@ -19,10 +19,7 @@ import {
 import { OpenAIDirectClient, type OpenAIDirectClientOptions } from "./openai-direct-client";
 import { readOpenAIQuotaUsage, type OpenAIRateLimitsWithMeta } from "./openai-quota";
 import { handleChatgptAuthTokensRefresh } from "./openai-refresh";
-import {
-  type OpenAITransportConfig,
-  resolveOpenAITransportConfig,
-} from "./openai-transport-config";
+import { type OpenAITransportKind, resolveOpenAITransportKind } from "./openai-transport-config";
 
 const logger = getLogger(["qgrid", "openai-dispatcher"]);
 // 교체된 codex worker 가 강제하던 watchdog. 호출자가 timeoutMs 를 생략해도 요청이
@@ -41,19 +38,12 @@ export class ImageGenerationError extends Error {
   }
 }
 
-/** Kept for callers which persisted the old worker coordinate encoding. */
-export function makeOpenAIWorkerId(tokenId: number, workerIndex = 0): number {
-  return tokenId * 100 + workerIndex;
-}
-
 type TokenMetadata = {
   name: string;
   credentials: OpenAICredentials;
   quotaThreshold?: number | null;
   weight: number;
   active: boolean;
-  // 표시용 카운터 — 동시성 상한이 아니다. Anthropic 과 동일하게 요청은 제한 없이 나간다.
-  inFlight: number;
   generation: number;
 };
 
@@ -76,8 +66,8 @@ export interface OpenAIDispatcherDependencies {
   fetch?: typeof fetch;
 }
 
-function abortError(signal?: AbortSignal): Error {
-  const reason = signal?.reason;
+function abortError(signal: AbortSignal): Error {
+  const reason = signal.reason;
   return reason instanceof Error ? reason : new DOMException("Aborted", "AbortError");
 }
 
@@ -148,8 +138,12 @@ function requestOptions(req: GenerateRequest): OpenAIResponsesOptions {
  */
 export class OpenAIDispatcher implements ProviderDispatcher {
   readonly tokenMetadata = new Map<number, TokenMetadata>();
-  readonly transportConfig: OpenAITransportConfig;
+  readonly transportKind: OpenAITransportKind;
   readonly rateLimitsCache = new Map<number, OpenAIRateLimitsWithMeta & { generation: number }>();
+  private readonly pendingRateLimits = new Map<
+    number,
+    Promise<OpenAIRateLimitsWithMeta & { generation: number }>
+  >();
   private readonly clients = new Map<number, ClientEntry>();
   private readonly retiredClients = new Set<ClientEntry>();
   static readonly RATE_LIMITS_CACHE_TTL = 60_000;
@@ -158,12 +152,13 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   private readonly clientFactory: OpenAIDirectClientFactory;
   private readonly fetchImpl: typeof fetch;
   private readonly quotaBlocked = new Set<number>();
+  private inFlightCount = 0;
 
   constructor(
-    transportConfig: OpenAITransportConfig = resolveOpenAITransportConfig(),
+    transportKind: OpenAITransportKind = resolveOpenAITransportKind(),
     dependencies: OpenAIDispatcherDependencies = {},
   ) {
-    this.transportConfig = transportConfig;
+    this.transportKind = transportKind;
     this.clientFactory =
       dependencies.clientFactory ?? ((options) => new OpenAIDirectClient(options));
     this.fetchImpl = dependencies.fetch ?? fetch;
@@ -253,16 +248,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    const signal = activeSignal(req.abortSignal, req.timeoutMs);
-    if (signal.aborted) throw abortError(signal);
-    const selection = await this.selectToken(req.preferredTokenId, signal);
-    selection.metadata.inFlight++;
-    try {
-      if (signal.aborted) throw abortError(signal);
-      return await this.runDirect(selection, { ...req, abortSignal: signal });
-    } finally {
-      selection.metadata.inFlight = Math.max(0, selection.metadata.inFlight - 1);
-    }
+    return this.run(req);
   }
 
   async generateStream(req: GenerateRequest, cb: GenerateStreamCallbacks): Promise<void> {
@@ -271,19 +257,28 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         "gate",
         "image generation is not supported on the streaming path",
       );
-    const signal = activeSignal(req.abortSignal, req.timeoutMs);
-    if (signal.aborted) throw abortError(signal);
-    const selection = await this.selectToken(req.preferredTokenId, signal);
-    selection.metadata.inFlight++;
     try {
-      if (signal.aborted) throw abortError(signal);
-      const result = await this.runDirect(selection, { ...req, abortSignal: signal }, cb.onDelta);
-      cb.onComplete(result);
+      cb.onComplete(await this.run(req, cb.onDelta));
     } catch (error) {
       cb.onError(error as Error);
       throw error;
+    }
+  }
+
+  // generate/generateStream 공통 실행 — 토큰 선택과 in-flight 집계를 한 곳에 둔다.
+  private async run(
+    req: GenerateRequest,
+    onDelta?: (text: string) => void,
+  ): Promise<GenerateResult> {
+    const signal = activeSignal(req.abortSignal, req.timeoutMs);
+    if (signal.aborted) throw abortError(signal);
+    const selection = await this.selectToken(req.preferredTokenId, signal);
+    this.inFlightCount++;
+    try {
+      if (signal.aborted) throw abortError(signal);
+      return await this.runDirect(selection, { ...req, abortSignal: signal }, onDelta);
     } finally {
-      selection.metadata.inFlight = Math.max(0, selection.metadata.inFlight - 1);
+      this.inFlightCount--;
     }
   }
 
@@ -376,7 +371,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
             accessToken: metadata.credentials.accessToken,
             accountId: metadata.credentials.accountId,
           },
-          transportKind: this.transportConfig.transport,
+          transportKind: this.transportKind,
           fetch: this.fetchImpl,
           refreshCredentials: async () => {
             const refreshed = await handleChatgptAuthTokensRefresh(selection.tokenId);
@@ -419,22 +414,40 @@ export class OpenAIDispatcher implements ProviderDispatcher {
 
   /**
    * 토큰 선택 — quota gate 를 통과한 active 토큰 중에서 고른다. cache affinity 선호
-   * 토큰이 eligible 하면 그쪽으로, 아니면 smooth weighted round-robin. 동시성 상한이
+   * 토큰이 eligible 하면 그 판정만으로 즉시 결정하고(전체 sweep 생략, weighted 상태
+   * 비변경), 아니면 병렬 quota 판정 후 smooth weighted round-robin. 동시성 상한이
    * 없으므로 "빈 자리" 개념도 없다 — 선택 즉시 실행이다.
    */
   private async selectToken(
-    preferredTokenId?: number,
-    signal?: AbortSignal,
+    preferredTokenId: number | undefined,
+    signal: AbortSignal,
   ): Promise<TokenSelection> {
-    const eligible = new Set<number>();
-    const over: Array<{ name: string; threshold: number }> = [];
-    for (const [id, token] of this.tokenMetadata) {
-      if (!token.active) continue;
-      if (await this.isQuotaEligible(id, token, signal)) eligible.add(id);
-      else if (token.quotaThreshold !== null && token.quotaThreshold !== undefined)
-        over.push({ name: token.name, threshold: token.quotaThreshold });
+    if (preferredTokenId !== undefined) {
+      const preferred = this.tokenMetadata.get(preferredTokenId);
+      if (preferred?.active && (await this.isQuotaEligible(preferredTokenId, preferred, signal))) {
+        return { tokenId: preferredTokenId, metadata: preferred };
+      }
     }
+
+    // 토큰별 quota 판정은 서로 독립이라 병렬로 — 직렬 대기는 콜드 캐시에서
+    // 토큰 수 × 조회 지연만큼 요청 시작을 늦춘다.
+    const checks = await Promise.all(
+      [...this.tokenMetadata.entries()]
+        .filter(([, token]) => token.active)
+        .map(async ([id, token]) => ({
+          id,
+          token,
+          eligible: await this.isQuotaEligible(id, token, signal),
+        })),
+    );
+    const eligible = new Set(checks.filter((c) => c.eligible).map((c) => c.id));
     if (eligible.size === 0) {
+      const over = checks
+        .filter(
+          (c) =>
+            !c.eligible && c.token.quotaThreshold !== null && c.token.quotaThreshold !== undefined,
+        )
+        .map((c) => ({ name: c.token.name, threshold: c.token.quotaThreshold as number }));
       if (over.length) {
         logger.warn("quota_threshold gate: all_exceeded", {
           provider: "openai",
@@ -444,12 +457,8 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       }
       throw new Error("NO_OPENAI_WORKERS");
     }
-    // Affinity does not mutate smooth weighted state.
-    const selected =
-      preferredTokenId !== undefined && eligible.has(preferredTokenId)
-        ? preferredTokenId
-        : this.selector.select(eligible);
-    const metadata = selected === null ? undefined : this.tokenMetadata.get(selected);
+    const selected = this.selector.select(eligible);
+    const metadata = selected !== null ? this.tokenMetadata.get(selected) : undefined;
     if (selected === null || !metadata) throw new Error("NO_OPENAI_WORKERS");
     return { tokenId: selected, metadata };
   }
@@ -479,7 +488,6 @@ export class OpenAIDispatcher implements ProviderDispatcher {
         quotaThreshold,
         weight,
         active,
-        inFlight: 0,
         generation: 1,
       });
     }
@@ -501,16 +509,26 @@ export class OpenAIDispatcher implements ProviderDispatcher {
       Date.now() - cached.cachedAt < OpenAIDispatcher.RATE_LIMITS_CACHE_TTL
     )
       return cached;
-    const result = await readOpenAIQuotaUsage({
-      credentials: token.credentials,
-      fetch: this.fetchImpl,
-      ...(signal ? { signal } : {}),
-    });
-    if (result.kind === "lookup_failed") throw new Error(result.reason);
-    if (!result.raw) throw new Error("OpenAI quota response missing raw rate limits");
-    const entry = { data: result.raw, cachedAt: Date.now(), generation: token.generation };
-    if (this.tokenMetadata.get(tokenId) === token) this.rateLimitsCache.set(tokenId, entry);
-    return entry;
+
+    // single-flight: 동시성 상한이 없어진 뒤로 TTL 만료 순간 동시 요청 수만큼 같은
+    // 조회가 몰릴 수 있다 — 진행 중인 fetch 를 공유한다. 최초 호출자의 abort 로
+    // 공유 조회가 실패해도 소비처(isQuotaEligible)가 fail-open 으로 처리한다.
+    const pending = this.pendingRateLimits.get(tokenId);
+    if (pending) return pending;
+    const fetchPromise = (async () => {
+      const result = await readOpenAIQuotaUsage({
+        credentials: token.credentials,
+        fetch: this.fetchImpl,
+        ...(signal ? { signal } : {}),
+      });
+      if (result.kind === "lookup_failed") throw new Error(result.reason);
+      if (!result.raw) throw new Error("OpenAI quota response missing raw rate limits");
+      const entry = { data: result.raw, cachedAt: Date.now(), generation: token.generation };
+      if (this.tokenMetadata.get(tokenId) === token) this.rateLimitsCache.set(tokenId, entry);
+      return entry;
+    })().finally(() => this.pendingRateLimits.delete(tokenId));
+    this.pendingRateLimits.set(tokenId, fetchPromise);
+    return fetchPromise;
   }
 
   private async isQuotaEligible(
@@ -554,7 +572,7 @@ export class OpenAIDispatcher implements ProviderDispatcher {
     return [...this.tokenMetadata.values()].filter((t) => t.active).length;
   }
   get inFlight(): number {
-    return [...this.tokenMetadata.values()].reduce((sum, t) => sum + t.inFlight, 0);
+    return this.inFlightCount;
   }
 
   /**
@@ -583,7 +601,12 @@ export class OpenAIDispatcher implements ProviderDispatcher {
           usedPercent: primary?.usedPercent ?? null,
           threshold: t.quotaThreshold ?? null,
           blocked: this.quotaBlocked.has(id),
-          resetsAt: primary?.resetsAt ?? null,
+          // wham 의 resetsAt 은 unix 초 단위다(qgrid.frame unixSecondsToIso 와 동일 규약).
+          // 소비처가 단위를 추측하지 않도록 여기서 ms epoch 으로 정규화한다.
+          resetsAt:
+            primary?.resetsAt !== null && primary?.resetsAt !== undefined
+              ? primary.resetsAt * 1000
+              : null,
         };
       })
       .toSorted((a, b) => a.name.localeCompare(b.name));

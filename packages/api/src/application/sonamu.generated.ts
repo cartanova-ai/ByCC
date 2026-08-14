@@ -403,7 +403,6 @@ export const RequestLogSubsetA = z.object({
   effort: z.string().max(10).nullable(),
   history: HistoryItems.nullable(),
   tools: ToolDefinitions.nullable(),
-  json_schema: z.string().nullable(),
   status: RequestLogStatus,
   response_json_ok: z.boolean().nullable(),
   error_message: z.string().nullable(),

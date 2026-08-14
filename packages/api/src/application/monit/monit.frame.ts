@@ -6,7 +6,7 @@
  */
 import { api, BaseFrameClass, DB } from "sonamu";
 
-import { resolveOpenAITransportConfig } from "../../utils/providers/openai/openai-transport-config";
+import { resolveOpenAITransportKind } from "../../utils/providers/openai/openai-transport-config";
 import { QgridDispatcher } from "../qgrid/qgrid.dispatcher";
 import { RequestLogModel } from "../request-log/request-log.model";
 import { monitLogBuffer } from "./log-buffer";
@@ -37,7 +37,7 @@ class MonitFrameClass extends BaseFrameClass {
   // 프로세스 정적 정보 — 폴링 불필요, 페이지당 1회 조회.
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async monitInfo(): Promise<MonitServerInfo> {
-    const transportConfig = resolveOpenAITransportConfig();
+    const transport = resolveOpenAITransportKind();
     const host = process.env.HOST ?? "localhost";
     const port = process.env.PORT ?? "44900";
     const conn = activeDbConnection();
@@ -45,9 +45,7 @@ class MonitFrameClass extends BaseFrameClass {
       serverUrl: `http://${host}:${port}`,
       dbHost: conn.host ?? "localhost",
       dbName: conn.database ?? "qgrid",
-      openai: {
-        transport: transportConfig.transport,
-      },
+      openai: { transport },
     };
   }
 

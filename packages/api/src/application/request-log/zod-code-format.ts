@@ -7,7 +7,9 @@
  * - 문자열 리터럴 내부는 절대 건드리지 않는다.
  */
 
-const QUOTED_IDENT_KEY_RE = /"([A-Za-z_$][\w$]*)"(\s*:)/g;
+import { IDENT_SOURCE } from "./json-schema-type-text";
+
+const QUOTED_IDENT_KEY_RE = new RegExp(`"(${IDENT_SOURCE})"(\\s*:)`, "g");
 
 export function formatZodCode(code: string): string {
   const source = code.replace(QUOTED_IDENT_KEY_RE, "$1$2").trim();

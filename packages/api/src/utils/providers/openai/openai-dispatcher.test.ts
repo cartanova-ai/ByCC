@@ -6,7 +6,7 @@ import {
   type OpenAIResponsesOptions,
 } from "./openai-backend-protocol";
 import { ImageGenerationError, OpenAIDispatcher } from "./openai-dispatcher";
-import { type OpenAITransportConfig } from "./openai-transport-config";
+import { type OpenAITransportKind } from "./openai-transport-config";
 
 const credentials = {
   accessToken: "access",
@@ -15,8 +15,8 @@ const credentials = {
   accountId: "acct",
 };
 
-function config(): OpenAITransportConfig {
-  return { transport: "https" };
+function config(): OpenAITransportKind {
+  return "https";
 }
 
 function request(overrides: Partial<GenerateRequest> = {}): GenerateRequest {
@@ -52,7 +52,7 @@ describe("OpenAIDispatcher direct runtime", () => {
         responses: () => events({ type: "completed", responseId: "r" }),
       }),
     );
-    const d = new OpenAIDispatcher({ transport: "websocket" }, { clientFactory: factory });
+    const d = new OpenAIDispatcher("websocket", { clientFactory: factory });
     await d.onTokenAdded(1, "one", credentials);
     await d.generate(request());
     await d.generate(request());

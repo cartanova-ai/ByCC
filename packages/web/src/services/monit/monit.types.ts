@@ -20,8 +20,8 @@ export const MonitLogEntry = z.object({
 });
 export type MonitLogEntry = z.infer<typeof MonitLogEntry>;
 
-// 폴링에 편승하는 라이브 카운트 — 깊은 큐/토큰 진단은 audit 대시보드(별도)의 몫이고,
-// 여기는 "지금 permit 이 얼마나 차 있고 큐가 쌓이나"만 가볍게 답한다.
+// 폴링에 편승하는 라이브 카운트 — 깊은 토큰 진단은 audit 대시보드(별도)의 몫이고,
+// 여기는 "지금 요청이 몇 개 나가 있고 쿼터가 얼마나 찼나"만 가볍게 답한다.
 export const MonitVitals = z.object({
   // 지금 나가 있는 동시 요청 수 — 상한 없음(Anthropic 과 동일한 stateless 실행 모델).
   // 토큰별 숫자는 노출하지 않는다: Anthropic 칩과 동일하게 이름 나열이 기본이고,
@@ -35,6 +35,7 @@ export const MonitVitals = z.object({
       usedPercent: z.number().nullable(),
       threshold: z.number().nullable(),
       blocked: z.boolean(),
+      // ms epoch — dispatcher 가 wham 의 unix 초를 정규화해서 내려준다
       resetsAt: z.number().nullable(),
     }),
   ),

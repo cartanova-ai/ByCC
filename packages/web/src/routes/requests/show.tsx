@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import JsonView from "@uiw/react-json-view";
 import { lightTheme } from "@uiw/react-json-view/light";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod";
@@ -1040,14 +1040,14 @@ function highlightTypeText(text: string): ReactNode[] {
 // structured output 요청의 응답 타입 요약 — JSON Schema 에서 재구성한 zod 표현식이
 // 기본이고, 간결한 `type` 선언으로 전환할 수 있다(refine/transform 은 직렬화 시점에
 // 소실되므로 미포함). 변환은 서버가 한다 — 스키마가 없거나 변환 실패면 그리지 않는다.
-function ResponseTypePanel({ id, enabled }: { id: number; enabled: boolean }) {
-  const { data } = RequestLogService.useResponseTypeTs(id, { enabled });
+// 호출부가 structured 행에서만 마운트한다.
+function ResponseTypePanel({ id }: { id: number }) {
+  const { data } = RequestLogService.useResponseTypeTs(id);
   const [mode, setMode] = useState<"zod" | "ts">("zod");
-  if (!enabled || !data) return null;
-  const { zod, typescript } = data;
-  if (zod === null && typescript === null) return null;
-
-  const code = mode === "zod" ? (zod ?? typescript!) : (typescript ?? zod!);
+  const { zod = null, typescript = null } = data ?? {};
+  const code = mode === "zod" ? (zod ?? typescript) : (typescript ?? zod);
+  const highlighted = useMemo(() => (code === null ? null : highlightTypeText(code)), [code]);
+  if (!data || code === null || highlighted === null) return null;
   return (
     <div className="panel overflow-hidden">
       <div className="panel-header flex items-center px-4 py-2">
@@ -1081,7 +1081,7 @@ function ResponseTypePanel({ id, enabled }: { id: number; enabled: boolean }) {
         <CopyButton text={code} dark />
         {/* monit 터미널(bg-sand-900)과 같은 다크 코드블록 톤 */}
         <pre className="bg-sand-900 px-4 py-3 text-[12px] text-sand-200 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-64 overflow-auto">
-          {highlightTypeText(code)}
+          {highlighted}
         </pre>
       </div>
     </div>
@@ -1134,6 +1134,9 @@ function RequestDetail({ id }: { id: number }) {
   const tools = data.tools ?? null;
   const hasTools = tools !== null && tools.length > 0;
 
+  // structured 행에서만 마운트 — 쿼리도 그때만 나간다.
+  const responseTypePanel = data.is_structured ? <ResponseTypePanel id={id} /> : null;
+
   const promptSections = (
     <div className="space-y-4">
       <Section title="System">
@@ -1177,14 +1180,14 @@ function RequestDetail({ id }: { id: number }) {
         // 세로로 쌓되 Steps 를 먼저 보여준다 — 프롬프트 전문보다 실행 결과를 먼저 확인한다.
         <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-start">
           <div className="order-1 lg:order-2 flex-1 min-w-0 space-y-4">
-            <ResponseTypePanel id={id} enabled={!!data.json_schema} />
+            {responseTypePanel}
             <StepTreeSection steps={stepTree} tokensPerSecEnabled={tokensPerSecEnabled} />
           </div>
           <div className="order-2 lg:order-1 flex-1 min-w-0">{promptSections}</div>
         </div>
       ) : (
         <>
-          <ResponseTypePanel id={id} enabled={!!data.json_schema} />
+          {responseTypePanel}
           {promptSections}
         </>
       )}

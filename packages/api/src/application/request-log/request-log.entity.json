@@ -251,6 +251,16 @@
         }
       ],
       "using": "btree"
+    },
+    {
+      "type": "index",
+      "name": "request_logs_created_at_index",
+      "columns": [
+        {
+          "name": "created_at"
+        }
+      ],
+      "using": "btree"
     }
   ],
   "subsets": {
@@ -280,7 +290,6 @@
       "effort",
       "history",
       "tools",
-      "json_schema",
       "status",
       "response_json_ok",
       "error_message",

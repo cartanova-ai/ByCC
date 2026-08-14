@@ -321,7 +321,7 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                       {row.response_json_ok === false && (
                         <span
                           title="structured 요청의 응답이 JSON 파싱에 실패했습니다"
-                          className="ml-1.5 rounded-full bg-caution-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-caution-500"
+                          className="ml-1.5 rounded-full bg-caution-400/15 px-1.5 py-0.5 text-[9px] font-semibold text-caution-500"
                         >
                           broken
                         </span>

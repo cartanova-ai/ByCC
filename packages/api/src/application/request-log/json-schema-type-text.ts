@@ -9,7 +9,9 @@
 
 type SchemaNode = Record<string, unknown>;
 
-const IDENT_RE = /^[A-Za-z_$][\w$]*$/;
+/** TS/zod 표시 코드 공용 식별자 판별 — zod-code-format 의 키 unquote 도 이걸 쓴다. */
+export const IDENT_SOURCE = "[A-Za-z_$][\\w$]*";
+const IDENT_RE = new RegExp(`^${IDENT_SOURCE}$`);
 
 function renderKey(key: string): string {
   return IDENT_RE.test(key) ? key : JSON.stringify(key);
@@ -66,12 +68,15 @@ function renderNode(node: unknown, depth: number): string {
   return renderPrimitive(type);
 }
 
+/** 이미 파싱된 스키마 값용 — 호출부가 같은 JSON 을 두 번 파싱하지 않게 한다. */
+export function renderParsedJsonSchemaTypeText(schema: unknown, name = "Response"): string {
+  return `type ${name} = ${renderNode(schema, 0)}`;
+}
+
 /** 실패(파싱 불가 등) 시 null — 호출부가 표시 자체를 생략한다. */
 export function renderJsonSchemaTypeText(schemaJson: string, name = "Response"): string | null {
   try {
-    const schema = JSON.parse(schemaJson) as unknown;
-    const body = renderNode(schema, 0);
-    return `type ${name} = ${body}`;
+    return renderParsedJsonSchemaTypeText(JSON.parse(schemaJson) as unknown, name);
   } catch {
     return null;
   }

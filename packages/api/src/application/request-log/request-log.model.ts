@@ -14,7 +14,7 @@ import { SD } from "../../i18n/sd.generated";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogSubsetKey, type RequestLogSubsetMapping } from "../sonamu.generated";
 import { requestLogLoaderQueries, requestLogSubsetQueries } from "../sonamu.generated.sso";
-import { renderJsonSchemaTypeText } from "./json-schema-type-text";
+import { renderParsedJsonSchemaTypeText } from "./json-schema-type-text";
 import {
   type RequestLogListParams,
   type RequestLogSaveParams,
@@ -346,8 +346,8 @@ class RequestLogModelClass extends BaseModelClass<
       cacheReadTokens: number;
     }>
   > {
-    const wdb = this.getPuri("w");
-    const rows = (await wdb
+    const rdb = this.getPuri("r");
+    const rows = (await rdb
       .from("request_logs")
       .select({
         requested_model_name: "request_logs.requested_model_name",
@@ -401,21 +401,29 @@ class RequestLogModelClass extends BaseModelClass<
     typescript: string | null;
     zod: string | null;
   }> {
-    const wdb = this.getPuri("w");
-    const rows = (await wdb
+    const rdb = this.getPuri("r");
+    const rows = (await rdb
       .from("request_logs")
       .select({ json_schema: "request_logs.json_schema" })
       .where("request_logs.id", id)) as unknown as Array<{ json_schema: string | null }>;
     const schema = rows[0]?.json_schema;
     if (!schema) return { typescript: null, zod: null };
 
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(schema);
+    } catch {
+      return { typescript: null, zod: null };
+    }
     let zod: string | null = null;
     try {
-      zod = formatZodCode(jsonSchemaToZod(JSON.parse(schema), { module: "none" }));
+      zod = formatZodCode(
+        jsonSchemaToZod(parsed as Parameters<typeof jsonSchemaToZod>[0], { module: "none" }),
+      );
     } catch {
       zod = null;
     }
-    return { typescript: renderJsonSchemaTypeText(schema), zod };
+    return { typescript: renderParsedJsonSchemaTypeText(parsed), zod };
   }
 
   // ── Run Lifecycle ──────────────────────────────────────────────

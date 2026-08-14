@@ -57,21 +57,18 @@ const SPARK_CAP = 120;
 
 function pushSample(buffer: number[], value: number): void {
   buffer.push(value);
-  if (buffer.length > SPARK_CAP) buffer.splice(0, buffer.length - SPARK_CAP);
+  if (buffer.length > SPARK_CAP) buffer.shift();
 }
 
 // 인라인 스파크라인 — 값의 절대 눈금은 옆의 숫자가 맡고, 여기는 추세만 그린다.
 // 단일 시리즈라 범례 불필요, 색은 중립(sand)로 두고 상태색은 숫자 쪽이 표현한다.
-function Sparkline({
-  values,
-  width = 56,
-  height = 14,
-}: {
-  values: number[];
-  width?: number;
-  height?: number;
-}) {
+const SPARK_WIDTH = 56;
+const SPARK_HEIGHT = 14;
+
+function Sparkline({ values }: { values: number[] }) {
   if (values.length < 2) return null;
+  const width = SPARK_WIDTH;
+  const height = SPARK_HEIGHT;
   const max = Math.max(...values, 1);
   const step = width / (SPARK_CAP - 1);
   const startX = width - (values.length - 1) * step;
@@ -344,28 +341,25 @@ export function MonitConsole({
               )}
             </>
           )}
-          {stats?.providers.map((p) =>
-            p.provider === "unknown" && p.requests === 0 ? null : (
-              <span key={p.provider} className="text-sand-500">
-                1h {p.provider} <span className="font-mono text-sand-700">{p.requests}</span> req
-                {p.errors > 0 && (
-                  <>
-                    {" · "}
-                    <span className="font-mono font-semibold text-caution-500">
-                      {p.errors}
-                    </span> err
-                  </>
-                )}
-                {" · hit "}
-                <span className="font-mono text-sand-700">
-                  {cacheHitRate({
-                    input_tokens: p.inputTokens,
-                    cache_read_tokens: p.cacheReadTokens,
-                  })}
-                </span>
+          {/* providerStatsSince 는 최근 1시간에 행이 있던 provider 만 내려준다. */}
+          {stats?.providers.map((p) => (
+            <span key={p.provider} className="text-sand-500">
+              1h {p.provider} <span className="font-mono text-sand-700">{p.requests}</span> req
+              {p.errors > 0 && (
+                <>
+                  {" · "}
+                  <span className="font-mono font-semibold text-caution-500">{p.errors}</span> err
+                </>
+              )}
+              {" · hit "}
+              <span className="font-mono text-sand-700">
+                {cacheHitRate({
+                  input_tokens: p.inputTokens,
+                  cache_read_tokens: p.cacheReadTokens,
+                })}
               </span>
-            ),
-          )}
+            </span>
+          ))}
         </div>
       )}
 
@@ -383,12 +377,7 @@ export function MonitConsole({
                       ? "quota not sampled yet"
                       : `quota ${Math.round(quota.usedPercent)}%${
                           quota.threshold !== null ? ` / threshold ${quota.threshold}%` : ""
-                        }${
-                          quota.resetsAt
-                            ? // wham 응답의 resetsAt 단위(초/ms)가 문서화돼 있지 않아 방어적으로 판별한다.
-                              ` · resets ${formatTime(quota.resetsAt > 1e12 ? quota.resetsAt : quota.resetsAt * 1000)}`
-                            : ""
-                        }`;
+                        }${quota.resetsAt ? ` · resets ${formatTime(quota.resetsAt)}` : ""}`;
                   return (
                     <span
                       key={quota.name}
