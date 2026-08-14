@@ -62,7 +62,7 @@ function safeParseJson(text: string | null | undefined): unknown {
   }
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, dark }: { text: string; dark?: boolean }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return undefined;
@@ -76,7 +76,9 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className="absolute top-2 right-2 p-1 rounded text-sand-400 hover:text-sand-600 transition-colors"
+      className={`absolute top-2 right-2 p-1 rounded transition-colors ${
+        dark ? "text-sand-500 hover:text-sand-300" : "text-sand-400 hover:text-sand-600"
+      }`}
       onClick={handleCopy}
     >
       {copied ? (
@@ -983,30 +985,79 @@ function ToolsSection({ tools }: { tools: ToolDefinitions }) {
   );
 }
 
-// structured output 요청의 JSON Schema 를 TypeScript 타입 선언으로 렌더링한다.
-// 변환은 서버가 한다(변환 라이브러리가 Node 전제) — 실패하면 원문 스키마로 폴백한다.
-function ResponseTypeSection({ id, jsonSchema }: { id: number; jsonSchema: string }) {
-  const { data, isLoading } = RequestLogService.useResponseTypeTs(id);
+// 서버가 생성한 type 선언 텍스트의 토큰 분류. 우리가 만든 통제된 문법이라
+// 하이라이트 라이브러리 없이 정규식 하나로 정확하게 나뉜다.
+const TYPE_TOKEN_RE =
+  /("(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|(\btype\b)|(\b(?:string|number|boolean|null|unknown|Record)\b)|([{}[\]<>|?:,])|([A-Za-z_$][\w$]*)|(\s+|.)/g;
+
+function highlightTypeText(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let afterTypeKeyword = false;
+  for (const match of text.matchAll(TYPE_TOKEN_RE)) {
+    const [token, str, num, kw, builtin, punct, ident] = match;
+    const key = `${match.index}-${token}`;
+    if (str || num) {
+      nodes.push(
+        <span key={key} className="text-sage-400">
+          {token}
+        </span>,
+      );
+    } else if (kw) {
+      afterTypeKeyword = true;
+      nodes.push(
+        <span key={key} className="text-sienna-400">
+          {token}
+        </span>,
+      );
+    } else if (builtin) {
+      nodes.push(
+        <span key={key} className="text-blue-300">
+          {token}
+        </span>,
+      );
+    } else if (punct) {
+      nodes.push(
+        <span key={key} className="text-sand-500">
+          {token}
+        </span>,
+      );
+    } else if (ident && afterTypeKeyword) {
+      // `type` 바로 다음 식별자 = 타입 이름
+      afterTypeKeyword = false;
+      nodes.push(
+        <span key={key} className="font-semibold text-sand-50">
+          {token}
+        </span>,
+      );
+    } else {
+      nodes.push(token);
+    }
+  }
+  return nodes;
+}
+
+// structured output 요청의 응답 타입을 간결한 `type` 선언으로 보여주는 요약 패널.
+// 변환은 서버가 한다 — 스키마가 없거나 변환 실패면 아무것도 그리지 않는다.
+function ResponseTypePanel({ id, enabled }: { id: number; enabled: boolean }) {
+  const { data } = RequestLogService.useResponseTypeTs(id, { enabled });
   const typescript = data?.typescript ?? null;
+  if (!enabled || typescript === null) return null;
 
   return (
-    <Section title="Response Type">
-      <div className="relative">
-        <CopyButton text={typescript ?? jsonSchema} />
-        {isLoading ? (
-          <p className="text-sm text-sand-400">Compiling…</p>
-        ) : (
-          <pre className="text-[13px] text-sand-800 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed">
-            {typescript ?? jsonSchema}
-          </pre>
-        )}
-        {!isLoading && typescript === null && (
-          <p className="mt-2 text-[11px] text-sand-400">
-            TypeScript 변환에 실패해 JSON Schema 원문을 표시합니다.
-          </p>
-        )}
+    <div className="panel overflow-hidden">
+      <div className="panel-header px-4 py-2">
+        <span className="text-[11px] uppercase tracking-wider text-sand-500 font-medium">
+          Response Type
+        </span>
       </div>
-    </Section>
+      <div className="relative">
+        <CopyButton text={typescript} dark />
+        {/* monit 터미널(bg-sand-900)과 같은 다크 코드블록 톤 */}
+        <pre className="bg-sand-900 px-4 py-3 text-[12px] text-sand-200 whitespace-pre-wrap wrap-break-word font-mono leading-relaxed max-h-64 overflow-auto">
+          {highlightTypeText(typescript)}
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -1099,15 +1150,17 @@ function RequestDetail({ id }: { id: number }) {
         // 세로로 쌓되 Steps 를 먼저 보여준다 — 프롬프트 전문보다 실행 결과를 먼저 확인한다.
         <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-start">
           <div className="order-1 lg:order-2 flex-1 min-w-0 space-y-4">
+            <ResponseTypePanel id={id} enabled={!!data.json_schema} />
             <StepTreeSection steps={stepTree} tokensPerSecEnabled={tokensPerSecEnabled} />
           </div>
           <div className="order-2 lg:order-1 flex-1 min-w-0">{promptSections}</div>
         </div>
       ) : (
-        promptSections
+        <>
+          <ResponseTypePanel id={id} enabled={!!data.json_schema} />
+          {promptSections}
+        </>
       )}
-
-      {data.json_schema && <ResponseTypeSection id={id} jsonSchema={data.json_schema} />}
 
       <Section title="Response">
         <div className="relative">
