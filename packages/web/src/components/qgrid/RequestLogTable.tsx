@@ -88,6 +88,8 @@ const COLUMNS: {
   { label: "Project", align: "left", width: "w-20" },
   { label: "Token", align: "left", width: "w-24" },
   { label: "Model", align: "left", width: "w-20" },
+  // structured output(jsonSchema) 요청 여부 — plain text 와 한눈에 구분한다.
+  { label: "Fmt", align: "left", width: "w-12" },
   // 숫자는 오른쪽 정렬해야 자릿수가 세로로 맞는다 — 6,317 과 34,897 이 왼쪽 정렬이면
   // 끝자리가 어긋나 열이 들쭉날쭉해 보인다.
   { label: "TTFT", align: "right", width: "w-16", sortKey: "ttft_ms" },
@@ -200,16 +202,17 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          data-active={search.broken === true}
-          onClick={() => updateFilter({ broken: search.broken ? undefined : true })}
-          // structured 응답이 JSON 파싱에 실패한 행만. 과거 행(컬럼 도입 전)은 null 이라
-          // 이 필터에 잡히지 않는다 — 도입 이후 기록부터 유효하다.
-          className="rounded-lg border border-sand-200/80 bg-sand-50/50 px-2.5 py-1.5 text-[11px] text-sand-700 transition-colors hover:border-caution-500/40 data-[active=true]:border-caution-500/60 data-[active=true]:bg-caution-500/10 data-[active=true]:font-medium data-[active=true]:text-caution-500"
-        >
+        {/* structured 응답이 JSON 파싱에 실패한 행만. 과거 행(컬럼 도입 전)은 null 이라
+            이 필터에 잡히지 않는다 — 도입 이후 기록부터 유효하다. */}
+        <label className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-sand-700">
+          <input
+            type="checkbox"
+            checked={search.broken === true}
+            onChange={(e) => updateFilter({ broken: e.target.checked ? true : undefined })}
+            className="size-3.5 cursor-pointer accent-caution-500"
+          />
           Broken JSON
-        </button>
+        </label>
         <div className="flex-1" />
         <span className="text-[11px] text-sand-400">{total} results</span>
         <span className="text-[11px] tabular-nums font-medium text-sienna-600">
@@ -322,6 +325,15 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
                         >
                           broken
                         </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-1.5 whitespace-nowrap">
+                      {row.is_structured ? (
+                        <span className="rounded bg-sienna-100 px-1.5 py-0.5 font-mono text-[10px] text-sienna-700">
+                          json
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[10px] text-sand-400">text</span>
                       )}
                     </td>
                     <td className="px-4 py-1.5 text-right tabular-nums text-sand-500 whitespace-nowrap">

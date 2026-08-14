@@ -200,6 +200,12 @@
       "type": "boolean",
       "desc": "이미지 생성 turn 여부 (quota 귀속용)",
       "dbDefault": "false"
+    },
+    {
+      "name": "is_structured",
+      "type": "boolean",
+      "desc": "structured output(jsonSchema) 요청 여부 (목록 구분 표시용)",
+      "dbDefault": "false"
     }
   ],
   "indexes": [
@@ -279,7 +285,8 @@
       "response_json_ok",
       "error_message",
       "tool_call_count",
-      "is_image_generation"
+      "is_image_generation",
+      "is_structured"
     ],
     "P": [
       "id",
@@ -305,7 +312,8 @@
       "status",
       "response_json_ok",
       "tool_call_count",
-      "is_image_generation"
+      "is_image_generation",
+      "is_structured"
     ],
     "C": [
       "id",

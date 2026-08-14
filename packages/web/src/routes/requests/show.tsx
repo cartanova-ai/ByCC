@@ -1065,7 +1065,7 @@ function ResponseTypePanel({ id, enabled }: { id: number; enabled: boolean }) {
               key={option.value}
               type="button"
               disabled={!option.available}
-              className={`px-2 py-0.5 text-[10px] font-mono rounded-md transition-colors ${
+              className={`px-3 py-1 text-[12px] font-mono rounded-md transition-colors ${
                 mode === option.value
                   ? "bg-sand-200 text-sand-700"
                   : "text-sand-400 hover:text-sand-600 disabled:text-sand-300 disabled:cursor-not-allowed"

@@ -243,6 +243,7 @@ const entityLabels = {
     "structured(jsonSchema) 요청의 응답 JSON 파싱 성공 여부. 비structured 요청은 null",
   "entity.RequestLog.tool_call_count": "tool call 횟수",
   "entity.RequestLog.is_image_generation": "이미지 생성 turn 여부 (quota 귀속용)",
+  "entity.RequestLog.is_structured": "structured output(jsonSchema) 요청 여부 (목록 구분 표시용)",
   "enum.RequestLogOrderBy.id-desc": "ID최신순",
   "enum.RequestLogOrderBy.id-asc": "ID오래된순",
   "enum.RequestLogOrderBy.created_at-desc": "등록일시최신순",

@@ -177,6 +177,7 @@ export const RequestLogBaseSchema = z.object({
   response_json_ok: z.boolean().nullable(),
   tool_call_count: z.int(),
   is_image_generation: z.boolean(),
+  is_structured: z.boolean(),
 });
 export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
   readonly __hasDefault__: readonly [
@@ -210,6 +211,7 @@ export type RequestLogBaseSchema = z.infer<typeof RequestLogBaseSchema> & {
     "response_json_ok",
     "tool_call_count",
     "is_image_generation",
+    "is_structured",
     "id",
   ];
 };
@@ -408,6 +410,7 @@ export const RequestLogSubsetA = z.object({
   error_message: z.string().nullable(),
   tool_call_count: z.int(),
   is_image_generation: z.boolean(),
+  is_structured: z.boolean(),
 });
 export type RequestLogSubsetA = z.infer<typeof RequestLogSubsetA>;
 export const RequestLogSubsetP = z.object({
@@ -435,6 +438,7 @@ export const RequestLogSubsetP = z.object({
   response_json_ok: z.boolean().nullable(),
   tool_call_count: z.int(),
   is_image_generation: z.boolean(),
+  is_structured: z.boolean(),
 });
 export type RequestLogSubsetP = z.infer<typeof RequestLogSubsetP>;
 export const RequestLogSubsetC = z.object({

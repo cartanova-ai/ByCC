@@ -267,7 +267,8 @@ Content-Type: application/json
       "error_message": null,
       "response_json_ok": null,
       "tool_call_count": 0,
-      "is_image_generation": false
+      "is_image_generation": false,
+      "is_structured": false
     }
   ]
 }
