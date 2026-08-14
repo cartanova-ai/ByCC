@@ -56,6 +56,10 @@ Provider-qualified ids widen `model_name` and `requested_model_name` from 50 to 
 
 Image-generation request logs add `is_image_generation`, `image_cost_usd`, and `image_cost_method`. The list view displays driver plus image cost as the total cost cell; the detail view shows driver cost and image cost separately and renders generated image data URLs from response/tool-step content.
 
+Structured output visibility: the list has an `Fmt` column (`json` badge from `is_structured` vs `text`), a `broken` badge plus a `Broken JSON` checkbox filter driven by `response_json_ok = false`, and the detail page shows a dark Response Type panel (zod expression by default, `type` declaration via toggle) rendered server-side from the stored `json_schema`. Plain-text rows render no panel. Rows written by pre-2.7.2 servers show `text` and never match the broken filter.
+
+The monit tab's vitals strip shows per-provider in-flight counts, an in-flight sparkline, token chips with quota gauges (fed by the dispatcher's 60-second rate-limits cache; `resetsAt` arrives as ms epoch), and a 1-hour per-provider request/error/cache-hit stats line polled separately every 30 seconds.
+
 Reference input images for image generation render in the detail view under the user prompt from the first synthetic `image_generation` step's `tool_args.inputImages`. Keep the prompt itself text-only, redact large base64 in request JSON views, and avoid rendering duplicate input previews for multi-output image turns.
 
 ## Verification

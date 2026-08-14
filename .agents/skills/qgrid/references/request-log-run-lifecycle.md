@@ -82,6 +82,16 @@ For image requests, keep `cost_usd` as the Codex driver model token cost. Image 
 
 Reference images for image generation are not stored in `request_logs.user_prompt`; that field remains the text prompt. For inspection in the detail view, qgrid stores reference image metadata/base64 in the synthetic `image_generation` step's `tool_args.inputImages`. If Codex returns multiple image outputs, store `inputImages` only on the first synthetic image tool step so multi-output logs do not duplicate the same input payload on every output.
 
+## Structured output fields
+
+Structured output requests (those carrying a `jsonSchema`) persist three related fields:
+
+- `json_schema`: the raw JSON Schema text of the request contract. Stored at `createRun`, exposed only through the server-side `responseTypeTs` conversion API (compact `type` declaration + reconstructed zod expression); the detail subset does not carry the raw text.
+- `is_structured`: boolean written at `createRun` from `json_schema` presence. Exists so the list subset can distinguish structured vs plain rows without shipping schema text; it is denormalized, so any future path that writes `json_schema` must set it too.
+- `response_json_ok`: tri-state verdict written at the succeeded `finishRun`. `true`/`false` = structured response parsed/failed `JSON.parse`; `null` = non-structured request, error/aborted run, or a row written before the column existed. The list filter `response_json_broken` matches only explicit `false`.
+
+Reconstructed zod output cannot contain `refine`/`transform` logic — those are lost when the client serializes the schema. Rows written by servers older than 2.7.2 have all three fields empty/false/null.
+
 ## Legacy normalization
 
 `RequestLogModel` normalizes legacy Anthropic rows where stored `input_tokens` may not include cache read/write. Rows with `cost_source = NULL` are legacy and can be repriced from the current table; rows with a source retain their exact stored cost across price/promotion changes.
@@ -90,7 +100,7 @@ Reference images for image generation are not stored in `request_logs.user_promp
 
 TTFT is tracked by wrapping the first provider delta:
 
-- OpenAI: first `item/agentMessage/delta`.
+- OpenAI: first `response.output_text.delta` from the direct Responses stream.
 - Anthropic: first text or structured partial JSON delta.
 
 If missing, qgrid maps TTFT to `0` in `QueryOutput` and nullable/optional places as appropriate.
