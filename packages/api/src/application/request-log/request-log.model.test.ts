@@ -29,13 +29,7 @@ function mockTransactionalWritePuri(transactionPuri: unknown) {
 }
 
 function mockToolsViewQuery(row: { tools: unknown } | undefined) {
-  const chain = {
-    select: vi.fn(),
-    where: vi.fn(),
-    first: vi.fn(async () => row),
-  };
-  chain.select.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
+  const chain = mockQueryBuilder(row === undefined ? [] : [row]);
   const from = vi.fn(() => chain);
   vi.spyOn(
     RequestLogModel as unknown as { getPuri: () => { from: typeof from } },

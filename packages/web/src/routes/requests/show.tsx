@@ -1030,25 +1030,23 @@ function ToolsHeaderMetadata({ tools }: { tools: ToolDefinitions }) {
 }
 
 function ToolDescription({ description }: { description: string }) {
-  const [open, setOpen] = useState(false);
   if (description.length <= TOOL_DESCRIPTION_PREVIEW_CHARACTERS) {
     return <p className="text-[12px] leading-relaxed text-sand-700">{description}</p>;
   }
 
   const preview = `${description.slice(0, TOOL_DESCRIPTION_PREVIEW_CHARACTERS).trimEnd()}…`;
   return (
-    <details className="group/description" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="group/description">
       <summary className="cursor-pointer list-none text-[12px] leading-relaxed text-sand-700">
-        {open ? (
-          <span className="font-medium text-sienna-500">Hide description</span>
-        ) : (
-          <>
-            <span>{preview}</span>{" "}
-            <span className="font-medium text-sienna-500">Show full description</span>
-          </>
-        )}
+        <span className="group-open/description:hidden">
+          <span>{preview}</span>{" "}
+          <span className="font-medium text-sienna-500">Show full description</span>
+        </span>
+        <span className="hidden font-medium text-sienna-500 group-open/description:inline">
+          Hide description
+        </span>
       </summary>
-      {open && <p className="mt-2 text-[12px] leading-relaxed text-sand-700">{description}</p>}
+      <p className="mt-2 text-[12px] leading-relaxed text-sand-700">{description}</p>
     </details>
   );
 }
@@ -1101,7 +1099,6 @@ function ToolParameterRow({ parameter }: { parameter: ToolParameterView }) {
 }
 
 function ToolParameters({ parameters }: { parameters: ToolParameterView[] }) {
-  const [open, setOpen] = useState(false);
   const visible = parameters.slice(0, TOOL_PARAMETER_PREVIEW_COUNT);
   const remainder = parameters.slice(TOOL_PARAMETER_PREVIEW_COUNT);
 
@@ -1115,22 +1112,20 @@ function ToolParameters({ parameters }: { parameters: ToolParameterView[] }) {
         <ToolParameterRow key={parameter.name} parameter={parameter} />
       ))}
       {remainder.length > 0 && (
-        <details
-          className="group/parameters"
-          onToggle={(event) => setOpen(event.currentTarget.open)}
-        >
+        <details className="group/parameters">
           <summary className="cursor-pointer list-none px-1 py-1 text-[11px] font-medium text-sienna-500">
-            {open
-              ? `Hide ${remainder.length} parameters`
-              : `+${remainder.length} parameters · Show`}
+            <span className="group-open/parameters:hidden">
+              +{remainder.length} parameters · Show
+            </span>
+            <span className="hidden group-open/parameters:inline">
+              Hide {remainder.length} parameters
+            </span>
           </summary>
-          {open && (
-            <div className="mt-1.5 space-y-1.5">
-              {remainder.map((parameter) => (
-                <ToolParameterRow key={parameter.name} parameter={parameter} />
-              ))}
-            </div>
-          )}
+          <div className="mt-1.5 space-y-1.5">
+            {remainder.map((parameter) => (
+              <ToolParameterRow key={parameter.name} parameter={parameter} />
+            ))}
+          </div>
         </details>
       )}
     </div>
@@ -1163,6 +1158,8 @@ function ToolsPanel({ id, tools }: { id: number; tools: ToolDefinitions }) {
     enabled: open,
     staleTime: (currentQuery) =>
       currentQuery.state.data && currentQuery.state.data.length > 0 ? Infinity : 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const hasView = query.data !== undefined && query.data.length > 0;
 
