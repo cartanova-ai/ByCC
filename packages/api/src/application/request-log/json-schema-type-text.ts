@@ -117,8 +117,7 @@ function renderNode(node: unknown, depth: number): string {
   const schema = node as SchemaNode;
 
   if (Array.isArray(schema.enum)) {
-    const renderedValues = schema.enum.map((value) => JSON.stringify(value));
-    return renderedValues.join(" | ");
+    return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
   }
   if (schema.const !== undefined) return JSON.stringify(schema.const);
 

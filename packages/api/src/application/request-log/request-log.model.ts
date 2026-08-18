@@ -455,7 +455,7 @@ class RequestLogModelClass extends BaseModelClass<
 
     return tools.map((tool) => {
       const inputSchema = tool.inputSchema as {
-        properties: Record<string, unknown>;
+        properties?: Record<string, unknown>;
       };
       const inputZod = renderJsonSchemaZodShapeText(inputSchema, TOOL_ENUM_VALUE_LIMIT);
       const fullInputZod = renderJsonSchemaZodShapeText(inputSchema);
@@ -463,7 +463,7 @@ class RequestLogModelClass extends BaseModelClass<
       return {
         name: tool.name,
         ...(tool.description !== undefined ? { description: tool.description } : {}),
-        parameterCount: Object.keys(inputSchema.properties).length,
+        parameterCount: Object.keys(inputSchema.properties ?? {}).length,
         inputZod,
         ...(inputZod !== fullInputZod ? { fullInputZod } : {}),
       };

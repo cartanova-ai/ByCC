@@ -219,6 +219,34 @@ describe("RequestLogModel toolsView", () => {
     ]);
   });
 
+  it("renders schemas without properties without failing the entire tool contract", async () => {
+    mockToolsViewQuery({
+      tools: [
+        { name: "unknown_input", inputSchema: {} },
+        { name: "empty_object_input", inputSchema: { type: "object" } },
+        { name: "string_input", inputSchema: { type: "string" } },
+      ],
+    });
+
+    await expect(RequestLogModel.toolsView(13)).resolves.toEqual([
+      {
+        name: "unknown_input",
+        parameterCount: 0,
+        inputZod: "z.unknown()",
+      },
+      {
+        name: "empty_object_input",
+        parameterCount: 0,
+        inputZod: "z.object({})",
+      },
+      {
+        name: "string_input",
+        parameterCount: 0,
+        inputZod: "z.string()",
+      },
+    ]);
+  });
+
   it.each([
     ["a missing row", undefined],
     ["null tools", { tools: null }],
