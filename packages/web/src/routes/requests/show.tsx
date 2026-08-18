@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import JsonView from "@uiw/react-json-view";
 import { lightTheme } from "@uiw/react-json-view/light";
@@ -12,7 +13,11 @@ import CopyIcon from "~icons/lucide/copy";
 import XIcon from "~icons/lucide/x";
 
 import { cacheHitRate, formatMicroUsd } from "@/lib/cost";
-import { type ToolDefinitions } from "@/services/request-log/request-log.types";
+import {
+  type ToolDefinitions,
+  type ToolParameterView,
+  type ToolView,
+} from "@/services/request-log/request-log.types";
 import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
 import {
   type RequestLogStepSubsetMapping,
@@ -982,24 +987,203 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
   );
 }
 
-function ToolsSection({ tools }: { tools: ToolDefinitions }) {
+const TOOL_NAME_PREVIEW_CHARACTERS = 60;
+const TOOL_NAME_MOBILE_PREVIEW_CHARACTERS = 18;
+const TOOL_DESCRIPTION_PREVIEW_CHARACTERS = 180;
+const TOOL_PARAMETER_PREVIEW_COUNT = 5;
+
+function toolNamePreview(
+  tools: ToolDefinitions,
+  maxCharacters = TOOL_NAME_PREVIEW_CHARACTERS,
+): {
+  names: string[];
+  omittedCount: number;
+} {
+  const names: string[] = [];
+  for (const tool of tools) {
+    const next = [...names, tool.name].join(", ");
+    if (next.length > maxCharacters) break;
+    names.push(tool.name);
+  }
+  return { names, omittedCount: tools.length - names.length };
+}
+
+function ToolsHeaderMetadata({ tools }: { tools: ToolDefinitions }) {
+  const { names, omittedCount } = toolNamePreview(tools);
+  const mobile = toolNamePreview(tools, TOOL_NAME_MOBILE_PREVIEW_CHARACTERS);
+
   return (
-    <Section title={`Tools (${tools.length})`} defaultOpen={false}>
-      <div className="space-y-1.5">
-        {tools.map((tool, i) => (
-          <div key={`tool-${i}`} className="rounded-md px-3 py-2 bg-caution-400/10">
-            <div className="text-[10px] uppercase tracking-wider text-sand-500 font-medium mb-1">
-              fn: {tool.name}
-            </div>
-            {tool.description && (
-              <p className="text-[12px] text-sand-700 leading-relaxed">{tool.description}</p>
-            )}
-            {tool.inputSchema !== undefined && tool.inputSchema !== null && (
-              <MonoPre className="mt-1">{JSON.stringify(tool.inputSchema, null, 2)}</MonoPre>
-            )}
-          </div>
-        ))}
+    <>
+      <span className="shrink-0">·</span>
+      {names.length > 0 && (
+        <span className="hidden min-w-0 overflow-hidden sm:inline">{names.join(", ")}</span>
+      )}
+      {omittedCount > 0 && <span className="hidden shrink-0 sm:inline">+{omittedCount}</span>}
+      {mobile.names.length > 0 && (
+        <span className="min-w-0 overflow-hidden sm:hidden">{mobile.names.join(", ")}</span>
+      )}
+      {mobile.omittedCount > 0 && (
+        <span className="shrink-0 sm:hidden">+{mobile.omittedCount}</span>
+      )}
+    </>
+  );
+}
+
+function ToolDescription({ description }: { description: string }) {
+  const [open, setOpen] = useState(false);
+  if (description.length <= TOOL_DESCRIPTION_PREVIEW_CHARACTERS) {
+    return <p className="text-[12px] leading-relaxed text-sand-700">{description}</p>;
+  }
+
+  const preview = `${description.slice(0, TOOL_DESCRIPTION_PREVIEW_CHARACTERS).trimEnd()}…`;
+  return (
+    <details className="group/description" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer list-none text-[12px] leading-relaxed text-sand-700">
+        {open ? (
+          <span className="font-medium text-sienna-500">Hide description</span>
+        ) : (
+          <>
+            <span>{preview}</span>{" "}
+            <span className="font-medium text-sienna-500">Show full description</span>
+          </>
+        )}
+      </summary>
+      {open && <p className="mt-2 text-[12px] leading-relaxed text-sand-700">{description}</p>}
+    </details>
+  );
+}
+
+function ParameterType({ parameter }: { parameter: ToolParameterView }) {
+  const classes =
+    "inline-flex max-w-full min-w-0 rounded bg-sand-100 px-1.5 py-0.5 font-mono text-[11px] text-sand-600";
+  if (!parameter.fullType) {
+    return <span className={classes}>{parameter.type}</span>;
+  }
+
+  return (
+    <span
+      className={`${classes} cursor-help outline-none focus-visible:ring-2 focus-visible:ring-sienna-300`}
+      tabIndex={0}
+      title={parameter.fullType}
+    >
+      <span className="truncate" aria-hidden="true">
+        {parameter.type}
+      </span>
+      <span className="sr-only">{parameter.fullType}</span>
+    </span>
+  );
+}
+
+function ToolParameterRow({ parameter }: { parameter: ToolParameterView }) {
+  return (
+    <div className="min-w-0 rounded-md border border-sand-100 bg-white px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="max-w-full break-all font-mono text-[12px] font-medium text-sand-800">
+          {parameter.name}
+        </span>
+        {!parameter.required && (
+          <span className="shrink-0 text-[10px] font-medium text-sand-400">optional</span>
+        )}
+        <ParameterType parameter={parameter} />
+        {parameter.defaultValue !== null && (
+          <span className="max-w-full break-all font-mono text-[10px] text-sand-500">
+            default={parameter.defaultValue}
+          </span>
+        )}
       </div>
+      {parameter.description && (
+        <p className="mt-1 break-words text-[11px] leading-relaxed text-sand-500">
+          {parameter.description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ToolParameters({ parameters }: { parameters: ToolParameterView[] }) {
+  const [open, setOpen] = useState(false);
+  const visible = parameters.slice(0, TOOL_PARAMETER_PREVIEW_COUNT);
+  const remainder = parameters.slice(TOOL_PARAMETER_PREVIEW_COUNT);
+
+  if (parameters.length === 0) {
+    return <p className="text-[11px] text-sand-400">No parameters.</p>;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {visible.map((parameter) => (
+        <ToolParameterRow key={parameter.name} parameter={parameter} />
+      ))}
+      {remainder.length > 0 && (
+        <details
+          className="group/parameters"
+          onToggle={(event) => setOpen(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer list-none px-1 py-1 text-[11px] font-medium text-sienna-500">
+            {open
+              ? `Hide ${remainder.length} parameters`
+              : `+${remainder.length} parameters · Show`}
+          </summary>
+          {open && (
+            <div className="mt-1.5 space-y-1.5">
+              {remainder.map((parameter) => (
+                <ToolParameterRow key={parameter.name} parameter={parameter} />
+              ))}
+            </div>
+          )}
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ToolCard({ tool }: { tool: ToolView }) {
+  return (
+    <div className="min-w-0 rounded-md border border-sand-100 bg-sand-50/70 p-3">
+      <div className="break-all font-mono text-[13px] font-semibold text-sand-900">{tool.name}</div>
+      {tool.description && (
+        <div className="mt-2">
+          <ToolDescription description={tool.description} />
+        </div>
+      )}
+      <div className="mt-3">
+        <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-sand-400">
+          Parameters ({tool.parameters.length})
+        </div>
+        <ToolParameters parameters={tool.parameters} />
+      </div>
+    </div>
+  );
+}
+
+function ToolsPanel({ id, tools }: { id: number; tools: ToolDefinitions }) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({
+    ...RequestLogService.toolsViewQueryOptions(id),
+    enabled: open,
+    staleTime: (currentQuery) =>
+      currentQuery.state.data && currentQuery.state.data.length > 0 ? Infinity : 0,
+  });
+  const hasView = query.data !== undefined && query.data.length > 0;
+
+  return (
+    <Section
+      title={`Tools (${tools.length})`}
+      defaultOpen={false}
+      headerMetadata={<ToolsHeaderMetadata tools={tools} />}
+      onOpenChange={setOpen}
+    >
+      {query.isFetching && !hasView ? (
+        <p className="text-[12px] text-sand-400">Loading tool contracts…</p>
+      ) : query.isError || !hasView ? (
+        <p className="text-[12px] text-sand-400">Tool contracts could not be loaded.</p>
+      ) : (
+        <div className="space-y-2">
+          {query.data.map((tool, index) => (
+            <ToolCard key={`${tool.name}-${index}`} tool={tool} />
+          ))}
+        </div>
+      )}
     </Section>
   );
 }
@@ -1192,13 +1376,12 @@ function RequestDetail({ id }: { id: number }) {
 
       {hasHistory && <HistorySection history={history} />}
 
-      {hasTools && <ToolsSection tools={tools} />}
-
       {hasSteps ? (
         // 좁은 화면에서는 두 칼럼이 각각 절반으로 눌려 프롬프트도 지표도 못 읽는다.
         // 세로로 쌓되 Steps 를 먼저 보여준다 — 프롬프트 전문보다 실행 결과를 먼저 확인한다.
         <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-start">
           <div className="order-1 lg:order-2 flex-1 min-w-0 space-y-4">
+            {hasTools && <ToolsPanel id={id} tools={tools} />}
             {responseTypePanel}
             <StepTreeSection steps={stepTree} tokensPerSecEnabled={tokensPerSecEnabled} />
           </div>
@@ -1206,6 +1389,7 @@ function RequestDetail({ id }: { id: number }) {
         </div>
       ) : (
         <>
+          {hasTools && <ToolsPanel id={id} tools={tools} />}
           {responseTypePanel}
           {promptSections}
         </>
