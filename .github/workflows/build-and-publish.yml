@@ -38,6 +38,15 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Smoke test published CLI runtime
+        run: |
+          PACK_DIR="$(mktemp -d)"
+          INSTALL_DIR="$(mktemp -d)"
+          pnpm --dir packages/cli pack --pack-destination "$PACK_DIR"
+          npm install --prefix "$INSTALL_DIR" --ignore-scripts "$PACK_DIR"/cartanova-qgrid-cli-*.tgz
+          cd "$INSTALL_DIR/node_modules/@cartanova/qgrid-cli"
+          node --input-type=module -e "await import('sonamu')"
+
       # npm publish (버전 안 바뀌면 스킵)
       - name: Publish packages
         run: pnpm publish:packages

@@ -35,7 +35,7 @@ async function readPackage(url) {
   return JSON.parse(await readFile(url, "utf8"));
 }
 
-function resolveCatalogSpecifier(name, specifier, workspace) {
+export function resolveCatalogSpecifier(name, specifier, workspace) {
   if (typeof specifier !== "string" || !specifier.startsWith("catalog:")) {
     return specifier;
   }
