@@ -92,6 +92,14 @@ Structured output requests (those carrying a `jsonSchema`) persist three related
 
 Reconstructed zod output cannot contain `refine`/`transform` logic — those are lost when the client serializes the schema. Rows written by servers older than 2.7.2 have all three fields empty/false/null.
 
+## Tool definition fields
+
+Requests carrying tools persist `tools` as `QgridTool[]` — `{ name, description?, inputSchema }`, exactly what the SDK's `toQgridTool` extracts. There is no per-tool output contract: the AI SDK provider boundary (`LanguageModelV3FunctionTool`) defines only `type`, `name`, `description?`, `inputSchema`, `inputExamples?`, and `strict?`. `tool()`'s `outputSchema` validates execution results client-side and never crosses into a provider call, so exposing it would require changing the SDK call site, the wire, and persistence together.
+
+`inputSchema` is `z.unknown()` on the wire, so an absent key or a `null` value passes validation even though the SDK always fills `{}`. The `toolsView` projection normalizes each entry to an empty schema rather than trusting the shape — one unusable entry must not blank the whole request's tool contract.
+
+`toolsView` is a display projection, not a second source of truth: it returns `name`, `description`, `parameterCount`, a display-only compact zod shape, and a full zod shape only when enum shortening actually changed the text. Validation constraints (`pattern`, `format`, `minLength`, `maximum`) are dropped on purpose — the detail screen answers what a tool accepts, not how input is validated. Actual call arguments stay in the step rows, so the projection covers tools that were attached but never called.
+
 ## Legacy normalization
 
 `RequestLogModel` normalizes legacy Anthropic rows where stored `input_tokens` may not include cache read/write. Rows with `cost_source = NULL` are legacy and can be repriced from the current table; rows with a source retain their exact stored cost across price/promotion changes.
