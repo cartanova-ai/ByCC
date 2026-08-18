@@ -159,59 +159,32 @@ describe("RequestLogModel toolsView", () => {
       {
         name: "search",
         description: "Search indexed records",
-        parameters: [
-          {
-            name: "requiredEnum",
-            type: '"one" | "two" | "three" | "four" | "five" | "six" … (+2)',
-            fullType:
-              '"one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight"',
-            required: true,
-            defaultValue: null,
-            description: "Search mode",
-          },
-          {
-            name: "requiredFalse",
-            type: "boolean",
-            required: true,
-            defaultValue: "false",
-          },
-          {
-            name: "requiredZero",
-            type: "number",
-            required: true,
-            defaultValue: "0",
-          },
-          {
-            name: "optionalEmpty",
-            type: "string",
-            required: false,
-            defaultValue: '""',
-          },
-          {
-            name: "optionalNull",
-            type: "string | null",
-            required: false,
-            defaultValue: "null",
-          },
-          {
-            name: "optionalAbsent",
-            type: "string",
-            required: false,
-            defaultValue: null,
-            description: "Optional note",
-          },
-        ],
+        parameterCount: 6,
+        inputZod: [
+          "z.object({",
+          '  requiredEnum: z.enum(["one", "two", "three", "four", "five", "six" /* +2 */]),',
+          "  requiredFalse: z.boolean(), // default=false",
+          "  requiredZero: z.number(), // default=0",
+          '  optionalEmpty: z.string().optional(), // default=""',
+          "  optionalNull: z.union([z.string(), z.null()]).optional(), // default=null",
+          "  optionalAbsent: z.string().optional(),",
+          "})",
+        ].join("\n"),
+        fullInputZod: [
+          "z.object({",
+          '  requiredEnum: z.enum(["one", "two", "three", "four", "five", "six", "seven", "eight"]),',
+          "  requiredFalse: z.boolean(), // default=false",
+          "  requiredZero: z.number(), // default=0",
+          '  optionalEmpty: z.string().optional(), // default=""',
+          "  optionalNull: z.union([z.string(), z.null()]).optional(), // default=null",
+          "  optionalAbsent: z.string().optional(),",
+          "})",
+        ].join("\n"),
       },
       {
         name: "ping",
-        parameters: [
-          {
-            name: "message",
-            type: "string",
-            required: true,
-            defaultValue: null,
-          },
-        ],
+        parameterCount: 1,
+        inputZod: ["z.object({", "  message: z.string(),", "})"].join("\n"),
       },
     ]);
 
@@ -240,9 +213,8 @@ describe("RequestLogModel toolsView", () => {
       {
         name: "lookup",
         description: "Look up one record",
-        parameters: [
-          { name: "id", type: "string", required: true, defaultValue: null },
-        ],
+        parameterCount: 1,
+        inputZod: ["z.object({", "  id: z.string(),", "})"].join("\n"),
       },
     ]);
   });

@@ -25,26 +25,106 @@ function renderPrimitive(type: unknown): string {
   return "unknown";
 }
 
-function renderNode(node: unknown, depth: number, enumValueLimit?: number): string {
+function renderZodPrimitive(type: unknown): string {
+  if (type === "string") return "z.string()";
+  if (type === "number" || type === "integer") return "z.number()";
+  if (type === "boolean") return "z.boolean()";
+  if (type === "null") return "z.null()";
+  return "z.unknown()";
+}
+
+function renderZodEnum(values: unknown[], enumValueLimit?: number): string {
+  if (values.length === 0) return "z.never()";
+
+  const visibleValues =
+    enumValueLimit === undefined ? values : values.slice(0, Math.max(0, enumValueLimit));
+  const omittedCount = values.length - visibleValues.length;
+  const suffix = omittedCount > 0 ? ` /* +${omittedCount} */` : "";
+
+  if (values.every((value) => typeof value === "string")) {
+    return `z.enum([${visibleValues.map((value) => JSON.stringify(value)).join(", ")}${suffix}])`;
+  }
+
+  const literals = visibleValues.map((value) => `z.literal(${JSON.stringify(value)})`);
+  if (literals.length === 1 && omittedCount === 0) return literals[0] ?? "z.never()";
+  return `z.union([${literals.join(", ")}${suffix}])`;
+}
+
+function renderZodNode(node: unknown, depth: number, enumValueLimit?: number): string {
+  if (node === true) return "z.unknown()";
+  if (!node || typeof node !== "object" || Array.isArray(node)) return "z.unknown()";
+  const schema = node as SchemaNode;
+
+  if (Array.isArray(schema.enum)) return renderZodEnum(schema.enum, enumValueLimit);
+  if (schema.const !== undefined) return `z.literal(${JSON.stringify(schema.const)})`;
+
+  const variants = (schema.anyOf ?? schema.oneOf) as unknown;
+  if (Array.isArray(variants) && variants.length > 0) {
+    const rendered = [
+      ...new Set(variants.map((variant) => renderZodNode(variant, depth, enumValueLimit))),
+    ];
+    return rendered.length === 1
+      ? (rendered[0] ?? "z.unknown()")
+      : `z.union([${rendered.join(", ")}])`;
+  }
+
+  const type = schema.type;
+  if (Array.isArray(type)) {
+    const rendered = [...new Set(type.map(renderZodPrimitive))];
+    return rendered.length === 1
+      ? (rendered[0] ?? "z.unknown()")
+      : `z.union([${rendered.join(", ")}])`;
+  }
+
+  if (type === "object" || (type === undefined && schema.properties)) {
+    const properties = (schema.properties ?? {}) as Record<string, unknown>;
+    const required = new Set(Array.isArray(schema.required) ? (schema.required as string[]) : []);
+    const keys = Object.keys(properties);
+    if (keys.length === 0) return "z.object({})";
+    const orderedKeys = [
+      ...keys.filter((key) => required.has(key)),
+      ...keys.filter((key) => !required.has(key)),
+    ];
+
+    const inner = "  ".repeat(depth + 1);
+    const lines = orderedKeys.map((key) => {
+      const propertySchema = properties[key];
+      const rendered = renderZodNode(propertySchema, depth + 1, enumValueLimit);
+      const optional = required.has(key) ? rendered : `${rendered}.optional()`;
+      const defaultValue =
+        propertySchema &&
+        typeof propertySchema === "object" &&
+        !Array.isArray(propertySchema) &&
+        Object.hasOwn(propertySchema, "default")
+          ? JSON.stringify((propertySchema as SchemaNode).default)
+          : undefined;
+      const defaultComment = defaultValue === undefined ? "" : ` // default=${defaultValue}`;
+      return `${inner}${renderKey(key)}: ${optional},${defaultComment}`;
+    });
+    return `z.object({\n${lines.join("\n")}\n${"  ".repeat(depth)}})`;
+  }
+
+  if (type === "array") {
+    return `z.array(${renderZodNode(schema.items, depth, enumValueLimit)})`;
+  }
+
+  return renderZodPrimitive(type);
+}
+
+function renderNode(node: unknown, depth: number): string {
   if (node === true) return "unknown";
   if (!node || typeof node !== "object" || Array.isArray(node)) return "unknown";
   const schema = node as SchemaNode;
 
   if (Array.isArray(schema.enum)) {
     const renderedValues = schema.enum.map((value) => JSON.stringify(value));
-    if (enumValueLimit !== undefined && renderedValues.length > enumValueLimit) {
-      const remainderCount = renderedValues.length - enumValueLimit;
-      return `${renderedValues.slice(0, enumValueLimit).join(" | ")} … (+${remainderCount})`;
-    }
     return renderedValues.join(" | ");
   }
   if (schema.const !== undefined) return JSON.stringify(schema.const);
 
   const variants = (schema.anyOf ?? schema.oneOf) as unknown;
   if (Array.isArray(variants) && variants.length > 0) {
-    return [...new Set(variants.map((variant) => renderNode(variant, depth, enumValueLimit)))].join(
-      " | ",
-    );
+    return [...new Set(variants.map((variant) => renderNode(variant, depth)))].join(" | ");
   }
 
   const type = schema.type;
@@ -60,13 +140,13 @@ function renderNode(node: unknown, depth: number, enumValueLimit?: number): stri
     const inner = "  ".repeat(depth + 1);
     const lines = keys.map(
       (key) =>
-        `${inner}${renderKey(key)}${required.has(key) ? "" : "?"}: ${renderNode(properties[key], depth + 1, enumValueLimit)}`,
+        `${inner}${renderKey(key)}${required.has(key) ? "" : "?"}: ${renderNode(properties[key], depth + 1)}`,
     );
     return `{\n${lines.join("\n")}\n${"  ".repeat(depth)}}`;
   }
 
   if (type === "array") {
-    const item = renderNode(schema.items, depth, enumValueLimit);
+    const item = renderNode(schema.items, depth);
     // 유니온 요소는 괄호가 없으면 `A | B[]` 로 잘못 읽힌다.
     if (item.includes(" | ")) return `(${item})[]`;
     return `${item}[]`;
@@ -80,14 +160,9 @@ export function renderParsedJsonSchemaTypeText(schema: unknown, name = "Response
   return `type ${name} = ${renderNode(schema, 0)}`;
 }
 
-/** 도구 파라미터 한 개의 표시 타입. enum 축약이 없으면 전체 타입을 중복하지 않는다. */
-export function renderJsonSchemaPropertyTypeText(
-  schema: unknown,
-  enumValueLimit?: number,
-): { type: string; fullType?: string } {
-  const type = renderNode(schema, 0, enumValueLimit);
-  const fullType = renderNode(schema, 0);
-  return type === fullType ? { type } : { type, fullType };
+/** Tool input 계약용 표시 전용 Zod shape. 검증 제약은 의도적으로 생략한다. */
+export function renderJsonSchemaZodShapeText(schema: unknown, enumValueLimit?: number): string {
+  return renderZodNode(schema, 0, enumValueLimit);
 }
 
 /** 실패(파싱 불가 등) 시 null — 호출부가 표시 자체를 생략한다. */

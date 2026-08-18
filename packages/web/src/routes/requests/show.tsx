@@ -13,11 +13,7 @@ import CopyIcon from "~icons/lucide/copy";
 import XIcon from "~icons/lucide/x";
 
 import { cacheHitRate, formatMicroUsd } from "@/lib/cost";
-import {
-  type ToolDefinitions,
-  type ToolParameterView,
-  type ToolView,
-} from "@/services/request-log/request-log.types";
+import { type ToolDefinitions, type ToolView } from "@/services/request-log/request-log.types";
 import { RequestLogService, RequestLogStepService } from "@/services/services.generated";
 import {
   type RequestLogStepSubsetMapping,
@@ -990,8 +986,6 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
 const TOOL_NAME_PREVIEW_CHARACTERS = 60;
 const TOOL_NAME_COMPACT_PREVIEW_CHARACTERS = 30;
 const TOOL_NAME_MOBILE_PREVIEW_CHARACTERS = 18;
-const TOOL_DESCRIPTION_PREVIEW_CHARACTERS = 180;
-const TOOL_PARAMETER_PREVIEW_COUNT = 5;
 
 function toolNamePreview(
   tools: ToolDefinitions,
@@ -1039,106 +1033,24 @@ function ToolsHeaderMetadata({ tools }: { tools: ToolDefinitions }) {
   );
 }
 
-function ToolDescription({ description }: { description: string }) {
-  if (description.length <= TOOL_DESCRIPTION_PREVIEW_CHARACTERS) {
-    return <p className="text-[12px] leading-relaxed text-sand-700">{description}</p>;
-  }
-
-  const preview = `${description.slice(0, TOOL_DESCRIPTION_PREVIEW_CHARACTERS).trimEnd()}…`;
+function ToolInputZod({ code, fullCode }: { code: string; fullCode?: string }) {
+  const highlighted = useMemo(() => highlightTypeText(code), [code]);
   return (
-    <details className="group/description">
-      <summary className="cursor-pointer list-none text-[12px] leading-relaxed text-sand-700">
-        <span className="group-open/description:hidden">
-          <span>{preview}</span>{" "}
-          <span className="font-medium text-sienna-500">Show full description</span>
-        </span>
-        <span className="hidden font-medium text-sienna-500 group-open/description:inline">
-          Hide description
-        </span>
-      </summary>
-      <p className="mt-2 text-[12px] leading-relaxed text-sand-700">{description}</p>
-    </details>
-  );
-}
-
-function ParameterType({ parameter }: { parameter: ToolParameterView }) {
-  const classes =
-    "inline-flex max-w-full min-w-0 rounded bg-sand-100 px-1.5 py-0.5 font-mono text-[11px] text-sand-600";
-  if (!parameter.fullType) {
-    return <span className={classes}>{parameter.type}</span>;
-  }
-
-  return (
-    <span
-      className={`${classes} cursor-help outline-none focus-visible:ring-2 focus-visible:ring-sienna-300`}
-      tabIndex={0}
-      title={parameter.fullType}
+    <pre
+      data-zod-parameter-shape
+      className={`max-h-64 overflow-auto rounded-md bg-sand-900 px-3 py-2.5 font-mono text-[11px] leading-relaxed whitespace-pre text-sand-200 ${fullCode ? "cursor-help outline-none focus-visible:ring-2 focus-visible:ring-sienna-300" : ""}`}
+      tabIndex={fullCode ? 0 : undefined}
+      title={fullCode}
     >
-      <span className="truncate" aria-hidden="true">
-        {parameter.type}
-      </span>
-      <span className="sr-only">{parameter.fullType}</span>
-    </span>
-  );
-}
-
-function ToolParameterRow({ parameter }: { parameter: ToolParameterView }) {
-  return (
-    <div className="min-w-0 rounded-md border border-sand-100 bg-white px-3 py-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="max-w-full break-all font-mono text-[12px] font-medium text-sand-800">
-          {parameter.name}
-        </span>
-        {!parameter.required && (
-          <span className="shrink-0 text-[10px] font-medium text-sand-400">optional</span>
-        )}
-        <ParameterType parameter={parameter} />
-        {parameter.defaultValue !== null && (
-          <span className="max-w-full break-all font-mono text-[10px] text-sand-500">
-            default={parameter.defaultValue}
-          </span>
-        )}
-      </div>
-      {parameter.description && (
-        <p className="mt-1 break-words text-[11px] leading-relaxed text-sand-500">
-          {parameter.description}
-        </p>
+      {fullCode ? (
+        <>
+          <span aria-hidden="true">{highlighted}</span>
+          <span className="sr-only">{fullCode}</span>
+        </>
+      ) : (
+        highlighted
       )}
-    </div>
-  );
-}
-
-function ToolParameters({ parameters }: { parameters: ToolParameterView[] }) {
-  const visible = parameters.slice(0, TOOL_PARAMETER_PREVIEW_COUNT);
-  const remainder = parameters.slice(TOOL_PARAMETER_PREVIEW_COUNT);
-
-  if (parameters.length === 0) {
-    return <p className="text-[11px] text-sand-400">No parameters.</p>;
-  }
-
-  return (
-    <div className="space-y-1.5">
-      {visible.map((parameter) => (
-        <ToolParameterRow key={parameter.name} parameter={parameter} />
-      ))}
-      {remainder.length > 0 && (
-        <details className="group/parameters">
-          <summary className="cursor-pointer list-none px-1 py-1 text-[11px] font-medium text-sienna-500">
-            <span className="group-open/parameters:hidden">
-              +{remainder.length} parameters · Show
-            </span>
-            <span className="hidden group-open/parameters:inline">
-              Hide {remainder.length} parameters
-            </span>
-          </summary>
-          <div className="mt-1.5 space-y-1.5">
-            {remainder.map((parameter) => (
-              <ToolParameterRow key={parameter.name} parameter={parameter} />
-            ))}
-          </div>
-        </details>
-      )}
-    </div>
+    </pre>
   );
 }
 
@@ -1147,15 +1059,13 @@ function ToolCard({ tool }: { tool: ToolView }) {
     <div className="min-w-0 rounded-md border border-sand-100 bg-sand-50/70 p-3">
       <div className="break-all font-mono text-[13px] font-semibold text-sand-900">{tool.name}</div>
       {tool.description && (
-        <div className="mt-2">
-          <ToolDescription description={tool.description} />
-        </div>
+        <p className="mt-2 text-[12px] leading-relaxed text-sand-700">{tool.description}</p>
       )}
       <div className="mt-3">
         <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-sand-400">
-          Parameters ({tool.parameters.length})
+          Parameters ({tool.parameterCount})
         </div>
-        <ToolParameters parameters={tool.parameters} />
+        <ToolInputZod code={tool.inputZod} fullCode={tool.fullInputZod} />
       </div>
     </div>
   );

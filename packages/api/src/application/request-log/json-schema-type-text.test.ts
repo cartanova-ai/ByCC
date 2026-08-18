@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  renderJsonSchemaZodShapeText,
   renderJsonSchemaTypeText,
-  renderJsonSchemaPropertyTypeText,
   renderParsedJsonSchemaTypeText,
 } from "./json-schema-type-text";
 
@@ -133,45 +133,78 @@ describe("renderJsonSchemaTypeText", () => {
   });
 });
 
-describe("renderJsonSchemaPropertyTypeText", () => {
-  const values = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
-
-  it("returns only the type when an enum fits within the value limit", () => {
-    expect(renderJsonSchemaPropertyTypeText({ enum: values.slice(0, 6) }, 6)).toEqual({
-      type: '"one" | "two" | "three" | "four" | "five" | "six"',
-    });
-  });
-
-  it("returns compact and full types when an enum exceeds the value limit", () => {
-    expect(renderJsonSchemaPropertyTypeText({ enum: values }, 6)).toEqual({
-      type: '"one" | "two" | "three" | "four" | "five" | "six" … (+2)',
-      fullType: '"one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight"',
-    });
-  });
-
-  it("threads the enum limit through arrays and nested objects", () => {
+describe("renderJsonSchemaZodShapeText", () => {
+  it("renders a compact object shape with required, optional, and default annotations", () => {
     expect(
-      renderJsonSchemaPropertyTypeText(
+      renderJsonSchemaZodShapeText(
         {
           type: "object",
           properties: {
-            choices: { type: "array", items: { enum: values } },
+            limit: { type: "integer", default: 10, maximum: 100 },
+            query: { type: "string", minLength: 1, pattern: "^[a-z]+$" },
           },
-          required: ["choices"],
+          required: ["query"],
         },
         6,
       ),
-    ).toEqual({
-      type: [
-        "{",
-        '  choices: ("one" | "two" | "three" | "four" | "five" | "six" … (+2))[]',
-        "}",
+    ).toBe(
+      [
+        "z.object({",
+        "  query: z.string(),",
+        "  limit: z.number().optional(), // default=10",
+        "})",
       ].join("\n"),
-      fullType: [
-        "{",
-        '  choices: ("one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight")[]',
-        "}",
+    );
+  });
+
+  it("shortens long string enums with an inline remainder comment", () => {
+    expect(
+      renderJsonSchemaZodShapeText(
+        {
+          type: "object",
+          properties: {
+            mode: { enum: ["one", "two", "three", "four", "five", "six", "seven", "eight"] },
+          },
+          required: ["mode"],
+        },
+        6,
+      ),
+    ).toBe(
+      [
+        "z.object({",
+        '  mode: z.enum(["one", "two", "three", "four", "five", "six" /* +2 */]),',
+        "})",
       ].join("\n"),
-    });
+    );
+  });
+
+  it("renders nested objects, arrays, unions, literals, and unknown nodes", () => {
+    expect(
+      renderJsonSchemaZodShapeText({
+        type: "object",
+        properties: {
+          filters: {
+            type: "object",
+            properties: {
+              tags: { type: "array", items: { type: "string" } },
+              value: { anyOf: [{ const: 1 }, { type: "boolean" }] },
+            },
+            required: ["tags"],
+          },
+          opaque: { format: "custom" },
+        },
+        required: ["filters", "opaque"],
+      }),
+    ).toBe(
+      [
+        "z.object({",
+        "  filters: z.object({",
+        "    tags: z.array(z.string()),",
+        "    value: z.union([z.literal(1), z.boolean()]).optional(),",
+        "  }),",
+        "  opaque: z.unknown(),",
+        "})",
+      ].join("\n"),
+    );
   });
 });

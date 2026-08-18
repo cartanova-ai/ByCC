@@ -27,20 +27,12 @@ export type ToolDefinitions = z.infer<typeof ToolDefinitions>;
 
 // request-log detail 화면이 소비하는 tool 계약 projection. API 반환 타입은 Sonamu
 // syncer 가 모듈을 해석할 수 있도록 type-only 선언 대신 Zod schema 로 둔다.
-export const ToolParameterView = z.object({
-  name: z.string(),
-  type: z.string(),
-  fullType: z.string().optional(),
-  required: z.boolean(),
-  defaultValue: z.string().nullable(),
-  description: z.string().optional(),
-});
-export type ToolParameterView = z.infer<typeof ToolParameterView>;
-
 export const ToolView = z.object({
   name: z.string(),
   description: z.string().optional(),
-  parameters: ToolParameterView.array(),
+  parameterCount: z.number(),
+  inputZod: z.string(),
+  fullInputZod: z.string().optional(),
 });
 export type ToolView = z.infer<typeof ToolView>;
 

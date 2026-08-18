@@ -15,7 +15,7 @@ import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogSubsetKey, type RequestLogSubsetMapping } from "../sonamu.generated";
 import { requestLogLoaderQueries, requestLogSubsetQueries } from "../sonamu.generated.sso";
 import {
-  renderJsonSchemaPropertyTypeText,
+  renderJsonSchemaZodShapeText,
   renderParsedJsonSchemaTypeText,
 } from "./json-schema-type-text";
 import {
@@ -31,8 +31,6 @@ export const MICRO_USD = 1_000_000;
 const REQUEST_LOG_RUN_LOCK_CLASS_ID = 718;
 const TOOL_ENUM_VALUE_LIMIT = 6;
 
-type ToolPropertySchema = Record<string, unknown>;
-
 function decodeStoredTools(value: unknown): ToolDefinitions | null {
   if (!value) return null;
   if (typeof value !== "string") return value as ToolDefinitions;
@@ -41,11 +39,6 @@ function decodeStoredTools(value: unknown): ToolDefinitions | null {
   } catch {
     return null;
   }
-}
-
-function renderToolDefaultValue(schema: ToolPropertySchema): string | null {
-  if (!Object.hasOwn(schema, "default")) return null;
-  return JSON.stringify(schema.default) ?? null;
 }
 
 type ToolResultContinuation = {
@@ -467,26 +460,17 @@ class RequestLogModelClass extends BaseModelClass<
 
     return tools.map((tool) => {
       const inputSchema = tool.inputSchema as {
-        properties: Record<string, ToolPropertySchema>;
-        required?: string[];
+        properties: Record<string, unknown>;
       };
-      const requiredNames = new Set(inputSchema.required ?? []);
-      const entries = Object.entries(inputSchema.properties);
-      const orderedEntries = [
-        ...entries.filter(([name]) => requiredNames.has(name)),
-        ...entries.filter(([name]) => !requiredNames.has(name)),
-      ];
+      const inputZod = renderJsonSchemaZodShapeText(inputSchema, TOOL_ENUM_VALUE_LIMIT);
+      const fullInputZod = renderJsonSchemaZodShapeText(inputSchema);
 
       return {
         name: tool.name,
         ...(tool.description !== undefined ? { description: tool.description } : {}),
-        parameters: orderedEntries.map(([name, schema]) => ({
-          name,
-          ...renderJsonSchemaPropertyTypeText(schema, TOOL_ENUM_VALUE_LIMIT),
-          required: requiredNames.has(name),
-          defaultValue: renderToolDefaultValue(schema),
-          ...(typeof schema.description === "string" ? { description: schema.description } : {}),
-        })),
+        parameterCount: Object.keys(inputSchema.properties).length,
+        inputZod,
+        ...(inputZod !== fullInputZod ? { fullInputZod } : {}),
       };
     });
   }
