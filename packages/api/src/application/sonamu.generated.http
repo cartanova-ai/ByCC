@@ -281,6 +281,12 @@ Content-Type: application/json
 
 ###
 
+GET {{baseUrl}}/api/requestLog/toolsView
+	?id=0
+Content-Type: application/json
+
+###
+
 POST {{baseUrl}}/api/requestLog/del
 Content-Type: application/json
 

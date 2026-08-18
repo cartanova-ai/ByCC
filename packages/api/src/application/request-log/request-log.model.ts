@@ -14,17 +14,39 @@ import { SD } from "../../i18n/sd.generated";
 import { calculateCostUsd } from "../../utils/providers/common/model-cost";
 import { type RequestLogSubsetKey, type RequestLogSubsetMapping } from "../sonamu.generated";
 import { requestLogLoaderQueries, requestLogSubsetQueries } from "../sonamu.generated.sso";
-import { renderParsedJsonSchemaTypeText } from "./json-schema-type-text";
+import {
+  renderJsonSchemaPropertyTypeText,
+  renderParsedJsonSchemaTypeText,
+} from "./json-schema-type-text";
 import {
   type RequestLogListParams,
   type RequestLogSaveParams,
   type ToolDefinitions,
+  type ToolView,
 } from "./request-log.types";
 import { formatZodCode } from "./zod-code-format";
 
 // cost_usd는 정수 micro-USD로 저장. 실제 USD = cost_usd / MICRO_USD.
 export const MICRO_USD = 1_000_000;
 const REQUEST_LOG_RUN_LOCK_CLASS_ID = 718;
+const TOOL_ENUM_VALUE_LIMIT = 6;
+
+type ToolPropertySchema = Record<string, unknown>;
+
+function decodeStoredTools(value: unknown): ToolDefinitions | null {
+  if (!value) return null;
+  if (typeof value !== "string") return value as ToolDefinitions;
+  try {
+    return JSON.parse(value) as ToolDefinitions;
+  } catch {
+    return null;
+  }
+}
+
+function renderToolDefaultValue(schema: ToolPropertySchema): string | null {
+  if (!Object.hasOwn(schema, "default")) return null;
+  return JSON.stringify(schema.default) ?? null;
+}
 
 type ToolResultContinuation = {
   toolCallId: string;
@@ -424,6 +446,49 @@ class RequestLogModelClass extends BaseModelClass<
       zod = null;
     }
     return { typescript: renderParsedJsonSchemaTypeText(parsed), zod };
+  }
+
+  // ── Tool Contract View
+
+  /**
+   * 요청에 장착된 tool 계약을 detail 화면용으로 축약한다. JSONB 는 이미 decode 된
+   * 배열로 오며 문자열인 경우만 방어적으로 parse 한다. 저장된 QgridTool 계약은
+   * 전수 검사로 확인됐으므로 항목별 보정이나 unreadable sentinel 은 만들지 않는다.
+   */
+  @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
+  async toolsView(id: number): Promise<ToolView[]> {
+    const row = (await this.getPuri("r")
+      .from("request_logs")
+      .select({ tools: "request_logs.tools" })
+      .where("request_logs.id", id)
+      .first()) as { tools: unknown } | undefined;
+    const tools = decodeStoredTools(row?.tools);
+    if (!tools) return [];
+
+    return tools.map((tool) => {
+      const inputSchema = tool.inputSchema as {
+        properties: Record<string, ToolPropertySchema>;
+        required?: string[];
+      };
+      const requiredNames = new Set(inputSchema.required ?? []);
+      const entries = Object.entries(inputSchema.properties);
+      const orderedEntries = [
+        ...entries.filter(([name]) => requiredNames.has(name)),
+        ...entries.filter(([name]) => !requiredNames.has(name)),
+      ];
+
+      return {
+        name: tool.name,
+        ...(tool.description !== undefined ? { description: tool.description } : {}),
+        parameters: orderedEntries.map(([name, schema]) => ({
+          name,
+          ...renderJsonSchemaPropertyTypeText(schema, TOOL_ENUM_VALUE_LIMIT),
+          required: requiredNames.has(name),
+          defaultValue: renderToolDefaultValue(schema),
+          ...(typeof schema.description === "string" ? { description: schema.description } : {}),
+        })),
+      };
+    });
   }
 
   // ── Run Lifecycle ──────────────────────────────────────────────

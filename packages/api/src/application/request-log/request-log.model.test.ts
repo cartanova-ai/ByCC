@@ -28,6 +28,22 @@ function mockTransactionalWritePuri(transactionPuri: unknown) {
   return transaction;
 }
 
+function mockToolsViewQuery(row: { tools: unknown } | undefined) {
+  const chain = {
+    select: vi.fn(),
+    where: vi.fn(),
+    first: vi.fn(async () => row),
+  };
+  chain.select.mockReturnValue(chain);
+  chain.where.mockReturnValue(chain);
+  const from = vi.fn(() => chain);
+  vi.spyOn(
+    RequestLogModel as unknown as { getPuri: () => { from: typeof from } },
+    "getPuri",
+  ).mockReturnValue({ from });
+  return { chain, from };
+}
+
 describe("RequestLogModel TTFT", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -105,6 +121,148 @@ describe("RequestLogModel TTFT", () => {
         ttft_ms: 0,
       }),
     );
+  });
+});
+
+describe("RequestLogModel toolsView", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns a display-ready required-first contract from the decoded JSONB value", async () => {
+    const tools = [
+      {
+        name: "search",
+        description: "Search indexed records",
+        inputSchema: {
+          type: "object",
+          properties: {
+            optionalEmpty: { type: "string", default: "" },
+            requiredEnum: {
+              enum: ["one", "two", "three", "four", "five", "six", "seven", "eight"],
+              description: "Search mode",
+            },
+            requiredFalse: { type: "boolean", default: false },
+            requiredZero: { type: "integer", default: 0 },
+            optionalNull: { type: ["string", "null"], default: null, description: 42 },
+            optionalAbsent: { type: "string", description: "Optional note" },
+          },
+          required: ["requiredEnum", "requiredFalse", "requiredZero"],
+        },
+      },
+      {
+        name: "ping",
+        inputSchema: {
+          type: "object",
+          properties: { message: { type: "string" } },
+          required: ["message"],
+        },
+      },
+    ];
+    const { chain, from } = mockToolsViewQuery({ tools });
+
+    await expect(RequestLogModel.toolsView(7)).resolves.toEqual([
+      {
+        name: "search",
+        description: "Search indexed records",
+        parameters: [
+          {
+            name: "requiredEnum",
+            type: '"one" | "two" | "three" | "four" | "five" | "six" … (+2)',
+            fullType:
+              '"one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight"',
+            required: true,
+            defaultValue: null,
+            description: "Search mode",
+          },
+          {
+            name: "requiredFalse",
+            type: "boolean",
+            required: true,
+            defaultValue: "false",
+          },
+          {
+            name: "requiredZero",
+            type: "number",
+            required: true,
+            defaultValue: "0",
+          },
+          {
+            name: "optionalEmpty",
+            type: "string",
+            required: false,
+            defaultValue: '""',
+          },
+          {
+            name: "optionalNull",
+            type: "string | null",
+            required: false,
+            defaultValue: "null",
+          },
+          {
+            name: "optionalAbsent",
+            type: "string",
+            required: false,
+            defaultValue: null,
+            description: "Optional note",
+          },
+        ],
+      },
+      {
+        name: "ping",
+        parameters: [
+          {
+            name: "message",
+            type: "string",
+            required: true,
+            defaultValue: null,
+          },
+        ],
+      },
+    ]);
+
+    expect(from).toHaveBeenCalledWith("request_logs");
+    expect(chain.select).toHaveBeenCalledWith({ tools: "request_logs.tools" });
+    expect(chain.where).toHaveBeenCalledWith("request_logs.id", 7);
+    expect(chain.first).toHaveBeenCalledTimes(1);
+  });
+
+  it("defensively decodes string storage without changing the view contract", async () => {
+    mockToolsViewQuery({
+      tools: JSON.stringify([
+        {
+          name: "lookup",
+          description: "Look up one record",
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+          },
+        },
+      ]),
+    });
+
+    await expect(RequestLogModel.toolsView(11)).resolves.toEqual([
+      {
+        name: "lookup",
+        description: "Look up one record",
+        parameters: [
+          { name: "id", type: "string", required: true, defaultValue: null },
+        ],
+      },
+    ]);
+  });
+
+  it.each([
+    ["a missing row", undefined],
+    ["null tools", { tools: null }],
+    ["an empty decoded array", { tools: [] }],
+    ["empty stored text", { tools: "" }],
+    ["invalid stored JSON", { tools: "{broken" }],
+  ])("returns an empty view for %s", async (_label, row) => {
+    mockToolsViewQuery(row);
+
+    await expect(RequestLogModel.toolsView(12)).resolves.toEqual([]);
   });
 });
 

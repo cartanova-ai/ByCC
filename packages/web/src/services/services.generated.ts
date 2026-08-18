@@ -33,7 +33,11 @@ import {
   RequestLogStepListParams,
   RequestLogStepSaveParams,
 } from "./request-log-step/request-log-step.types";
-import { RequestLogListParams, RequestLogSaveParams } from "./request-log/request-log.types";
+import {
+  RequestLogListParams,
+  RequestLogSaveParams,
+  ToolView,
+} from "./request-log/request-log.types";
 import {
   SettingListParams,
   SettingsResponse,
@@ -634,6 +638,27 @@ export namespace RequestLogService {
     useRefreshable(
       useQuery({
         ...responseTypeTsQueryOptions(id),
+        ...options,
+      }),
+    );
+
+  export async function toolsView(id: number): Promise<ToolView[]> {
+    return fetch({
+      method: "GET",
+      url: `/api/requestLog/toolsView?${qs.stringify({ id })}`,
+    });
+  }
+
+  export const toolsViewQueryOptions = (id: number) =>
+    queryOptions({
+      queryKey: ["RequestLog", "toolsView", id],
+      queryFn: () => toolsView(id),
+    });
+
+  export const useToolsView = (id: number, options?: { enabled?: boolean }) =>
+    useRefreshable(
+      useQuery({
+        ...toolsViewQueryOptions(id),
         ...options,
       }),
     );

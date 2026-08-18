@@ -97,6 +97,9 @@ export namespace RequestLogService {
 
   export const responseTypeTs = (id: number): SSRQuery =>
     createSSRQuery("RequestLogModel", "responseTypeTs", [id], ["RequestLog", "responseTypeTs"]);
+
+  export const toolsView = (id: number): SSRQuery =>
+    createSSRQuery("RequestLogModel", "toolsView", [id], ["RequestLog", "toolsView"]);
 }
 
 export namespace QgridService {
