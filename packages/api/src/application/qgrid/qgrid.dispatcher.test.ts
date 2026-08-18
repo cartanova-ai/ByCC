@@ -257,6 +257,22 @@ describe("QgridDispatcherClass", () => {
     expect(req.coldInput).toEqual([{ type: "text", text: "next", text_elements: [] }]);
   });
 
+  it("Anthropic query 는 내부 preferredTokenId 를 provider 로 전달한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (_req: GenerateRequest) =>
+      providerResult({ model: "claude-sonnet-4-6" }),
+    );
+    dispatcher.anthropicDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "keepalive",
+      model: "anthropic/claude-haiku-4-5",
+      preferredTokenId: 7,
+    });
+
+    expect(generate.mock.calls[0]![0].preferredTokenId).toBe(7);
+  });
+
   it("Anthropic query 에도 imageGeneration 플래그를 전달해 provider 가 명시적으로 거부하게 한다", async () => {
     const dispatcher = new QgridDispatcherClass();
     const generate = vi.fn(async (_req: GenerateRequest) =>
@@ -313,6 +329,25 @@ describe("QgridDispatcherClass", () => {
         }),
       }),
     );
+  });
+
+  it("Anthropic queryStream 은 내부 preferredTokenId 를 provider 로 전달한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generateStream = vi.fn(async (_req, cb) => {
+      cb.onComplete(providerResult({ model: "claude-sonnet-4-6" }));
+    });
+    dispatcher.anthropicDispatcher = { generateStream } as never;
+
+    await dispatcher.queryStream(
+      {
+        prompt: "keepalive",
+        model: "anthropic/claude-haiku-4-5",
+        preferredTokenId: 7,
+      },
+      { onDelta: vi.fn(), onComplete: vi.fn(), onError: vi.fn() },
+    );
+
+    expect(generateStream.mock.calls[0]![0].preferredTokenId).toBe(7);
   });
 
   it("Anthropic queryStream 에도 imageGeneration 플래그를 전달해 provider 가 명시적으로 거부하게 한다", async () => {

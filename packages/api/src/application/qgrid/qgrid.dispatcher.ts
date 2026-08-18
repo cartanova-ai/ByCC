@@ -40,6 +40,8 @@ import { type TokenSubscriber } from "./token-subscriber";
 import { applyToolCallEmulation } from "./tool-emulation";
 import { buildToolCallSchema } from "./tool-emulation-schema";
 
+export type InternalQueryInput = QueryInput & { preferredTokenId?: number };
+
 export class QgridDispatcherClass {
   tokens = new Map<number, TokenSubsetA>();
 
@@ -105,7 +107,7 @@ export class QgridDispatcherClass {
     }));
   }
 
-  async query(input: QueryInput, abortSignal?: AbortSignal): Promise<QueryOutput> {
+  async query(input: InternalQueryInput, abortSignal?: AbortSignal): Promise<QueryOutput> {
     const route = parseProviderRoute(input.model);
     const outputSchema = buildAndValidateStrictOutputSchema(input, route.provider);
     // answer 인코딩 판정: jsonSchema 있으면 사용자 스키마 JSON, 없으면 평문 string. 4개 방출 지점이 공유.
@@ -164,6 +166,7 @@ export class QgridDispatcherClass {
         abortSignal,
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
+        preferredTokenId: input.preferredTokenId,
         imageGeneration: input.imageGeneration,
         imageGenerationOptions: input.imageGenerationOptions,
       });
@@ -178,7 +181,7 @@ export class QgridDispatcherClass {
   }
 
   async queryStream(
-    input: QueryInput,
+    input: InternalQueryInput,
     cb: StreamCallbacks<QueryOutput>,
     abortSignal?: AbortSignal,
   ): Promise<void> {
@@ -257,6 +260,7 @@ export class QgridDispatcherClass {
           effort: input.effort,
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
+          preferredTokenId: input.preferredTokenId,
           timeoutMs: input.timeout,
           abortSignal,
           imageGeneration: input.imageGeneration,

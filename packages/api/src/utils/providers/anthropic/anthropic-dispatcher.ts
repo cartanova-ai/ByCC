@@ -161,9 +161,16 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     this.weightedSelector.removeToken(id);
   }
 
-  // quota 통과 후보만으로 요청마다 smooth weighted round-robin 선택한다.
-  private async selectToken(): Promise<PooledToken | null> {
-    const rows = [...this.tokenPool.values()];
+  // 지정 요청은 해당 토큰만 quota 판정하고 weighted 상태를 건드리지 않는다.
+  // 미지정 요청만 quota 통과 후보로 smooth weighted round-robin 을 진행한다.
+  private async selectToken(preferredTokenId?: number): Promise<PooledToken | null> {
+    const preferred =
+      preferredTokenId === undefined ? undefined : this.tokenPool.get(preferredTokenId);
+    if (preferredTokenId !== undefined && !preferred) {
+      throw new Error(`Preferred anthropic token ${preferredTokenId} is not available`);
+    }
+
+    const rows = preferred ? [preferred] : [...this.tokenPool.values()];
     if (rows.length === 0) return null;
     const { eligible, overThresholdTokens } = await this.filterEligibleTokens(rows);
     if (eligible.length === 0) {
@@ -178,6 +185,8 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         quotaThresholdExceededMessage("anthropic", overThresholdTokens),
       );
     }
+
+    if (preferred) return preferred;
 
     const selectedId = this.weightedSelector.select(new Set(eligible.map((token) => token.id)));
     if (selectedId === null) return null;
@@ -305,7 +314,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     const model = canonicalAnthropicModel(req.model);
     const jsonSchema = serializeAndValidateDispatchSchema(req.outputSchema, "anthropic");
 
-    const token = await this.selectToken();
+    const token = await this.selectToken(req.preferredTokenId);
     if (!token) throw new Error("No anthropic tokens available");
 
     const exec = async (): Promise<GenerateResult> => {

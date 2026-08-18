@@ -249,6 +249,52 @@ describe("AnthropicDispatcher", () => {
     expect(readAnthropicQuotaUsageMock).not.toHaveBeenCalled();
   });
 
+  it("preferredTokenId 가 있으면 가중 선택과 무관하게 그 토큰을 고른다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 10);
+    d.onTokenAdded(2, "tok-B", creds(), null, 1);
+
+    const result = await d.generate(baseReq({ preferredTokenId: 2 }));
+
+    expect(result.tokenName).toBe("tok-B");
+  });
+
+  it("preferredTokenId 가 풀에 없으면 다른 토큰으로 대체하지 않는다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+
+    await expect(d.generate(baseReq({ preferredTokenId: 99 }))).rejects.toThrow(
+      "Preferred anthropic token 99 is not available",
+    );
+    expect(runClaudeSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("지정 토큰이 threshold 를 넘으면 eligible 토큰으로 대체하지 않는다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+    d.onTokenAdded(2, "tok-B", creds(), 80, 1);
+    readAnthropicQuotaUsageMock.mockResolvedValueOnce(quotaOk(80));
+
+    const error = await d.generate(baseReq({ preferredTokenId: 2 })).catch((e) => e);
+
+    expect(error).toBeInstanceOf(QuotaThresholdExceededError);
+    expect(error.message).toBe(
+      "All anthropic tokens exceeded quota threshold: tok-B (threshold 80%)",
+    );
+    expect(readAnthropicQuotaUsageMock).toHaveBeenCalledTimes(1);
+    expect(runClaudeSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("지정 선택은 다음 비지정 요청의 가중 선택 상태를 소비하지 않는다", async () => {
+    const d = new AnthropicDispatcher();
+    d.onTokenAdded(1, "tok-A", creds(), null, 1);
+    d.onTokenAdded(2, "tok-B", creds(), null, 2);
+
+    expect((await d.generate(baseReq())).tokenName).toBe("tok-B");
+    expect((await d.generate(baseReq({ preferredTokenId: 2 }))).tokenName).toBe("tok-B");
+    expect((await d.generate(baseReq())).tokenName).toBe("tok-A");
+  });
+
   it("recomputes weighted selection from quota-eligible tokens", async () => {
     const d = new AnthropicDispatcher();
     d.onTokenAdded(1, "tok-A", creds(), 80, 10);
