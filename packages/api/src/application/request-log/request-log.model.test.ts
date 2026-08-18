@@ -219,12 +219,16 @@ describe("RequestLogModel toolsView", () => {
     ]);
   });
 
-  it("renders schemas without properties without failing the entire tool contract", async () => {
+  // inputSchema 는 QgridTool 상 z.unknown() 이라 키 누락·null 도 wire 검증을 통과한다.
+  // 하나가 터지면 map 전체가 죽어 그 요청의 tool 계약이 통째로 사라지므로 개별 정규화한다.
+  it("renders unusable input schemas without failing the entire tool contract", async () => {
     mockToolsViewQuery({
       tools: [
         { name: "unknown_input", inputSchema: {} },
         { name: "empty_object_input", inputSchema: { type: "object" } },
         { name: "string_input", inputSchema: { type: "string" } },
+        { name: "null_input", inputSchema: null },
+        { name: "absent_input" },
       ],
     });
 
@@ -243,6 +247,16 @@ describe("RequestLogModel toolsView", () => {
         name: "string_input",
         parameterCount: 0,
         inputZod: "z.string()",
+      },
+      {
+        name: "null_input",
+        parameterCount: 0,
+        inputZod: "z.unknown()",
+      },
+      {
+        name: "absent_input",
+        parameterCount: 0,
+        inputZod: "z.unknown()",
       },
     ]);
   });

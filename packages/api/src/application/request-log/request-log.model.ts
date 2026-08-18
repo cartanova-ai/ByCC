@@ -442,6 +442,8 @@ class RequestLogModelClass extends BaseModelClass<
    * 요청에 장착된 tool 계약을 detail 화면용으로 축약한다. JSONB 는 이미 decode 된
    * 배열로 오며 문자열인 경우만 방어적으로 parse 한다. 저장된 QgridTool 계약은
    * 전수 검사로 확인됐으므로 항목별 보정이나 unreadable sentinel 은 만들지 않는다.
+   * 다만 `QgridTool.inputSchema` 는 `z.unknown()` 이라 키가 없거나 null 인 값도
+   * wire 검증을 통과하므로 빈 스키마로 정규화한다 — SDK 는 `{}` 로 채워 보낸다.
    */
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
   async toolsView(id: number): Promise<ToolView[]> {
@@ -454,7 +456,7 @@ class RequestLogModelClass extends BaseModelClass<
     if (!tools) return [];
 
     return tools.map((tool) => {
-      const inputSchema = tool.inputSchema as {
+      const inputSchema = (tool.inputSchema ?? {}) as {
         properties?: Record<string, unknown>;
       };
       const inputZod = renderJsonSchemaZodShapeText(inputSchema, TOOL_ENUM_VALUE_LIMIT);
