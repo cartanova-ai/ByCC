@@ -1,12 +1,50 @@
 import { describe, expect, it } from "vitest";
 
-import { renderJsonSchemaTypeText } from "./json-schema-type-text";
+import {
+  renderJsonSchemaTypeText,
+  renderJsonSchemaPropertyTypeText,
+  renderParsedJsonSchemaTypeText,
+} from "./json-schema-type-text";
 
 function schema(value: unknown): string {
   return JSON.stringify(value);
 }
 
 describe("renderJsonSchemaTypeText", () => {
+  it("preserves the existing parsed-schema output across supported node kinds", () => {
+    expect(
+      renderParsedJsonSchemaTypeText({
+        type: "object",
+        properties: {
+          mode: { anyOf: [{ const: "fast" }, { const: "safe" }] },
+          attempts: { type: "integer" },
+          tag: { type: ["string", "null"] },
+          options: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              opaque: { format: "custom" },
+            },
+            required: ["enabled"],
+          },
+        },
+        required: ["mode", "attempts", "tag", "options"],
+      }),
+    ).toBe(
+      [
+        "type Response = {",
+        '  mode: "fast" | "safe"',
+        "  attempts: number",
+        "  tag: string | null",
+        "  options: {",
+        "    enabled: boolean",
+        "    opaque?: unknown",
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+  });
+
   it("renders a flat object with optionality from required", () => {
     const result = renderJsonSchemaTypeText(
       schema({
@@ -92,5 +130,48 @@ describe("renderJsonSchemaTypeText", () => {
 
   it("returns null on unparseable schema text", () => {
     expect(renderJsonSchemaTypeText("{broken")).toBeNull();
+  });
+});
+
+describe("renderJsonSchemaPropertyTypeText", () => {
+  const values = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
+
+  it("returns only the type when an enum fits within the value limit", () => {
+    expect(renderJsonSchemaPropertyTypeText({ enum: values.slice(0, 6) }, 6)).toEqual({
+      type: '"one" | "two" | "three" | "four" | "five" | "six"',
+    });
+  });
+
+  it("returns compact and full types when an enum exceeds the value limit", () => {
+    expect(renderJsonSchemaPropertyTypeText({ enum: values }, 6)).toEqual({
+      type: '"one" | "two" | "three" | "four" | "five" | "six" … (+2)',
+      fullType: '"one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight"',
+    });
+  });
+
+  it("threads the enum limit through arrays and nested objects", () => {
+    expect(
+      renderJsonSchemaPropertyTypeText(
+        {
+          type: "object",
+          properties: {
+            choices: { type: "array", items: { enum: values } },
+          },
+          required: ["choices"],
+        },
+        6,
+      ),
+    ).toEqual({
+      type: [
+        "{",
+        '  choices: ("one" | "two" | "three" | "four" | "five" | "six" … (+2))[]',
+        "}",
+      ].join("\n"),
+      fullType: [
+        "{",
+        '  choices: ("one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight")[]',
+        "}",
+      ].join("\n"),
+    });
   });
 });
