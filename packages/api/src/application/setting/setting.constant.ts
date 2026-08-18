@@ -17,7 +17,7 @@ export type SettingKind = "boolean" | "integer" | "number" | "string" | "secret"
  * Slack 은 "언제 보낼까"(slack)와 "어디로 보낼까"(slackConnection)를 나눈다 — 앞은 운영
  * 중 자주 만지고 뒤는 한 번 맞추면 끝이라 수명이 다르다.
  */
-export type SettingGroup = "slack" | "slackConnection";
+export type SettingGroup = "qgrid" | "slack" | "slackConnection";
 
 export type SettingDef = {
   key: string;
@@ -40,6 +40,16 @@ export type SettingDef = {
 };
 
 export const SETTING_DEFS: SettingDef[] = [
+  {
+    key: "qgrid.tokenWindowKeepaliveEnabled",
+    fallback: "true",
+    group: "qgrid",
+    envKey: "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED",
+    label: "토큰 윈도우 keepalive",
+    kind: "boolean",
+    applies: "immediate",
+    help: "끄면 활성 Anthropic 토큰의 5시간 윈도우 자동 유지 요청을 중단합니다",
+  },
   {
     key: "slack.enabled",
     fallback: "true",

@@ -4,6 +4,7 @@ import {
   KEEPALIVE_MODEL,
   KEEPALIVE_PROJECT_NAME,
   POST_KEEPALIVE_USAGE_DELAY_MS,
+  rescheduleTokenWindowKeepalive,
   startTokenWindowKeepalive,
   stopTokenWindowKeepalive,
   type TokenWindowKeepaliveDeps,
@@ -38,6 +39,7 @@ function deps(overrides: Partial<TokenWindowKeepaliveDeps> = {}): TokenWindowKee
     findTokens: vi.fn(async () => [token(1)]),
     readUsage: vi.fn(async () => usage(new Date(NOW + FIVE_HOURS_MS).toISOString())),
     dispatch: vi.fn(async () => undefined),
+    readSetting: () => "true",
     now: () => Date.now(),
     setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
     clearTimer: (handle) => clearTimeout(handle),
@@ -165,5 +167,25 @@ describe("token window keepalive", () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("스위치가 꺼져 있으면 조회나 타이머를 시작하지 않는다", async () => {
+    const testDeps = deps({ readSetting: () => "false" });
+
+    await startTokenWindowKeepalive(testDeps);
+
+    expect(testDeps.findTokens).not.toHaveBeenCalled();
+    expect(testDeps.readUsage).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("실행 중 스위치를 끄고 재예약하면 기존 타이머를 정리한다", async () => {
+    const testDeps = deps();
+    await startTokenWindowKeepalive(testDeps);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await rescheduleTokenWindowKeepalive({ ...testDeps, readSetting: () => "false" });
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

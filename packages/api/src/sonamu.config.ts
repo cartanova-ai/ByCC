@@ -15,6 +15,11 @@ import {
 } from "./application/qgrid/expired-token-reminder";
 import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
+import {
+  rescheduleTokenWindowKeepalive,
+  startTokenWindowKeepalive,
+  stopTokenWindowKeepalive,
+} from "./application/qgrid/token-window-keepalive";
 import { TokenSubscriber } from "./application/qgrid/token-subscriber";
 import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import { loadSettings, setSettingChangeHandler } from "./application/setting/setting.store";
@@ -176,6 +181,9 @@ export default defineConfig({
           if (key === "slack.expiryReminderMinutes" || key === "slack.remindersEnabled") {
             rescheduleExpiredTokenReminder();
           }
+          if (key === "qgrid.tokenWindowKeepaliveEnabled") {
+            void rescheduleTokenWindowKeepalive();
+          }
         });
 
         let triggerReady = true;
@@ -213,7 +221,11 @@ export default defineConfig({
           log.warn(`anthropic dispatcher failed: ${(e as Error).message}`);
         }
 
+        subscriber.setTokenChangeHandler(() => {
+          void rescheduleTokenWindowKeepalive();
+        });
         startExpiredTokenReminder();
+        void startTokenWindowKeepalive();
 
         const anthropicCount = QgridDispatcher.anthropicDispatcher?.tokenCount ?? 0;
         const openaiCount = QgridDispatcher.openaiDispatcher?.tokenCount ?? 0;
@@ -228,7 +240,9 @@ export default defineConfig({
       onShutdown: async () => {
         const log = getLogger(["qgrid", "startup"]);
         stopExpiredTokenReminder();
+        stopTokenWindowKeepalive();
         setSettingChangeHandler(null);
+        QgridDispatcher.subscriber?.setTokenChangeHandler(null);
         if (QgridDispatcher.openaiDispatcher) {
           await QgridDispatcher.openaiDispatcher.stop();
         }

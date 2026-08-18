@@ -12,6 +12,7 @@ import { type SettingItem, type SupervisorKind } from "@/services/setting/settin
 import { isSonamuError } from "@/services/sonamu.shared";
 
 const GROUP_LABELS: Record<string, string> = {
+  qgrid: "Qgrid",
   slack: "Slack 알림",
   slackConnection: "Slack 연결",
 };

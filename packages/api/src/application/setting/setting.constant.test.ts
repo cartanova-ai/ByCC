@@ -73,6 +73,16 @@ describe("maskSecret", () => {
 });
 
 describe("SETTING_DEFS", () => {
+  it("token window keepalive 비상 스위치를 즉시 적용 설정으로 등록한다", () => {
+    expect(findSettingDef("qgrid.tokenWindowKeepaliveEnabled")).toMatchObject({
+      group: "qgrid",
+      envKey: "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED",
+      kind: "boolean",
+      applies: "immediate",
+      fallback: "true",
+    });
+  });
+
   it("키가 중복되지 않는다", () => {
     const keys = SETTING_DEFS.map((d) => d.key);
     expect(new Set(keys).size).toBe(keys.length);

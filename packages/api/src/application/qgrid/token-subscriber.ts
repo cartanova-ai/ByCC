@@ -26,11 +26,24 @@ export class TokenSubscriber {
   connectedAt: Date | null = null;
   lastReconcileAt: Date | null = null;
   private operationChain: Promise<void> = Promise.resolve();
+  private tokenChangeHandler: (() => void) | null = null;
 
   constructor(
     public connConfig: ClientConfig,
     public dispatcher: QgridDispatcherClass,
   ) {}
+
+  setTokenChangeHandler(handler: (() => void) | null): void {
+    this.tokenChangeHandler = handler;
+  }
+
+  private notifyTokensChanged(): void {
+    try {
+      this.tokenChangeHandler?.();
+    } catch (error) {
+      logger.warn(`token change handler failed: ${(error as Error).message}`);
+    }
+  }
 
   async start(): Promise<boolean> {
     this.shutdownRequested = false;
@@ -165,6 +178,7 @@ export class TokenSubscriber {
       // anthropic 토큰 이벤트는 동기(void) — provider 를 모르므로 무해하게 항상 제거 시도.
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → removed from cache`);
+      this.notifyTokensChanged();
       return;
     }
     const row = await TokenModel.findOne("A", { id: payload.id });
@@ -175,6 +189,7 @@ export class TokenSubscriber {
         .catch((e) => logger.warn(`openai token remove failed: ${(e as Error).message}`));
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → missing, removed from cache`);
+      this.notifyTokensChanged();
       return;
     }
 
@@ -236,6 +251,7 @@ export class TokenSubscriber {
       }
     }
     logger.info(`NOTIFY ${payload.op} id=${payload.id} (${row.name}) active=${row.active}`);
+    if (row.provider === "anthropic") this.notifyTokensChanged();
   }
 
   async reconcile(): Promise<void> {
@@ -270,6 +286,7 @@ export class TokenSubscriber {
       ?.replaceTokens(openaiRows)
       .catch((e) => logger.warn(`openai reconcile failed: ${(e as Error).message}`));
     this.lastReconcileAt = new Date();
+    this.notifyTokensChanged();
   }
 
   private enqueueOperation(operation: () => Promise<void>): Promise<void> {

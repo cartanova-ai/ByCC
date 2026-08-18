@@ -104,6 +104,31 @@ describe("TokenSubscriber OpenAI notifications", () => {
     );
   });
 
+  it("Anthropic 토큰 변경 뒤 keepalive 대상 재예약을 알린다", async () => {
+    const anthropicDispatcher = { onTokenAdded: vi.fn() };
+    const subscriber = new TokenSubscriber(
+      {} as never,
+      {
+        removeCache: vi.fn(),
+        upsertCache: vi.fn(),
+        replaceCache: vi.fn(),
+        openaiDispatcher: null,
+        anthropicDispatcher,
+      } as never,
+    );
+    const onTokensChanged = vi.fn();
+    subscriber.setTokenChangeHandler(onTokensChanged);
+    findOneMock.mockResolvedValueOnce({
+      ...openaiToken(true),
+      provider: "anthropic",
+      credentials: { accessToken: "access", refreshToken: "refresh" },
+    });
+
+    await subscriber.handleNotification(JSON.stringify({ op: "INSERT", id: 1 }));
+
+    expect(onTokensChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("serializes token reloads so rapid weight updates cannot apply backward", async () => {
     let resolveFirst!: (value: ReturnType<typeof openaiToken>) => void;
     const firstRow = new Promise<ReturnType<typeof openaiToken>>((resolve) => {

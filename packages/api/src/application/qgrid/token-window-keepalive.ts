@@ -1,5 +1,6 @@
 import { getLogger } from "@logtape/logtape";
 
+import { getSetting } from "../setting/setting.store";
 import { TokenModel } from "../token/token.model";
 import { QgridFrame } from "./qgrid.frame";
 import { type InternalQueryInput } from "./qgrid.dispatcher";
@@ -15,6 +16,8 @@ const RESET_GRACE_MS = 1_000;
 export const POST_KEEPALIVE_USAGE_DELAY_MS = 61_000;
 export const KEEPALIVE_MODEL = "anthropic/claude-haiku-4-5";
 export const KEEPALIVE_PROJECT_NAME = "qgrid-token-window-keepalive";
+export const KEEPALIVE_SETTING_KEY = "qgrid.tokenWindowKeepaliveEnabled";
+export const KEEPALIVE_ENV_KEY = "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED";
 
 type KeepaliveToken = {
   id: number;
@@ -29,6 +32,7 @@ export type TokenWindowKeepaliveDeps = {
   findTokens: () => Promise<KeepaliveToken[]>;
   readUsage: (tokenId: number) => Promise<UsageResponse>;
   dispatch: (input: InternalQueryInput) => Promise<unknown>;
+  readSetting: typeof getSetting;
   now: () => number;
   setTimer: (callback: () => void, delayMs: number) => TimerHandle;
   clearTimer: (handle: TimerHandle) => void;
@@ -38,6 +42,7 @@ const defaultDeps: TokenWindowKeepaliveDeps = {
   findTokens: () => TokenModel.findActive("A"),
   readUsage: (tokenId) => QgridFrame.usage(tokenId),
   dispatch: (input) => QgridFrame.query(input),
+  readSetting: getSetting,
   now: () => Date.now(),
   setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimer: (handle) => clearTimeout(handle),
@@ -157,6 +162,10 @@ export async function startTokenWindowKeepalive(
   deps: TokenWindowKeepaliveDeps = defaultDeps,
 ): Promise<void> {
   stopTokenWindowKeepalive();
+  if (deps.readSetting(KEEPALIVE_SETTING_KEY, KEEPALIVE_ENV_KEY) === "false") {
+    logger.info("token window keepalive disabled");
+    return;
+  }
   const expectedGeneration = generation;
 
   let tokens: KeepaliveToken[];
