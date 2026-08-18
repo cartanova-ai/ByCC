@@ -36,8 +36,6 @@ export type ToolView = z.infer<typeof ToolView>;
 export const RequestLogListParams = RequestLogBaseListParams.extend({
   project_name_is_null: z.boolean().optional(),
   project_name_is_not_null: z.boolean().optional(),
-  // structured 응답이 깨진(JSON 파싱 실패) 행만 조회
-  response_json_broken: z.boolean().optional(),
 });
 export type RequestLogListParams = z.infer<typeof RequestLogListParams>;
 

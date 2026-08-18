@@ -135,7 +135,6 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
     ...(tokenFilter ? { token_name: tokenFilter } : {}),
     ...projectFilterParam,
     ...(modelFilter ? { model_name: modelFilter } : {}),
-    ...(search.broken ? { response_json_broken: true } : {}),
   };
 
   const sort = search.sort ?? "id-desc";
@@ -202,17 +201,6 @@ export function RequestLogTable({ search, onSearchChange }: RequestLogTableProps
             </option>
           ))}
         </select>
-        {/* structured 응답이 JSON 파싱에 실패한 행만. 과거 행(컬럼 도입 전)은 null 이라
-            이 필터에 잡히지 않는다 — 도입 이후 기록부터 유효하다. */}
-        <label className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-sand-700">
-          <input
-            type="checkbox"
-            checked={search.broken === true}
-            onChange={(e) => updateFilter({ broken: e.target.checked ? true : undefined })}
-            className="size-3.5 cursor-pointer accent-caution-500"
-          />
-          Broken JSON
-        </label>
         <div className="flex-1" />
         <span className="text-[11px] text-sand-400">{total} results</span>
         <span className="text-[11px] tabular-nums font-medium text-sienna-600">

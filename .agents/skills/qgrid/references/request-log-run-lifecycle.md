@@ -88,7 +88,7 @@ Structured output requests (those carrying a `jsonSchema`) persist three related
 
 - `json_schema`: the raw JSON Schema text of the request contract. Stored at `createRun`, exposed only through the server-side `responseTypeTs` conversion API (compact `type` declaration + reconstructed zod expression); the detail subset does not carry the raw text.
 - `is_structured`: boolean written at `createRun` from `json_schema` presence. Exists so the list subset can distinguish structured vs plain rows without shipping schema text; it is denormalized, so any future path that writes `json_schema` must set it too.
-- `response_json_ok`: tri-state verdict written at the succeeded `finishRun`. `true`/`false` = structured response parsed/failed `JSON.parse`; `null` = non-structured request, error/aborted run, or a row written before the column existed. The list filter `response_json_broken` matches only explicit `false`.
+- `response_json_ok`: tri-state verdict written at the succeeded `finishRun`. `true`/`false` = structured response parsed/failed `JSON.parse`; `null` = non-structured request, error/aborted run, or a row written before the column existed. The list keeps the `broken` badge for explicit `false` but exposes no dedicated filter.
 
 Reconstructed zod output cannot contain `refine`/`transform` logic — those are lost when the client serializes the schema. Rows written by servers older than 2.7.2 have all three fields empty/false/null.
 

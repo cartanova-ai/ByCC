@@ -226,7 +226,6 @@ GET {{baseUrl}}/api/requestLog/findMany
 	&rawParams[model_name]=
 	&rawParams[project_name_is_null]=false
 	&rawParams[project_name_is_not_null]=false
-	&rawParams[response_json_broken]=false
 Content-Type: application/json
 
 ###
@@ -526,7 +525,6 @@ GET {{baseUrl}}/api/qgrid/totalCost
 	&params[model_name]=
 	&params[project_name_is_null]=false
 	&params[project_name_is_not_null]=false
-	&params[response_json_broken]=false
 Content-Type: application/json
 
 ###
