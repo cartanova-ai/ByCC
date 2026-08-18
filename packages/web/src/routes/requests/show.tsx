@@ -988,6 +988,7 @@ function HistorySection({ history }: { history: HistoryItem[] }) {
 }
 
 const TOOL_NAME_PREVIEW_CHARACTERS = 60;
+const TOOL_NAME_COMPACT_PREVIEW_CHARACTERS = 30;
 const TOOL_NAME_MOBILE_PREVIEW_CHARACTERS = 18;
 const TOOL_DESCRIPTION_PREVIEW_CHARACTERS = 180;
 const TOOL_PARAMETER_PREVIEW_COUNT = 5;
@@ -1009,18 +1010,27 @@ function toolNamePreview(
 }
 
 function ToolsHeaderMetadata({ tools }: { tools: ToolDefinitions }) {
-  const { names, omittedCount } = toolNamePreview(tools);
+  const wide = toolNamePreview(tools);
+  const compact = toolNamePreview(tools, TOOL_NAME_COMPACT_PREVIEW_CHARACTERS);
   const mobile = toolNamePreview(tools, TOOL_NAME_MOBILE_PREVIEW_CHARACTERS);
 
   return (
     <>
       <span className="shrink-0">·</span>
-      {names.length > 0 && (
-        <span className="hidden min-w-0 overflow-hidden sm:inline">{names.join(", ")}</span>
+      {wide.names.length > 0 && (
+        <span className="hidden shrink-0 xl:inline">{wide.names.join(", ")}</span>
       )}
-      {omittedCount > 0 && <span className="hidden shrink-0 sm:inline">+{omittedCount}</span>}
+      {wide.omittedCount > 0 && (
+        <span className="hidden shrink-0 xl:inline">+{wide.omittedCount}</span>
+      )}
+      {compact.names.length > 0 && (
+        <span className="hidden shrink-0 sm:inline xl:hidden">{compact.names.join(", ")}</span>
+      )}
+      {compact.omittedCount > 0 && (
+        <span className="hidden shrink-0 sm:inline xl:hidden">+{compact.omittedCount}</span>
+      )}
       {mobile.names.length > 0 && (
-        <span className="min-w-0 overflow-hidden sm:hidden">{mobile.names.join(", ")}</span>
+        <span className="shrink-0 sm:hidden">{mobile.names.join(", ")}</span>
       )}
       {mobile.omittedCount > 0 && (
         <span className="shrink-0 sm:hidden">+{mobile.omittedCount}</span>
@@ -1290,16 +1300,19 @@ function ResponseTypePanel({ id }: { id: number }) {
 
 function RequestDetail({ id }: { id: number }) {
   const { data, isLoading } = RequestLogService.useRequestLog("A", id);
-  const { data: stepsData } = RequestLogStepService.useRequestLogSteps("T", {
-    request_log_id: id,
-    num: 0,
-    page: 1,
-    orderBy: "id-asc" as const,
-  });
+  const { data: stepsData, isLoading: isStepsLoading } = RequestLogStepService.useRequestLogSteps(
+    "T",
+    {
+      request_log_id: id,
+      num: 0,
+      page: 1,
+      orderBy: "id-asc" as const,
+    },
+  );
   const steps = stepsData?.rows ?? [];
   const stepTree = buildStepTree(steps);
 
-  if (isLoading) {
+  if (isLoading || isStepsLoading) {
     return (
       <div className="max-w-6xl mx-auto space-y-4">
         <div className="h-4 w-32 bg-sand-200 rounded animate-pulse" />
