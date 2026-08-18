@@ -1301,16 +1301,16 @@ function RequestDetail({ id }: { id: number }) {
         // 세로로 쌓되 Steps 를 먼저 보여준다 — 프롬프트 전문보다 실행 결과를 먼저 확인한다.
         <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-start">
           <div className="order-1 lg:order-2 flex-1 min-w-0 space-y-4">
-            {hasTools && <ToolsPanel id={id} tools={tools} />}
             {responseTypePanel}
+            {hasTools && <ToolsPanel id={id} tools={tools} />}
             <StepTreeSection steps={stepTree} tokensPerSecEnabled={tokensPerSecEnabled} />
           </div>
           <div className="order-2 lg:order-1 flex-1 min-w-0">{promptSections}</div>
         </div>
       ) : (
         <>
-          {hasTools && <ToolsPanel id={id} tools={tools} />}
           {responseTypePanel}
+          {hasTools && <ToolsPanel id={id} tools={tools} />}
           {promptSections}
         </>
       )}
