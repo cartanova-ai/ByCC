@@ -236,19 +236,38 @@ function FormattedContent({ text, markdown }: { text: string; markdown?: boolean
 function Section({
   title,
   defaultOpen = true,
+  headerMetadata,
+  onOpenChange,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  headerMetadata?: ReactNode;
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+
   return (
-    <details open={defaultOpen} className="group panel overflow-hidden">
-      <summary className="panel-header flex items-center gap-1.5 cursor-pointer select-none list-none px-4 py-2.5">
-        <ChevronDownIcon className="size-3.5 text-sand-400 transition-transform group-open:rotate-0 -rotate-90" />
-        <span className="text-[11px] uppercase tracking-wider text-sand-500 font-medium">
+    <details
+      open={open}
+      className="group panel overflow-hidden"
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        setOpen(nextOpen);
+        onOpenChange?.(nextOpen);
+      }}
+    >
+      <summary className="panel-header flex min-w-0 items-center gap-1.5 whitespace-nowrap cursor-pointer select-none list-none px-4 py-2.5">
+        <ChevronDownIcon className="size-3.5 shrink-0 text-sand-400 transition-transform group-open:rotate-0 -rotate-90" />
+        <span className="shrink-0 text-[11px] uppercase tracking-wider text-sand-500 font-medium">
           {title}
         </span>
+        {headerMetadata && (
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] normal-case text-sand-400">
+            {headerMetadata}
+          </span>
+        )}
       </summary>
       <div className="p-4">{children}</div>
     </details>
