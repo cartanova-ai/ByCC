@@ -216,9 +216,11 @@ describe("QgridDispatcherClass", () => {
       prompt: "targeted",
       model: "openai/gpt-5.5",
       preferredTokenId: 7,
+      requirePreferredToken: true,
     });
 
     expect(generate.mock.calls[0]![0].preferredTokenId).toBe(7);
+    expect(generate.mock.calls[0]![0].requirePreferredToken).toBe(true);
   });
 
   it("OpenAI response issues a four-field epoch=-1 affinity coord", async () => {

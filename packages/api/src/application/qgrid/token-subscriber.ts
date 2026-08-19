@@ -259,6 +259,13 @@ export class TokenSubscriber {
   }
 
   private async reconcileNow(): Promise<void> {
+    const previousAnthropicIds = this.tokenChangeHandler
+      ? new Set(
+          [...this.dispatcher.tokens.values()]
+            .filter((row) => row.active && row.provider === "anthropic")
+            .map((row) => row.id),
+        )
+      : null;
     const rows = await TokenModel.findActive("A");
     this.dispatcher.replaceCache(rows);
     // NOTIFY 유실 대비: AnthropicDispatcher 풀도 DB active anthropic 토큰 기준으로 재동기화.
@@ -286,7 +293,13 @@ export class TokenSubscriber {
       ?.replaceTokens(openaiRows)
       .catch((e) => logger.warn(`openai reconcile failed: ${(e as Error).message}`));
     this.lastReconcileAt = new Date();
-    this.notifyTokensChanged();
+    if (
+      previousAnthropicIds &&
+      (previousAnthropicIds.size !== anthropicRows.length ||
+        anthropicRows.some((row) => !previousAnthropicIds.has(row.id)))
+    ) {
+      this.notifyTokensChanged();
+    }
   }
 
   private enqueueOperation(operation: () => Promise<void>): Promise<void> {

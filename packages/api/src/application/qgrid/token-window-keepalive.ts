@@ -39,7 +39,7 @@ export type TokenWindowKeepaliveDeps = {
 };
 
 const defaultDeps: TokenWindowKeepaliveDeps = {
-  findTokens: () => TokenModel.findActive("A"),
+  findTokens: () => TokenModel.findActiveByProvider("A", "anthropic"),
   readUsage: (tokenId) => QgridFrame.usage(tokenId),
   dispatch: (input) => QgridFrame.query(input),
   readSetting: getSetting,
@@ -119,8 +119,9 @@ async function inspectToken(
       scheduleFallback(token, deps, expectedGeneration);
       return;
     }
-    if (resetMs > deps.now()) {
-      scheduleToken(token, deps, expectedGeneration, resetMs - deps.now() + RESET_GRACE_MS, true);
+    const now = deps.now();
+    if (resetMs > now) {
+      scheduleToken(token, deps, expectedGeneration, resetMs - now + RESET_GRACE_MS, true);
       return;
     }
   }

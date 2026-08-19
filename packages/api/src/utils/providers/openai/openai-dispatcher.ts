@@ -272,7 +272,11 @@ export class OpenAIDispatcher implements ProviderDispatcher {
   ): Promise<GenerateResult> {
     const signal = activeSignal(req.abortSignal, req.timeoutMs);
     if (signal.aborted) throw abortError(signal);
-    const selection = await this.selectToken(req.preferredTokenId, signal);
+    const selection = await this.selectToken(
+      req.preferredTokenId,
+      req.requirePreferredToken ?? false,
+      signal,
+    );
     this.inFlightCount++;
     try {
       if (signal.aborted) throw abortError(signal);
@@ -420,12 +424,24 @@ export class OpenAIDispatcher implements ProviderDispatcher {
    */
   private async selectToken(
     preferredTokenId: number | undefined,
+    requirePreferredToken: boolean,
     signal: AbortSignal,
   ): Promise<TokenSelection> {
     if (preferredTokenId !== undefined) {
       const preferred = this.tokenMetadata.get(preferredTokenId);
       if (preferred?.active && (await this.isQuotaEligible(preferredTokenId, preferred, signal))) {
         return { tokenId: preferredTokenId, metadata: preferred };
+      }
+      if (requirePreferredToken) {
+        if (!preferred?.active) {
+          throw new Error(`Preferred openai token ${preferredTokenId} is not available`);
+        }
+        const threshold = preferred.quotaThreshold;
+        if (threshold !== null && threshold !== undefined) {
+          throw new QuotaThresholdExceededError(
+            quotaMessage([{ name: preferred.name, threshold }]),
+          );
+        }
       }
     }
 

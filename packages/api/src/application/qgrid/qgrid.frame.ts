@@ -169,7 +169,7 @@ async function resolveTokenName(args: QueryInput): Promise<InternalQueryInput> {
   if (!token) {
     throw new BadRequestException(`Active token not found: ${args.tokenName}` as LocalizedString);
   }
-  return { ...args, preferredTokenId: token.id };
+  return { ...args, preferredTokenId: token.id, requirePreferredToken: true };
 }
 
 function createHttpDisconnectHandle(): {

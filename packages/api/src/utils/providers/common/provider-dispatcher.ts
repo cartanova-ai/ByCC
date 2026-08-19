@@ -64,6 +64,8 @@ export interface GenerateRequest {
   // and prompt-cache routing without relying on a process-local worker/thread.
   promptCacheKey?: string;
   preferredTokenId?: number;
+  // 사람이 지정한 exact target. Cache affinity 선호와 달리 부적격 시 다른 토큰으로 대체하지 않는다.
+  requirePreferredToken?: boolean;
   // 재사용 좌표 + delta input. 둘은 한 쌍 — 검증 통과 시에만 설정한다.
   // dispatcher 가 worker/thread 생존을 재검증해 성공하면 reuseInput(delta)을, 실패하면
   // coldInput + coldHistory 로 폴백한다(전체 history 로 문맥 복구).

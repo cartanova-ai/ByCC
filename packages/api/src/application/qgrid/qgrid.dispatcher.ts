@@ -40,7 +40,10 @@ import { type TokenSubscriber } from "./token-subscriber";
 import { applyToolCallEmulation } from "./tool-emulation";
 import { buildToolCallSchema } from "./tool-emulation-schema";
 
-export type InternalQueryInput = QueryInput & { preferredTokenId?: number };
+export type InternalQueryInput = QueryInput & {
+  preferredTokenId?: number;
+  requirePreferredToken?: boolean;
+};
 
 export class QgridDispatcherClass {
   tokens = new Map<number, TokenSubsetA>();
@@ -135,6 +138,7 @@ export class QgridDispatcherClass {
         promptCacheKey: input.imageGeneration ? undefined : decision.promptCacheKey,
         preferredTokenId:
           input.preferredTokenId ?? (input.imageGeneration ? undefined : decision.preferredTokenId),
+        requirePreferredToken: input.requirePreferredToken,
         abortSignal,
         imageGeneration: input.imageGeneration,
         imageGenerationOptions: input.imageGenerationOptions,
@@ -212,6 +216,7 @@ export class QgridDispatcherClass {
           coldHistory: decision.coldHistory,
           promptCacheKey: decision.promptCacheKey,
           preferredTokenId: input.preferredTokenId ?? decision.preferredTokenId,
+          requirePreferredToken: input.requirePreferredToken,
           abortSignal,
           // 이미지 플래그를 전달해야 generateStream 의 non-stream 전용 거부(R2)가 발동한다.
           imageGeneration: input.imageGeneration,

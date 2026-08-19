@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
 import { type GenerateRequest } from "../common/provider-dispatcher";
 import {
   type OpenAINormalizedEvent,
@@ -176,6 +177,35 @@ describe("OpenAIDispatcher direct runtime", () => {
     expect(names.filter((n) => n === "two")).toHaveLength(4);
     expect((await d.generate(request({ preferredTokenId: 1 }))).tokenName).toBe("one");
     expect((await d.generate(request())).tokenName).toBe("two");
+  });
+
+  it("required preferred token 이 없으면 다른 토큰으로 대체하지 않는다", async () => {
+    const d = dispatcher(() => events({ type: "completed", responseId: "r" }));
+    await d.onTokenAdded(1, "one", credentials);
+
+    await expect(
+      d.generate(request({ preferredTokenId: 99, requirePreferredToken: true })),
+    ).rejects.toThrow("Preferred openai token 99 is not available");
+  });
+
+  it("required preferred token 이 threshold 를 넘으면 eligible 토큰으로 대체하지 않는다", async () => {
+    const d = new OpenAIDispatcher(config(), {
+      clientFactory: () => ({ responses: () => events({ type: "completed", responseId: "r" }) }),
+      fetch: async () =>
+        new Response(
+          JSON.stringify({ rate_limits: { primary_window: { used_percent: 90 } } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+    await d.onTokenAdded(1, "one", credentials, null);
+    await d.onTokenAdded(2, "two", { ...credentials, accountId: "acct2" }, 80);
+
+    const error = await d
+      .generate(request({ preferredTokenId: 2, requirePreferredToken: true }))
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(QuotaThresholdExceededError);
+    expect(error.message).toContain("two (threshold 80%)");
   });
 
   it("runs concurrent requests without queueing and tracks in-flight counts", async () => {

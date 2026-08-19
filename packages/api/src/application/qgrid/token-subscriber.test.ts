@@ -213,4 +213,33 @@ describe("TokenSubscriber OpenAI notifications", () => {
       expect.objectContaining({ id: 2, quotaThreshold: 80, weight: 4 }),
     ]);
   });
+
+  it("reconcile 은 Anthropic 대상 집합이 바뀔 때만 keepalive 재예약을 알린다", async () => {
+    const currentAnthropic = {
+      ...openaiToken(true),
+      provider: "anthropic",
+      credentials: { accessToken: "access-a", refreshToken: "refresh-a" },
+    };
+    const dispatcher = {
+      tokens: new Map([[currentAnthropic.id, currentAnthropic]]),
+      replaceCache: vi.fn(),
+      openaiDispatcher: null,
+      anthropicDispatcher: { replaceTokens: vi.fn() },
+    };
+    const subscriber = new TokenSubscriber({} as never, dispatcher as never);
+    const onTokensChanged = vi.fn();
+    subscriber.setTokenChangeHandler(onTokensChanged);
+    findActiveMock
+      .mockResolvedValueOnce([currentAnthropic])
+      .mockResolvedValueOnce([
+        currentAnthropic,
+        { ...currentAnthropic, id: 3, name: "anthropic/tok-C" },
+      ]);
+
+    await subscriber.reconcile();
+    expect(onTokensChanged).not.toHaveBeenCalled();
+
+    await subscriber.reconcile();
+    expect(onTokensChanged).toHaveBeenCalledTimes(1);
+  });
 });

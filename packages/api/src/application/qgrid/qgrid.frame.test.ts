@@ -259,7 +259,7 @@ describe("QgridFrame.query request logging", () => {
       "anthropic/tok-A",
     );
     expect(dispatcherQueryMock).toHaveBeenCalledWith(
-      expect.objectContaining({ preferredTokenId: 17 }),
+      expect.objectContaining({ preferredTokenId: 17, requirePreferredToken: true }),
       expect.any(AbortSignal),
     );
   });
