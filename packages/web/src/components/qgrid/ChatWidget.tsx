@@ -1,6 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SendIcon from "~icons/lucide/arrow-up";
@@ -11,8 +10,18 @@ import SquareIcon from "~icons/lucide/square";
 import XIcon from "~icons/lucide/x";
 
 import chatIcon from "@/assets/chat-icon.png";
-import { type QgridThreadCoord, type TokenStats } from "@/services/qgrid/qgrid.types";
-import { QgridService } from "@/services/services.generated";
+import { type QgridThreadCoord } from "@/services/qgrid/qgrid.types";
+import { QgridService, TokenService } from "@/services/services.generated";
+
+import {
+  chatConfigChanged,
+  chatTokenOptions,
+  providerTokenMissing,
+  resolvedTokenName,
+  tokenTargetPayload,
+  type ChatTokenOption,
+  type ChatConfig,
+} from "./chat-token-selection";
 
 const CHAT_PROJECT_NAME = "qgrid_chat";
 const DEFAULT_MODEL = "openai/gpt-5.6-terra";
@@ -83,13 +92,12 @@ const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "
 function humanizeError(
   message: string,
   provider: string | undefined,
-  stats: TokenStats[] | undefined,
+  tokens: ChatTokenOption[] | undefined,
 ): string {
-  const providerTokenMissing =
-    provider !== undefined && stats !== undefined && !stats.some((t) => t.provider === provider);
+  const missing = tokens !== undefined && providerTokenMissing(tokens, provider);
   const noTokenError =
     /NO_OPENAI_WORKERS|no ready openai workers|no anthropic tokens available/i.test(message);
-  if (noTokenError || (providerTokenMissing && /기동 중입니다/.test(message))) {
+  if (noTokenError || (missing && /기동 중입니다/.test(message))) {
     const label = provider ? (PROVIDER_LABELS[provider] ?? provider) : "";
     return `사용 가능한 ${label} 토큰이 없습니다. Tokens 페이지에서 토큰을 추가해주세요.`;
   }
@@ -122,6 +130,7 @@ export function ChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
+  const [tokenName, setTokenName] = useState("");
   const [effort, setEffort] = useState("");
   const [system, setSystem] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -130,7 +139,7 @@ export function ChatWidget() {
   const [attachments, setAttachments] = useState<string[]>([]);
 
   const threadCoordRef = useRef<QgridThreadCoord | undefined>(undefined);
-  const lastConfigRef = useRef<{ model: string; system: string } | undefined>(undefined);
+  const lastConfigRef = useRef<ChatConfig | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -139,22 +148,31 @@ export function ChatWidget() {
   // 이미지 입력은 OpenAI(codex) 경로만 UserInput 으로 전달된다.
   const supportsImages = provider === "openai";
 
-  const { data: tokenStats } = useQuery({
-    ...QgridService.statsQueryOptions(),
-    enabled: open,
-    staleTime: 15_000,
-  });
-  // SSE handler 는 연결 시점 클로저에 갇히므로 최신 stats 는 ref 로 읽는다.
-  const statsRef = useRef<TokenStats[] | undefined>(undefined);
+  const { data: tokensData } = TokenService.useTokens(
+    "A",
+    { orderBy: "ord-asc" },
+    { enabled: open },
+  );
+  const tokenOptions = useMemo(
+    () => chatTokenOptions(tokensData?.rows ?? [], provider),
+    [provider, tokensData?.rows],
+  );
+  const tokenListLoaded = tokensData?.rows !== undefined;
+  // SSE handler 는 연결 시점 클로저에 갇히므로 최신 토큰 목록은 ref 로 읽는다.
+  const tokensRef = useRef<ChatTokenOption[] | undefined>(undefined);
   useEffect(() => {
-    statsRef.current = tokenStats;
-  }, [tokenStats]);
-  const providerTokenMissing =
-    tokenStats !== undefined && !tokenStats.some((t) => t.provider === provider);
+    tokensRef.current = tokensData?.rows;
+  }, [tokensData?.rows]);
+  const selectedProviderMissing =
+    tokensData?.rows !== undefined && providerTokenMissing(tokensData.rows, provider);
 
   useEffect(() => {
     if (!supportsImages) setAttachments([]);
   }, [supportsImages]);
+
+  useEffect(() => {
+    setTokenName((current) => resolvedTokenName(current, tokenOptions, tokenListLoaded));
+  }, [tokenListLoaded, tokenOptions]);
 
   const addAttachments = async (files: FileList | null) => {
     if (!files) return;
@@ -182,7 +200,7 @@ export function ChatWidget() {
     const friendly = humanizeError(
       message,
       lastConfigRef.current?.model.split("/")[0],
-      statsRef.current,
+      tokensRef.current,
     );
     patchLastAssistant((m) =>
       m.status === "streaming" ? { ...m, status: "error", error: friendly } : m,
@@ -257,13 +275,12 @@ export function ChatWidget() {
     // threadCoord 에는 systemHash 가 박혀 있고 모델 변경은 서버가 검증하지 않으므로,
     // 둘 중 하나라도 바뀌면 좌표를 버리고 history 로 문맥을 복구한다.
     const sys = system.trim();
-    if (
-      lastConfigRef.current &&
-      (lastConfigRef.current.model !== model || lastConfigRef.current.system !== sys)
-    ) {
+    const selectedTokenName = resolvedTokenName(tokenName, tokenOptions, tokenListLoaded);
+    const currentConfig = { model, system: sys, tokenName: selectedTokenName };
+    if (lastConfigRef.current && chatConfigChanged(lastConfigRef.current, currentConfig)) {
       threadCoordRef.current = undefined;
     }
-    lastConfigRef.current = { model, system: sys };
+    lastConfigRef.current = currentConfig;
 
     const images = supportsImages ? attachments : [];
     const history = buildHistory(messages);
@@ -281,6 +298,7 @@ export function ChatWidget() {
         prompt,
         model,
         projectName: CHAT_PROJECT_NAME,
+        ...tokenTargetPayload(selectedTokenName),
         ...(sys ? { system: sys } : {}),
         ...(effort ? { effort } : {}),
         // text 파트 없이 image 파트만 보내면 서버가 prompt 를 text 파트로 앞에 붙여준다.
@@ -338,13 +356,14 @@ export function ChatWidget() {
               <p className="text-[11px] text-sand-400 truncate leading-tight">
                 {model}
                 {effort ? ` · ${effort}` : ""}
+                {tokenName ? ` · ${tokenName}` : ""}
               </p>
             </div>
             <div className="ml-auto flex items-center gap-0.5">
               <button
                 type="button"
                 onClick={() => setSettingsOpen((v) => !v)}
-                title="모델·effort·system prompt 설정"
+                title="모델·토큰·effort·system prompt 설정"
                 className={`size-8 grid place-items-center rounded-full transition-colors duration-150 ${
                   settingsOpen
                     ? "text-sienna-500 bg-sienna-50"
@@ -402,6 +421,20 @@ export function ChatWidget() {
                   ))}
                 </select>
               </div>
+              <select
+                value={tokenName}
+                onChange={(e) => setTokenName(e.target.value)}
+                disabled={busy}
+                aria-label="요청 토큰"
+                className="w-full rounded-xl border border-sand-200/80 bg-white px-2 py-1.5 text-[12px] text-sand-700 focus:outline-none focus:border-sienna-300 disabled:opacity-50"
+              >
+                <option value="">토큰 자동 분배</option>
+                {tokenOptions.map((token) => (
+                  <option key={token.name} value={token.name}>
+                    {token.name}
+                  </option>
+                ))}
+              </select>
               <textarea
                 value={system}
                 onChange={(e) => setSystem(e.target.value)}
@@ -505,7 +538,7 @@ export function ChatWidget() {
             )}
           </div>
 
-          {providerTokenMissing && (
+          {selectedProviderMissing && (
             <div className="px-4 py-1.5 border-t border-caution-400/30 bg-caution-400/10 text-[11px] text-caution-500 shrink-0">
               {PROVIDER_LABELS[provider] ?? provider} 토큰이 등록되어 있지 않습니다.{" "}
               <Link to="/tokens" className="font-medium underline hover:text-caution-400">
