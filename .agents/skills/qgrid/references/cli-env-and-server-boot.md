@@ -66,6 +66,7 @@ When helping a user set up qgrid locally, check for `QGRID_PROJECT_NAME` or conf
 |---|---:|---|
 | `QGRID_OPENAI_TRANSPORT` | `websocket` | OpenAI transport selector (`https` or `websocket`). Invalid values fail at dispatcher configuration time. This is the only OpenAI runtime knob; there is no concurrency cap. |
 | `QGRID_OPENAI_AUTOSCALE` / `QGRID_OPENAI_MIN_WORKERS_PER_TOKEN` / `QGRID_OPENAI_MAX_WORKERS_PER_TOKEN` / `QGRID_OPENAI_PERMITS_PER_TOKEN` | ignored | Removed. OpenAI requests run uncapped like Anthropic (stateless per-request execution); setting these has no effect. |
+| `QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED` (setting `qgrid.tokenWindowKeepaliveEnabled`) | on | Anthropic 5-hour window keepalive. Only the literal `false` disables it; anything else leaves it on. Changing the setting reschedules immediately. Disabling is the only switch — there is no per-token opt-in. |
 | `MAX_STRUCTURED_OUTPUT_RETRIES` | `1` for structured Anthropic streaming calls | Claude Code structured-output retry count for streaming only, clamped to at least 1 by qgrid. Non-streaming `generate` leaves the variable unset and uses Claude Code's default retry budget. |
 
 ## Server boot lifecycle

@@ -12,6 +12,8 @@ Use this reference before changing token storage, OAuth flows, token activation,
 - Token sync and reconcile
 - Provider runtime consequences
 - Quota threshold semantics
+- Explicit token targeting
+- Token window keepalive
 
 ## Source Files
 
@@ -222,4 +224,26 @@ When a refresh fails in a way that only re-login can fix, qgrid removes the toke
 - If all ready/eligible tokens are over threshold, qgrid throws `QuotaThresholdExceededError`.
 - Log messages use `quota_threshold gate` with reasons such as `over_threshold`, `lookup_fail_open`, and `all_exceeded`.
 
-OpenAI queue items keep an `excludedTokenIds` set so a token found over threshold for a request is not immediately reselected for that same queued request.
+## Explicit Token Targeting
+
+`tokenName` addresses one exact token instead of letting the router choose. It is resolved at the qgrid frame boundary into the dispatcher's existing `preferredTokenId`, so dispatchers stay provider-neutral and no second targeting contract exists.
+
+- Resolution requires an active token matching both provider and name. The provider is read from the name prefix (`anthropic/yds`), and `tokens` carries a `(provider, name)` unique index so the address is unambiguous.
+- A targeted request never falls back. Missing, inactive, or over-threshold targets fail rather than silently serving from another account — the whole point of addressing a token is that the answer comes from that account.
+- Targeted selection does not consume weighted round-robin state. Without that guarantee, background targeting such as keepalive would skew the token distribution of ordinary traffic.
+- Targeting is distinct from cache affinity. Affinity sets `preferredTokenId` as a preference and still falls back when the token is ineligible; explicit targeting adds `requirePreferredToken` so the same field becomes strict. The Anthropic path only ever receives explicit targeting — affinity coordinates are not forwarded there, so making it strict cannot break affinity behavior.
+- Exposure boundary: `tokenName` is not part of the AI SDK provider options. It is reachable on the qgrid frame wire and used by the dashboard chat token picker and internal callers; SDK consumers keep round-robin.
+
+## Token Window Keepalive
+
+Anthropic's 5-hour usage window anchors on the first request, so an unused token has no window at all — `five_hour.resets_at` is null until something is sent, and windows are per-account and independent. The practical cost is that starting work starts the clock: burn the quota in two hours and the remaining three are dead.
+
+Keepalive breaks that coupling by burning the window clock during idle time. Every active Anthropic token gets one cheap request as soon as its window expires, so windows always run and a workday lands mid-window rather than on a boundary. Across an eight-hour day this raises the number of windows the day can touch from a fixed 2 to an expected 2.6.
+
+- Scope is every active Anthropic token. There is no per-token opt-in; the only control is the global switch.
+- The next fire is scheduled from the token's real `resetsAt` rather than a fixed five-hour timer, so a provider-side change to the window length is followed automatically.
+- Per-token fire guards prevent repeats: 61 seconds after a successful fire (the usage API caches for a minute, so an immediate re-read would still show the old window) and five hours after a failure. Guards survive rescheduling — only timers are replaced — and the guard is recorded before the request is sent so a reschedule mid-flight cannot fire a second time.
+- Rescheduling happens only when target-set membership changes (active/provider). Credential rotation updates the token row and fires the change notification, but it does not change membership and must not trigger a sweep; otherwise every OAuth refresh would re-poll usage for every token.
+- Multiple instances each fire. A ping into an already-open window does nothing, so the duplicate is harmless and cheaper than a locking scheme — the same reasoning the expiry reminder uses.
+- Fires are logged under the `qgrid-token-window-keepalive` project name so they can be excluded from traffic statistics.
+- Known limits: the first sweep after boot has no concurrency cap, so N empty windows mean N simultaneous fires; and a failed fire costs that token five hours of window misalignment.
