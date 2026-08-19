@@ -49,6 +49,7 @@ const defaultDeps: TokenWindowKeepaliveDeps = {
 };
 
 const timers = new Map<number, { handle: TimerHandle; clear: (handle: TimerHandle) => void }>();
+const fireGuards = new Map<number, { untilMs: number; allowFireAtExpiry: boolean }>();
 let generation = 0;
 
 function clearTokenTimer(tokenId: number): void {
@@ -73,7 +74,7 @@ function scheduleToken(
       if (generation !== expectedGeneration) return;
       void inspectToken(token, deps, expectedGeneration, allowFire).catch((error) => {
         logger.warn(`keepalive cycle failed for ${token.name}: ${(error as Error).message}`);
-        scheduleToken(token, deps, expectedGeneration, FIVE_HOURS_MS, true);
+        scheduleFallback(token, deps, expectedGeneration);
       });
     },
     Math.max(0, delayMs),
@@ -81,12 +82,24 @@ function scheduleToken(
   timers.set(token.id, { handle, clear: deps.clearTimer });
 }
 
+function deferToken(
+  token: KeepaliveToken,
+  deps: TokenWindowKeepaliveDeps,
+  expectedGeneration: number,
+  delayMs: number,
+  allowFireAtExpiry: boolean,
+): void {
+  const untilMs = deps.now() + delayMs;
+  fireGuards.set(token.id, { untilMs, allowFireAtExpiry });
+  scheduleToken(token, deps, expectedGeneration, delayMs, allowFireAtExpiry);
+}
+
 function scheduleFallback(
   token: KeepaliveToken,
   deps: TokenWindowKeepaliveDeps,
   expectedGeneration: number,
 ): void {
-  scheduleToken(token, deps, expectedGeneration, FIVE_HOURS_MS, true);
+  deferToken(token, deps, expectedGeneration, FIVE_HOURS_MS, true);
 }
 
 async function inspectToken(
@@ -95,6 +108,14 @@ async function inspectToken(
   expectedGeneration: number,
   allowFire: boolean,
 ): Promise<void> {
+  const now = deps.now();
+  const guard = fireGuards.get(token.id);
+  if (guard && guard.untilMs > now) {
+    scheduleToken(token, deps, expectedGeneration, guard.untilMs - now, guard.allowFireAtExpiry);
+    return;
+  }
+  if (guard) fireGuards.delete(token.id);
+
   let usage: UsageResponse;
   try {
     usage = await deps.readUsage(token.id);
@@ -119,9 +140,10 @@ async function inspectToken(
       scheduleFallback(token, deps, expectedGeneration);
       return;
     }
-    const now = deps.now();
-    if (resetMs > now) {
-      scheduleToken(token, deps, expectedGeneration, resetMs - now + RESET_GRACE_MS, true);
+    const inspectedAt = deps.now();
+    if (resetMs > inspectedAt) {
+      fireGuards.delete(token.id);
+      scheduleToken(token, deps, expectedGeneration, resetMs - inspectedAt + RESET_GRACE_MS, true);
       return;
     }
   }
@@ -132,6 +154,7 @@ async function inspectToken(
     return;
   }
 
+  deferToken(token, deps, expectedGeneration, POST_KEEPALIVE_USAGE_DELAY_MS, false);
   try {
     await deps.dispatch({
       prompt: "Reply OK.",
@@ -147,13 +170,27 @@ async function inspectToken(
     return;
   }
 
-  scheduleToken(token, deps, expectedGeneration, POST_KEEPALIVE_USAGE_DELAY_MS, false);
+  const postFireGuard = fireGuards.get(token.id);
+  if (postFireGuard) {
+    scheduleToken(
+      token,
+      deps,
+      expectedGeneration,
+      Math.max(0, postFireGuard.untilMs - deps.now()),
+      postFireGuard.allowFireAtExpiry,
+    );
+  }
+}
+
+function clearScheduledTimers(): void {
+  generation++;
+  for (const tokenId of timers.keys()) clearTokenTimer(tokenId);
 }
 
 export async function startTokenWindowKeepalive(
   deps: TokenWindowKeepaliveDeps = defaultDeps,
 ): Promise<void> {
-  stopTokenWindowKeepalive();
+  clearScheduledTimers();
   if (deps.readSetting(KEEPALIVE_SETTING_KEY, KEEPALIVE_ENV_KEY) === "false") {
     logger.info("token window keepalive disabled");
     return;
@@ -170,6 +207,10 @@ export async function startTokenWindowKeepalive(
   if (generation !== expectedGeneration) return;
 
   const targets = tokens.filter((token) => token.active && token.provider === "anthropic");
+  const targetIds = new Set(targets.map((token) => token.id));
+  for (const tokenId of fireGuards.keys()) {
+    if (!targetIds.has(tokenId)) fireGuards.delete(tokenId);
+  }
   logger.info(`token window keepalive scheduling ${targets.length} token(s)`);
   await Promise.all(targets.map((token) => inspectToken(token, deps, expectedGeneration, true)));
 }
@@ -181,6 +222,6 @@ export function rescheduleTokenWindowKeepalive(
 }
 
 export function stopTokenWindowKeepalive(): void {
-  generation++;
-  for (const tokenId of timers.keys()) clearTokenTimer(tokenId);
+  clearScheduledTimers();
+  fireGuards.clear();
 }

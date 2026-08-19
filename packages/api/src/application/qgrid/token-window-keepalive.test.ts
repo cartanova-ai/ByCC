@@ -169,6 +169,38 @@ describe("token window keepalive", () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
+  it("발사 후 61초 대기 중 재스케줄되어도 같은 토큰을 다시 발사하지 않는다", async () => {
+    const readUsage = vi
+      .fn()
+      .mockResolvedValueOnce(usage(null))
+      .mockResolvedValueOnce(usage(new Date(NOW + FIVE_HOURS_MS).toISOString()));
+    const dispatch = vi.fn(async () => undefined);
+    const testDeps = deps({ readUsage, dispatch });
+
+    await startTokenWindowKeepalive(testDeps);
+    await rescheduleTokenWindowKeepalive(testDeps);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(readUsage).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(POST_KEEPALIVE_USAGE_DELAY_MS);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(readUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it("발사 실패 후 재스케줄되어도 5시간 안에 다시 발사하지 않는다", async () => {
+    const dispatch = vi.fn(async () => {
+      throw new Error("provider unavailable");
+    });
+    const testDeps = deps({ readUsage: vi.fn(async () => usage(null)), dispatch });
+
+    await startTokenWindowKeepalive(testDeps);
+    await rescheduleTokenWindowKeepalive(testDeps);
+    await vi.advanceTimersByTimeAsync(FIVE_HOURS_MS - 1);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("스위치가 꺼져 있으면 조회나 타이머를 시작하지 않는다", async () => {
     const testDeps = deps({ readSetting: () => "false" });
 

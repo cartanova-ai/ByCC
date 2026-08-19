@@ -109,6 +109,7 @@ describe("TokenSubscriber OpenAI notifications", () => {
     const subscriber = new TokenSubscriber(
       {} as never,
       {
+        tokens: new Map(),
         removeCache: vi.fn(),
         upsertCache: vi.fn(),
         replaceCache: vi.fn(),
@@ -125,6 +126,63 @@ describe("TokenSubscriber OpenAI notifications", () => {
     });
 
     await subscriber.handleNotification(JSON.stringify({ op: "INSERT", id: 1 }));
+
+    expect(onTokensChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("Anthropic credentials 갱신은 keepalive 전체 재예약을 유발하지 않는다", async () => {
+    const previous = {
+      ...openaiToken(true),
+      provider: "anthropic",
+      credentials: { accessToken: "old", refreshToken: "refresh" },
+    };
+    const anthropicDispatcher = { onTokenUpdated: vi.fn() };
+    const subscriber = new TokenSubscriber(
+      {} as never,
+      {
+        tokens: new Map([[previous.id, previous]]),
+        removeCache: vi.fn(),
+        upsertCache: vi.fn(),
+        replaceCache: vi.fn(),
+        openaiDispatcher: null,
+        anthropicDispatcher,
+      } as never,
+    );
+    const onTokensChanged = vi.fn();
+    subscriber.setTokenChangeHandler(onTokensChanged);
+    findOneMock.mockResolvedValueOnce({
+      ...previous,
+      credentials: { accessToken: "new", refreshToken: "refresh" },
+    });
+
+    await subscriber.handleNotification(JSON.stringify({ op: "UPDATE", id: previous.id }));
+
+    expect(anthropicDispatcher.onTokenUpdated).toHaveBeenCalledOnce();
+    expect(onTokensChanged).not.toHaveBeenCalled();
+  });
+
+  it("Anthropic active 전환은 keepalive 대상 재예약을 알린다", async () => {
+    const previous = {
+      ...openaiToken(true),
+      provider: "anthropic",
+      credentials: { accessToken: "access", refreshToken: "refresh" },
+    };
+    const subscriber = new TokenSubscriber(
+      {} as never,
+      {
+        tokens: new Map([[previous.id, previous]]),
+        removeCache: vi.fn(),
+        upsertCache: vi.fn(),
+        replaceCache: vi.fn(),
+        openaiDispatcher: null,
+        anthropicDispatcher: { onTokenRemoved: vi.fn() },
+      } as never,
+    );
+    const onTokensChanged = vi.fn();
+    subscriber.setTokenChangeHandler(onTokensChanged);
+    findOneMock.mockResolvedValueOnce({ ...previous, active: false });
+
+    await subscriber.handleNotification(JSON.stringify({ op: "UPDATE", id: previous.id }));
 
     expect(onTokensChanged).toHaveBeenCalledTimes(1);
   });

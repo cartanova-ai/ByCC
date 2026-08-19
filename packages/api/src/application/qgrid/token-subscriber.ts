@@ -170,6 +170,10 @@ export class TokenSubscriber {
 
   private async handleNotificationNow(payloadJson: string): Promise<void> {
     const payload = JSON.parse(payloadJson) as Payload;
+    const previousRow = this.tokenChangeHandler
+      ? this.dispatcher.tokens.get(payload.id)
+      : undefined;
+    const wasKeepaliveTarget = previousRow?.active === true && previousRow.provider === "anthropic";
     if (payload.op === "DELETE") {
       this.dispatcher.removeCache(payload.id);
       await this.dispatcher.openaiDispatcher
@@ -178,7 +182,7 @@ export class TokenSubscriber {
       // anthropic 토큰 이벤트는 동기(void) — provider 를 모르므로 무해하게 항상 제거 시도.
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → removed from cache`);
-      this.notifyTokensChanged();
+      if (previousRow === undefined || wasKeepaliveTarget) this.notifyTokensChanged();
       return;
     }
     const row = await TokenModel.findOne("A", { id: payload.id });
@@ -189,7 +193,7 @@ export class TokenSubscriber {
         .catch((e) => logger.warn(`openai token remove failed: ${(e as Error).message}`));
       this.dispatcher.anthropicDispatcher?.onTokenRemoved(payload.id);
       logger.info(`NOTIFY ${payload.op} id=${payload.id} → missing, removed from cache`);
-      this.notifyTokensChanged();
+      if (previousRow === undefined || wasKeepaliveTarget) this.notifyTokensChanged();
       return;
     }
 
@@ -251,7 +255,8 @@ export class TokenSubscriber {
       }
     }
     logger.info(`NOTIFY ${payload.op} id=${payload.id} (${row.name}) active=${row.active}`);
-    if (row.provider === "anthropic") this.notifyTokensChanged();
+    const isKeepaliveTarget = row.active && row.provider === "anthropic";
+    if (wasKeepaliveTarget !== isKeepaliveTarget) this.notifyTokensChanged();
   }
 
   async reconcile(): Promise<void> {
