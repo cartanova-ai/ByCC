@@ -329,6 +329,7 @@ Content-Type: application/json
     "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
+    "tokenName": "TOKENNAME",
     "cacheAffinityKey": "CACHEAFFINITYKEY",
     "logger": false,
     "runContext": {
@@ -390,6 +391,7 @@ Content-Type: application/json
     "serviceTier": "fast",
     "history": "HISTORY",
     "projectName": "PROJECTNAME",
+    "tokenName": "TOKENNAME",
     "cacheAffinityKey": "CACHEAFFINITYKEY",
     "logger": false,
     "runContext": {

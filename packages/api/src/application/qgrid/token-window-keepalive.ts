@@ -2,8 +2,8 @@ import { getLogger } from "@logtape/logtape";
 
 import { getSetting } from "../setting/setting.store";
 import { TokenModel } from "../token/token.model";
-import { QgridFrame } from "./qgrid.frame";
 import { type InternalQueryInput } from "./qgrid.dispatcher";
+import { QgridFrame } from "./qgrid.frame";
 import { type UsageResponse } from "./qgrid.types";
 
 const logger = getLogger(["qgrid", "token-window-keepalive"]);
@@ -67,14 +67,17 @@ function scheduleToken(
 ): void {
   if (generation !== expectedGeneration) return;
   clearTokenTimer(token.id);
-  const handle = deps.setTimer(() => {
-    timers.delete(token.id);
-    if (generation !== expectedGeneration) return;
-    void inspectToken(token, deps, expectedGeneration, allowFire).catch((error) => {
-      logger.warn(`keepalive cycle failed for ${token.name}: ${(error as Error).message}`);
-      scheduleToken(token, deps, expectedGeneration, FIVE_HOURS_MS, true);
-    });
-  }, Math.max(0, delayMs));
+  const handle = deps.setTimer(
+    () => {
+      timers.delete(token.id);
+      if (generation !== expectedGeneration) return;
+      void inspectToken(token, deps, expectedGeneration, allowFire).catch((error) => {
+        logger.warn(`keepalive cycle failed for ${token.name}: ${(error as Error).message}`);
+        scheduleToken(token, deps, expectedGeneration, FIVE_HOURS_MS, true);
+      });
+    },
+    Math.max(0, delayMs),
+  );
   timers.set(token.id, { handle, clear: deps.clearTimer });
 }
 
@@ -117,13 +120,7 @@ async function inspectToken(
       return;
     }
     if (resetMs > deps.now()) {
-      scheduleToken(
-        token,
-        deps,
-        expectedGeneration,
-        resetMs - deps.now() + RESET_GRACE_MS,
-        true,
-      );
+      scheduleToken(token, deps, expectedGeneration, resetMs - deps.now() + RESET_GRACE_MS, true);
       return;
     }
   }
@@ -149,13 +146,7 @@ async function inspectToken(
     return;
   }
 
-  scheduleToken(
-    token,
-    deps,
-    expectedGeneration,
-    POST_KEEPALIVE_USAGE_DELAY_MS,
-    false,
-  );
+  scheduleToken(token, deps, expectedGeneration, POST_KEEPALIVE_USAGE_DELAY_MS, false);
 }
 
 export async function startTokenWindowKeepalive(
@@ -179,9 +170,7 @@ export async function startTokenWindowKeepalive(
 
   const targets = tokens.filter((token) => token.active && token.provider === "anthropic");
   logger.info(`token window keepalive scheduling ${targets.length} token(s)`);
-  await Promise.all(
-    targets.map((token) => inspectToken(token, deps, expectedGeneration, true)),
-  );
+  await Promise.all(targets.map((token) => inspectToken(token, deps, expectedGeneration, true)));
 }
 
 export function rescheduleTokenWindowKeepalive(
@@ -192,5 +181,5 @@ export function rescheduleTokenWindowKeepalive(
 
 export function stopTokenWindowKeepalive(): void {
   generation++;
-  for (const tokenId of [...timers.keys()]) clearTokenTimer(tokenId);
+  for (const tokenId of timers.keys()) clearTokenTimer(tokenId);
 }

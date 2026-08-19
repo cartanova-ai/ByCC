@@ -133,7 +133,8 @@ export class QgridDispatcherClass {
         coldInput: decision.coldInput,
         coldHistory: decision.coldHistory,
         promptCacheKey: input.imageGeneration ? undefined : decision.promptCacheKey,
-        preferredTokenId: input.imageGeneration ? undefined : decision.preferredTokenId,
+        preferredTokenId:
+          input.preferredTokenId ?? (input.imageGeneration ? undefined : decision.preferredTokenId),
         abortSignal,
         imageGeneration: input.imageGeneration,
         imageGenerationOptions: input.imageGenerationOptions,
@@ -210,7 +211,7 @@ export class QgridDispatcherClass {
           coldInput: decision.coldInput,
           coldHistory: decision.coldHistory,
           promptCacheKey: decision.promptCacheKey,
-          preferredTokenId: decision.preferredTokenId,
+          preferredTokenId: input.preferredTokenId ?? decision.preferredTokenId,
           abortSignal,
           // 이미지 플래그를 전달해야 generateStream 의 non-stream 전용 거부(R2)가 발동한다.
           imageGeneration: input.imageGeneration,

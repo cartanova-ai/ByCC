@@ -28,7 +28,14 @@
       "dbDefault": "1"
     }
   ],
-  "indexes": [],
+  "indexes": [
+    {
+      "type": "unique",
+      "name": "tokens_provider_name_unique",
+      "columns": [{ "name": "provider" }, { "name": "name" }],
+      "using": "btree"
+    }
+  ],
   "subsets": {
     "A": [
       "id",

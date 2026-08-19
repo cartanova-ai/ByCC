@@ -146,6 +146,26 @@ class TokenModelClass extends BaseModelClass<
     return result.rows;
   }
 
+  async findActiveByProviderAndName<T extends TokenSubsetKey>(
+    subset: T,
+    provider: string,
+    name: string,
+  ): Promise<TokenSubsetMapping[T] | undefined> {
+    const { qb } = this.getSubsetQueries(subset);
+    qb.where("tokens.active", true);
+    qb.where("tokens.provider", provider);
+    qb.where("tokens.name", name);
+    const enhancers = this.createEnhancers({ A: (row) => ({ ...row }) });
+    const result = await this.executeSubsetQuery({
+      subset,
+      qb,
+      params: { num: 1, page: 1 },
+      enhancers,
+      debug: false,
+    });
+    return result.rows[0];
+  }
+
   /**
    * 라우팅에서 빠진 토큰들. 세션 만료로 자동 비활성화된 것과 수동으로 끈 것이 섞여 있다 —
    * 둘 다 "재로그인하면 살아나는" 상태라 알림 대상으로는 같게 본다.

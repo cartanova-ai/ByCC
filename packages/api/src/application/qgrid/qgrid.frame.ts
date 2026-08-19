@@ -39,7 +39,11 @@ import {
   finishRunAborted,
   finishRunWithError,
 } from "./qgrid-run-lifecycle";
-import { buildAndValidateStrictOutputSchema, QgridDispatcher } from "./qgrid.dispatcher";
+import {
+  buildAndValidateStrictOutputSchema,
+  type InternalQueryInput,
+  QgridDispatcher,
+} from "./qgrid.dispatcher";
 import {
   type QueryInput,
   type AppendStepInput,
@@ -147,6 +151,27 @@ function rejectInvalidCallerSchemas(args: QueryInput): void {
   }
 }
 
+async function resolveTokenName(args: QueryInput): Promise<InternalQueryInput> {
+  if (!args.tokenName) return args;
+
+  const tokenProvider = args.tokenName.split("/", 1)[0];
+  const modelProvider = args.model?.split("/", 1)[0];
+  if (tokenProvider !== "anthropic" && tokenProvider !== "openai") {
+    throw new BadRequestException(`Invalid token name: ${args.tokenName}` as LocalizedString);
+  }
+  if (modelProvider !== tokenProvider) {
+    throw new BadRequestException(
+      "Token provider does not match model provider" as LocalizedString,
+    );
+  }
+
+  const token = await TokenModel.findActiveByProviderAndName("A", tokenProvider, args.tokenName);
+  if (!token) {
+    throw new BadRequestException(`Active token not found: ${args.tokenName}` as LocalizedString);
+  }
+  return { ...args, preferredTokenId: token.id };
+}
+
 function createHttpDisconnectHandle(): {
   signal: AbortSignal;
   dispose: () => void;
@@ -199,29 +224,30 @@ class QgridFrameClass extends BaseFrameClass {
   async query(args: QueryInput): Promise<QueryOutput> {
     assertNativeRunAdmission();
     rejectInvalidCallerSchemas(args);
+    const resolvedArgs = await resolveTokenName(args);
     const disconnect = createHttpDisconnectHandle();
     try {
-      if (args.logger === false) {
-        return await QgridDispatcher.query(args, disconnect.signal);
+      if (resolvedArgs.logger === false) {
+        return await QgridDispatcher.query(resolvedArgs, disconnect.signal);
       }
 
-      const { requestLogId, stepIndex } = await beforeQuery(args);
+      const { requestLogId, stepIndex } = await beforeQuery(resolvedArgs);
       let result: QueryOutput;
       try {
-        result = await QgridDispatcher.query(args, disconnect.signal);
+        result = await QgridDispatcher.query(resolvedArgs, disconnect.signal);
       } catch (e) {
         if (disconnect.signal.aborted) {
-          await finishRunAborted(requestLogId, args);
+          await finishRunAborted(requestLogId, resolvedArgs);
         } else {
-          await finishRunWithError(requestLogId, (e as Error).message, args);
+          await finishRunWithError(requestLogId, (e as Error).message, resolvedArgs);
         }
         throw e;
       }
 
       try {
-        const lifecycle = await afterQuery(requestLogId, stepIndex, args, result);
+        const lifecycle = await afterQuery(requestLogId, stepIndex, resolvedArgs, result);
         if (disconnect.signal.aborted) {
-          await finishRunAborted(requestLogId, args);
+          await finishRunAborted(requestLogId, resolvedArgs);
         }
         // tool-call requestLogId와 provider threadCoord는 서로 독립적으로 유지한다.
         const threadCoord = result.runContext?.threadCoord;
@@ -233,9 +259,9 @@ class QgridFrameClass extends BaseFrameClass {
       } catch (e) {
         logger.error(`query afterQuery failed: ${(e as Error).message}`);
         if (disconnect.signal.aborted) {
-          await finishRunAborted(requestLogId, args);
+          await finishRunAborted(requestLogId, resolvedArgs);
         } else {
-          await finishRunWithError(requestLogId, (e as Error).message, args);
+          await finishRunWithError(requestLogId, (e as Error).message, resolvedArgs);
         }
         // provider 응답은 성공했으므로 로깅 장애가 생성 결과를 덮어쓰지 않는다.
         return result;
@@ -250,8 +276,9 @@ class QgridFrameClass extends BaseFrameClass {
     assertNativeRunAdmission();
     rejectImageGenerationStream(args);
     rejectInvalidCallerSchemas(args);
+    const resolvedArgs = await resolveTokenName(args);
     const streamId = crypto.randomUUID();
-    pendingStreams.set(streamId, args);
+    pendingStreams.set(streamId, resolvedArgs);
     const expiry = setTimeout(() => pendingStreams.delete(streamId), 30_000);
     expiry.unref?.();
     return { streamId };

@@ -15,13 +15,13 @@ import {
 } from "./application/qgrid/expired-token-reminder";
 import { QgridDispatcher } from "./application/qgrid/qgrid.dispatcher";
 import { QgridFrame } from "./application/qgrid/qgrid.frame";
+import { TokenSubscriber } from "./application/qgrid/token-subscriber";
+import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import {
   rescheduleTokenWindowKeepalive,
   startTokenWindowKeepalive,
   stopTokenWindowKeepalive,
 } from "./application/qgrid/token-window-keepalive";
-import { TokenSubscriber } from "./application/qgrid/token-subscriber";
-import { ensureTokensTrigger } from "./application/qgrid/token-trigger-setup";
 import { loadSettings, setSettingChangeHandler } from "./application/setting/setting.store";
 import { handleServerError } from "./server-error-handler";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";

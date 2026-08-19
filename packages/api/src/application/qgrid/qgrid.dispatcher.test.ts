@@ -207,6 +207,20 @@ describe("QgridDispatcherClass", () => {
     expect(req.preferredTokenId).toBe(1);
   });
 
+  it("OpenAI query 는 이름 해석으로 받은 내부 preferredTokenId 를 우선한다", async () => {
+    const dispatcher = new QgridDispatcherClass();
+    const generate = vi.fn(async (_req: GenerateRequest) => providerResult({ model: "gpt-5.5" }));
+    dispatcher.openaiDispatcher = { generate } as never;
+
+    await dispatcher.query({
+      prompt: "targeted",
+      model: "openai/gpt-5.5",
+      preferredTokenId: 7,
+    });
+
+    expect(generate.mock.calls[0]![0].preferredTokenId).toBe(7);
+  });
+
   it("OpenAI response issues a four-field epoch=-1 affinity coord", async () => {
     const dispatcher = new QgridDispatcherClass();
     dispatcher.openaiDispatcher = {

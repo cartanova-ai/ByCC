@@ -111,6 +111,43 @@ describe("TokenModel.updateFields", () => {
   });
 });
 
+describe("TokenModel.findActiveByProviderAndName", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("active·provider·name 세 조건으로 단일 토큰을 조회한다", async () => {
+    const where = vi.fn();
+    const qb = { where };
+    const row = { id: 7, active: true, ...baseToken };
+    vi.spyOn(
+      TokenModel as unknown as { getSubsetQueries: (subset: "A") => { qb: typeof qb } },
+      "getSubsetQueries",
+    ).mockReturnValue({ qb });
+    const executeSubsetQuery = vi
+      .spyOn(
+        TokenModel as unknown as {
+          executeSubsetQuery: (input: unknown) => Promise<{ rows: typeof row[] }>;
+        },
+        "executeSubsetQuery",
+      )
+      .mockResolvedValue({ rows: [row] });
+
+    await expect(
+      TokenModel.findActiveByProviderAndName("A", "anthropic", "anthropic/tok-A"),
+    ).resolves.toBe(row);
+
+    expect(where.mock.calls).toEqual([
+      ["tokens.active", true],
+      ["tokens.provider", "anthropic"],
+      ["tokens.name", "anthropic/tok-A"],
+    ]);
+    expect(executeSubsetQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ subset: "A", qb, params: { num: 1, page: 1 } }),
+    );
+  });
+});
+
 describe("TokenModel.deactivateIfActive", () => {
   afterEach(() => {
     vi.restoreAllMocks();

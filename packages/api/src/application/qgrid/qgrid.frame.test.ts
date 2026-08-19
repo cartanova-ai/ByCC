@@ -9,6 +9,7 @@ import { QueryInput } from "./qgrid.types";
 const {
   findOneMock,
   findManyMock,
+  findActiveByProviderAndNameMock,
   saveMock,
   updateFieldsMock,
   requestLogSaveMock,
@@ -30,6 +31,7 @@ const {
   return {
     findOneMock: vi.fn(),
     findManyMock: vi.fn(),
+    findActiveByProviderAndNameMock: vi.fn(),
     saveMock: vi.fn(),
     updateFieldsMock: vi.fn(),
     requestLogSaveMock: vi.fn(),
@@ -59,6 +61,7 @@ vi.mock("../token/token.model", () => ({
   TokenModel: {
     findOne: findOneMock,
     findMany: findManyMock,
+    findActiveByProviderAndName: findActiveByProviderAndNameMock,
     save: saveMock,
     updateFields: updateFieldsMock,
   },
@@ -125,6 +128,7 @@ describe("QgridFrame.updateToken", () => {
     appendStepMock.mockReset();
     appendStepMock.mockResolvedValue(1);
     dispatcherQueryMock.mockReset();
+    findActiveByProviderAndNameMock.mockReset();
   });
 
   it("rejects quota thresholds outside bounds before updating", async () => {
@@ -180,6 +184,7 @@ describe("QgridFrame.query request logging", () => {
     assertNativeRunAdmissionMock.mockReset();
     finishRunWithErrorMock.mockReset();
     dispatcherQueryMock.mockReset();
+    findActiveByProviderAndNameMock.mockReset();
   });
 
   function queryOutput() {
@@ -232,6 +237,59 @@ describe("QgridFrame.query request logging", () => {
     expect(beforeQueryMock).toHaveBeenCalledWith(args);
     expect(afterQueryMock).toHaveBeenCalledWith(41, 0, args, expect.objectContaining({ text: "hello" }));
     expect(result.runContext).toEqual(queryOutput().runContext);
+  });
+
+  it("tokenName 을 활성 토큰 id 로 해석해 지정 요청으로 전달한다", async () => {
+    findActiveByProviderAndNameMock.mockResolvedValueOnce({
+      ...tokenEntry,
+      id: 17,
+      name: "anthropic/tok-A",
+    });
+    dispatcherQueryMock.mockResolvedValueOnce(queryOutput());
+
+    await QgridFrame.query({
+      prompt: "hi",
+      model: "anthropic/claude-sonnet-4-6",
+      tokenName: "anthropic/tok-A",
+    });
+
+    expect(findActiveByProviderAndNameMock).toHaveBeenCalledWith(
+      "A",
+      "anthropic",
+      "anthropic/tok-A",
+    );
+    expect(dispatcherQueryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ preferredTokenId: 17 }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("tokenName 에 해당하는 활성 토큰이 없으면 대체 없이 실패한다", async () => {
+    findActiveByProviderAndNameMock.mockResolvedValueOnce(undefined);
+
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        tokenName: "anthropic/missing",
+      }),
+    ).rejects.toThrow("Active token not found: anthropic/missing");
+
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
+    expect(beforeQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("tokenName provider 와 model provider 가 다르면 조회 전에 실패한다", async () => {
+    await expect(
+      QgridFrame.query({
+        prompt: "hi",
+        model: "anthropic/claude-sonnet-4-6",
+        tokenName: "openai/tok-A",
+      }),
+    ).rejects.toThrow("Token provider does not match model provider");
+
+    expect(findActiveByProviderAndNameMock).not.toHaveBeenCalled();
+    expect(dispatcherQueryMock).not.toHaveBeenCalled();
   });
 
   it("persists an immediate tools+schema structured answer as final JSON text", async () => {
