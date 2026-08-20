@@ -147,6 +147,37 @@ describe("readOpenAIQuotaUsage", () => {
     });
   });
 
+  it("converts the current WHAM limit_window_seconds duration to minutes", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(
+        JSON.stringify({
+          rate_limit: {
+            primary_window: {
+              used_percent: 21,
+              limit_window_seconds: 604_800,
+              reset_at: 123,
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      readOpenAIQuotaUsage({
+        credentials: { accessToken: "access", accountId: "acct" },
+        fetch: fetchMock,
+      }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raw: {
+        rateLimits: {
+          primary: { usedPercent: 21, windowDurationMins: 10_080, resetsAt: 123 },
+        },
+      },
+    });
+  });
+
   it("fails open for direct HTTP failures", async () => {
     await expect(
       readOpenAIQuotaUsage({

@@ -47,11 +47,17 @@ function windowFrom(value: unknown) {
   const source = value as Record<string, unknown>;
   const usedPercent = Number(source.usedPercent ?? source.used_percent);
   if (!Number.isFinite(usedPercent)) return null;
-  const duration = source.windowDurationMins ?? source.window_minutes;
+  const durationMins = source.windowDurationMins ?? source.window_minutes;
+  const durationSeconds = source.limitWindowSeconds ?? source.limit_window_seconds;
   const resets = source.resetsAt ?? source.reset_at;
   return {
     usedPercent,
-    windowDurationMins: duration === null || duration === undefined ? null : Number(duration),
+    windowDurationMins:
+      durationMins !== null && durationMins !== undefined
+        ? Number(durationMins)
+        : durationSeconds !== null && durationSeconds !== undefined
+          ? Number(durationSeconds) / 60
+          : null,
     resetsAt: resets === null || resets === undefined ? null : Number(resets),
   };
 }

@@ -125,7 +125,7 @@ function UsageRow({
   resetsAt: string | null;
   windowDurationMins?: number | null;
   theme: ProviderTheme;
-  // primary(5h) 행에만 전달. 설정 시 막대 위 그 % 위치에 제외선을 그린다. null이면 선 없음.
+  // primary 행에만 전달. 설정 시 막대 위 그 % 위치에 제외선을 그린다. null이면 선 없음.
   threshold?: number | null;
 }) {
   const pct = utilization ?? 0;
@@ -193,7 +193,7 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
     return <p className="text-[11px] text-sand-400 py-1">No usage data</p>;
   }
 
-  // threshold 선은 gate 기준 window(primary = 5h 행)에만, 지원 provider일 때만.
+  // threshold 선은 gate 기준 primary window에만, 지원 provider일 때만.
   const thresholdForPrimary = QUOTA_THRESHOLD_PROVIDERS.has(token.provider)
     ? token.quota_threshold
     : null;
@@ -357,7 +357,7 @@ function ThresholdControl({ token }: { token: Token }) {
               <p className="mt-1.5 text-[11px] text-sand-500 leading-snug">
                 {validation.value === null
                   ? "제한 없음 — 사용률과 무관하게 항상 사용합니다."
-                  : "5h 사용률이 임계치에 달하면 해당 토큰을 건너뜁니다."}
+                  : "기준 사용률이 임계치에 달하면 해당 토큰을 건너뜁니다."}
               </p>
             ) : (
               <p className="mt-1.5 text-[11px] text-red-500">{validation.error}</p>
