@@ -988,11 +988,12 @@ export namespace QgridService {
     name?: string,
     quotaThreshold?: number | null,
     weight?: number,
+    keepaliveEnabled?: boolean,
   ): Promise<{ updated: boolean }> {
     return fetch({
       method: "POST",
       url: `/api/qgrid/updateToken`,
-      data: { id, name, quotaThreshold, weight },
+      data: { id, name, quotaThreshold, weight, keepaliveEnabled },
     });
   }
 

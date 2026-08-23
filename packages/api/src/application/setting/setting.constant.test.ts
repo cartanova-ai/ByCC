@@ -76,11 +76,11 @@ describe("SETTING_DEFS", () => {
   it("token window keepalive 비상 스위치를 즉시 적용 설정으로 등록한다", () => {
     expect(findSettingDef("qgrid.tokenWindowKeepaliveEnabled")).toMatchObject({
       group: "qgrid",
-      envKey: "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED",
       kind: "boolean",
       applies: "immediate",
       fallback: "true",
     });
+    expect(findSettingDef("qgrid.tokenWindowKeepaliveEnabled")?.envKey).toBeUndefined();
   });
 
   it("키가 중복되지 않는다", () => {
@@ -90,7 +90,7 @@ describe("SETTING_DEFS", () => {
 
   it("env 키도 중복되지 않는다", () => {
     // 겹치면 한 env 를 두 설정이 서로 덮어쓴다.
-    const envKeys = SETTING_DEFS.map((d) => d.envKey);
+    const envKeys = SETTING_DEFS.flatMap((d) => (d.envKey ? [d.envKey] : []));
     expect(new Set(envKeys).size).toBe(envKeys.length);
   });
 

@@ -7,11 +7,12 @@ export type UpdateTokenParams = {
   name?: string;
   quotaThreshold?: number | null;
   weight?: number;
+  keepaliveEnabled?: boolean;
 };
 
 export function useUpdateTokenMutation() {
   return useMutation({
-    mutationFn: ({ id, name, quotaThreshold, weight }: UpdateTokenParams) =>
-      QgridService.updateToken(id, name, quotaThreshold, weight),
+    mutationFn: ({ id, name, quotaThreshold, weight, keepaliveEnabled }: UpdateTokenParams) =>
+      QgridService.updateToken(id, name, quotaThreshold, weight, keepaliveEnabled),
   });
 }

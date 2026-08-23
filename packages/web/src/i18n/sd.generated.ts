@@ -319,6 +319,7 @@ const entityLabels = {
   "entity.Token.ord": "정렬 순서",
   "entity.Token.quota_threshold": "quota 사용률 임계치(%). null이면 미설정",
   "entity.Token.weight": "가중 라운드로빈 라우팅 가중치 (1..100)",
+  "entity.Token.keepalive_enabled": "Anthropic 5시간 토큰 윈도우 keepalive 사용 여부",
   "enum.TokenOrderBy.id-desc": "ID최신순",
   "enum.TokenOrderBy.ord-asc": "순서순",
   "enum.TokenSearchField.id": "ID",

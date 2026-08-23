@@ -15,13 +15,19 @@ const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 
 function token(
   id: number,
-  overrides: Partial<{ name: string; provider: string; active: boolean }> = {},
+  overrides: Partial<{
+    name: string;
+    provider: string;
+    active: boolean;
+    keepalive_enabled: boolean;
+  }> = {},
 ) {
   return {
     id,
     name: `anthropic/token-${id}`,
     provider: "anthropic",
     active: true,
+    keepalive_enabled: true,
     ...overrides,
   };
 }
@@ -40,6 +46,7 @@ function deps(overrides: Partial<TokenWindowKeepaliveDeps> = {}): TokenWindowKee
     readUsage: vi.fn(async () => usage(new Date(NOW + FIVE_HOURS_MS).toISOString())),
     dispatch: vi.fn(async () => undefined),
     readSetting: () => "true",
+    isRunnerEnabled: () => true,
     now: () => Date.now(),
     setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
     clearTimer: (handle) => clearTimeout(handle),
@@ -108,7 +115,7 @@ describe("token window keepalive", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it("비활성 토큰과 Anthropic 이 아닌 토큰은 대상에서 제외한다", async () => {
+  it("비활성·비Anthropic·keepalive off 토큰은 대상에서 제외한다", async () => {
     const readUsage = vi.fn(async () => usage(new Date(NOW + FIVE_HOURS_MS).toISOString()));
     await startTokenWindowKeepalive(
       deps({
@@ -116,6 +123,7 @@ describe("token window keepalive", () => {
           token(1),
           token(2, { provider: "openai" }),
           token(3, { active: false }),
+          token(4, { keepalive_enabled: false }),
         ]),
         readUsage,
       }),
@@ -208,6 +216,19 @@ describe("token window keepalive", () => {
 
     expect(testDeps.findTokens).not.toHaveBeenCalled();
     expect(testDeps.readUsage).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("이 인스턴스가 runner로 지정되지 않으면 전역 스위치와 무관하게 시작하지 않는다", async () => {
+    const testDeps = deps({
+      isRunnerEnabled: () => false,
+      readSetting: vi.fn(() => "true"),
+    });
+
+    await startTokenWindowKeepalive(testDeps);
+
+    expect(testDeps.findTokens).not.toHaveBeenCalled();
+    expect(testDeps.readSetting).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 

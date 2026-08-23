@@ -54,8 +54,8 @@ export async function loadSettings(persistence: SettingPersistence = SettingMode
 }
 
 /** DB → env 순. 둘 다 없으면 undefined 라 호출부의 기본값으로 떨어진다. */
-export function getSetting(key: string, envKey: string): string | undefined {
-  return cache?.get(key) ?? process.env[envKey];
+export function getSetting(key: string, envKey?: string): string | undefined {
+  return cache?.get(key) ?? (envKey ? process.env[envKey] : undefined);
 }
 
 /** 저장된 값인지 — 화면에서 출처를 구분해 보여준다. */

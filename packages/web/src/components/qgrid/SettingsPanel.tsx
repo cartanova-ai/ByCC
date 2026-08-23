@@ -7,9 +7,10 @@ import MinusIcon from "~icons/lucide/minus";
 import PlusIcon from "~icons/lucide/plus";
 import RotateIcon from "~icons/lucide/rotate-ccw";
 
-import { QgridService, SettingService } from "@/services/services.generated";
+import { QgridService, SettingService, TokenService } from "@/services/services.generated";
 import { type SettingItem, type SupervisorKind } from "@/services/setting/setting.types";
 import { isSonamuError } from "@/services/sonamu.shared";
+import { useUpdateTokenMutation } from "@/services/token/use-update-token-mutation";
 
 const GROUP_LABELS: Record<string, string> = {
   qgrid: "Qgrid",
@@ -157,7 +158,7 @@ function Toggle({
   );
 }
 
-function SettingRow({ item }: { item: SettingItem }) {
+function SettingRow({ item, disabled = false }: { item: SettingItem; disabled?: boolean }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -165,7 +166,7 @@ function SettingRow({ item }: { item: SettingItem }) {
   const updateMutation = SettingService.useUpdateSettingMutation();
   const resetMutation = SettingService.useResetSettingMutation();
 
-  const pending = updateMutation.isPending || resetMutation.isPending;
+  const pending = disabled || updateMutation.isPending || resetMutation.isPending;
   const value = draft ?? item.value;
   const dirty = draft !== null && draft !== item.value;
 
@@ -302,6 +303,74 @@ function SettingRow({ item }: { item: SettingItem }) {
       </div>
 
       {error && <p className="mt-1.5 text-[11px] text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+function KeepaliveTokenSettings({ runnerEnabled }: { runnerEnabled: boolean }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const tokensQuery = TokenService.useTokens("A", { orderBy: "ord-asc", num: 100 });
+  const updateMutation = useUpdateTokenMutation();
+  const anthropicTokens = (tokensQuery.data?.rows ?? []).filter(
+    (token) => token.provider === "anthropic",
+  );
+
+  const toggle = async (id: number, keepaliveEnabled: boolean) => {
+    setError(null);
+    try {
+      await updateMutation.mutateAsync({ id, keepaliveEnabled });
+      await queryClient.invalidateQueries({ queryKey: ["Token", "getTokens"] });
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  };
+
+  return (
+    <div className="border-t border-sand-100/80 bg-sand-50/40 px-4 py-3 sm:px-5">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium text-sand-600">토큰별 keepalive</p>
+          <p className="mt-0.5 text-[10px] text-sand-400">
+            {runnerEnabled
+              ? "켜진 활성 Anthropic 토큰만 5시간 윈도우를 유지합니다"
+              : "이 인스턴스는 keepalive runner로 지정되지 않았습니다"}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+            runnerEnabled ? "bg-sage-50 text-sage-600" : "bg-sand-100 text-sand-500"
+          }`}
+        >
+          {runnerEnabled ? "runner" : "실행 안 함"}
+        </span>
+      </div>
+
+      {tokensQuery.isLoading ? (
+        <p className="py-2 text-[11px] text-sand-400">토큰을 불러오는 중…</p>
+      ) : anthropicTokens.length === 0 ? (
+        <p className="py-2 text-[11px] text-sand-400">등록된 Anthropic 토큰이 없습니다</p>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-sand-200/70 bg-white">
+          {anthropicTokens.map((token) => (
+            <div
+              key={token.id}
+              className="flex items-center justify-between gap-4 border-b border-sand-100/80 px-3 py-2 last:border-b-0"
+            >
+              <div className="min-w-0">
+                <span className="block truncate text-[12px] text-sand-700">{token.name}</span>
+                {!token.active && <span className="text-[10px] text-sand-400">토큰 비활성</span>}
+              </div>
+              <Toggle
+                on={token.keepalive_enabled}
+                disabled={!runnerEnabled || updateMutation.isPending}
+                onChange={(next) => void toggle(token.id, next)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {error && <p className="mt-2 text-[11px] text-red-500">{error}</p>}
     </div>
   );
 }
@@ -645,7 +714,18 @@ export function SettingsPanel() {
             </div>
             <div className="divide-y divide-sand-100/80">
               {items.map((item) => (
-                <SettingRow key={item.key} item={item} />
+                <div key={item.key}>
+                  <SettingRow
+                    item={item}
+                    disabled={
+                      item.key === "qgrid.tokenWindowKeepaliveEnabled" &&
+                      !data?.keepaliveRunnerEnabled
+                    }
+                  />
+                  {item.key === "qgrid.tokenWindowKeepaliveEnabled" && (
+                    <KeepaliveTokenSettings runnerEnabled={data?.keepaliveRunnerEnabled ?? false} />
+                  )}
+                </div>
               ))}
             </div>
           </div>

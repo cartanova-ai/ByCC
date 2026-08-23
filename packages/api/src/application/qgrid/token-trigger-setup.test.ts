@@ -6,4 +6,10 @@ describe("tokens trigger setup", () => {
   it("leaves weight notifications to the versioned migration trigger", () => {
     expect(TOKENS_TRIGGER_SETUP_SQL).not.toContain("OLD.weight IS DISTINCT FROM NEW.weight");
   });
+
+  it("notifies subscribers when per-token keepalive membership changes", () => {
+    expect(TOKENS_TRIGGER_SETUP_SQL).toContain(
+      "OLD.keepalive_enabled IS DISTINCT FROM NEW.keepalive_enabled",
+    );
+  });
 });

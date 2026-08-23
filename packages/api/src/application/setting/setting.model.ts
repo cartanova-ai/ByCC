@@ -16,7 +16,13 @@ import { detectSupervisor } from "../../utils/process-supervisor";
 import { armServerRestartExit, beginServerRestart } from "../../utils/server-restart";
 import { type SettingSubsetKey, type SettingSubsetMapping } from "../sonamu.generated";
 import { settingSubsetQueries, settingLoaderQueries } from "../sonamu.generated.sso";
-import { findSettingDef, maskSecret, SETTING_DEFS, validateSettingValue } from "./setting.constant";
+import {
+  findSettingDef,
+  maskSecret,
+  SETTING_DEFS,
+  TOKEN_WINDOW_KEEPALIVE_RUNNER_ENV_KEY,
+  validateSettingValue,
+} from "./setting.constant";
 import {
   getSetting,
   isStored,
@@ -252,7 +258,12 @@ class SettingModelClass extends BaseModelClass<
       };
     });
 
-    return { settings, runtime: this.runtimeInfo(), supervisor: detectSupervisor() };
+    return {
+      settings,
+      runtime: this.runtimeInfo(),
+      supervisor: detectSupervisor(),
+      keepaliveRunnerEnabled: process.env[TOKEN_WINDOW_KEEPALIVE_RUNNER_ENV_KEY] === "true",
+    };
   }
 
   private runtimeInfo(): RuntimeInfoItem[] {

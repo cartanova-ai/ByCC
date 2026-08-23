@@ -61,5 +61,7 @@ export const SettingsResponse = z.object({
   runtime: RuntimeInfoItem.array(),
   /** null 이면 재시작 버튼을 쓸 수 없다 — 종료해도 되살릴 주체가 없다. */
   supervisor: SupervisorKind.nullable(),
+  /** 이 인스턴스가 keepalive 스케줄러를 소유하도록 명시적으로 허용됐는지. */
+  keepaliveRunnerEnabled: z.boolean(),
 });
 export type SettingsResponse = z.infer<typeof SettingsResponse>;

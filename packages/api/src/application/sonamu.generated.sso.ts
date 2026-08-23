@@ -213,6 +213,7 @@ export const tokenSubsetQueries = {
       ord: "tokens.ord",
       quota_threshold: "tokens.quota_threshold",
       weight: "tokens.weight",
+      keepalive_enabled: "tokens.keepalive_enabled",
     });
   },
 };

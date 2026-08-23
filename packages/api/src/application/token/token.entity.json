@@ -26,6 +26,12 @@
       "type": "integer",
       "desc": "가중 라운드로빈 라우팅 가중치 (1..100)",
       "dbDefault": "1"
+    },
+    {
+      "name": "keepalive_enabled",
+      "type": "boolean",
+      "desc": "Anthropic 5시간 토큰 윈도우 keepalive 사용 여부",
+      "dbDefault": "false"
     }
   ],
   "indexes": [
@@ -46,7 +52,8 @@
       "active",
       "ord",
       "quota_threshold",
-      "weight"
+      "weight",
+      "keepalive_enabled"
     ]
   },
   "enums": {

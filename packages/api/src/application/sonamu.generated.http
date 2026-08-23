@@ -566,7 +566,8 @@ Content-Type: application/json
   "id": 0,
   "name": "NAME",
   "quotaThreshold": null,
-  "weight": 0
+  "weight": 0,
+  "keepaliveEnabled": false
 }
 
 ###

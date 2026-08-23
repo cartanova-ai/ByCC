@@ -505,6 +505,7 @@ class QgridFrameClass extends BaseFrameClass {
     name?: string,
     quotaThreshold?: number | null,
     weight?: number,
+    keepaliveEnabled?: boolean,
   ): Promise<{ updated: boolean }> {
     if (
       quotaThreshold !== undefined &&
@@ -525,6 +526,7 @@ class QgridFrameClass extends BaseFrameClass {
     if (name !== undefined) patch.name = name;
     if (quotaThreshold !== undefined) patch.quota_threshold = quotaThreshold;
     if (weight !== undefined) patch.weight = weight;
+    if (keepaliveEnabled !== undefined) patch.keepalive_enabled = keepaliveEnabled;
     if (Object.keys(patch).length === 0) return { updated: false };
 
     const updated = await TokenModel.updateFields(id, patch);

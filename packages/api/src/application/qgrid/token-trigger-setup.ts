@@ -40,7 +40,8 @@ export const TOKENS_TRIGGER_SETUP_SQL = `
     OLD.credentials IS DISTINCT FROM NEW.credentials OR
     OLD.provider IS DISTINCT FROM NEW.provider OR
     OLD.name IS DISTINCT FROM NEW.name OR
-    OLD.quota_threshold IS DISTINCT FROM NEW.quota_threshold
+    OLD.quota_threshold IS DISTINCT FROM NEW.quota_threshold OR
+    OLD.keepalive_enabled IS DISTINCT FROM NEW.keepalive_enabled
   )
   EXECUTE FUNCTION public.tokens_notify();
 `;

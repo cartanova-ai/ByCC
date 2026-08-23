@@ -1,5 +1,6 @@
 import { getLogger } from "@logtape/logtape";
 
+import { TOKEN_WINDOW_KEEPALIVE_RUNNER_ENV_KEY } from "../setting/setting.constant";
 import { getSetting } from "../setting/setting.store";
 import { TokenModel } from "../token/token.model";
 import { type InternalQueryInput } from "./qgrid.dispatcher";
@@ -17,13 +18,14 @@ export const POST_KEEPALIVE_USAGE_DELAY_MS = 61_000;
 export const KEEPALIVE_MODEL = "anthropic/claude-haiku-4-5";
 export const KEEPALIVE_PROJECT_NAME = "qgrid-token-window-keepalive";
 export const KEEPALIVE_SETTING_KEY = "qgrid.tokenWindowKeepaliveEnabled";
-export const KEEPALIVE_ENV_KEY = "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED";
+export const KEEPALIVE_ENV_KEY = TOKEN_WINDOW_KEEPALIVE_RUNNER_ENV_KEY;
 
 type KeepaliveToken = {
   id: number;
   name: string;
   provider: string;
   active: boolean;
+  keepalive_enabled: boolean;
 };
 
 type TimerHandle = ReturnType<typeof setTimeout>;
@@ -33,6 +35,7 @@ export type TokenWindowKeepaliveDeps = {
   readUsage: (tokenId: number) => Promise<UsageResponse>;
   dispatch: (input: InternalQueryInput) => Promise<unknown>;
   readSetting: typeof getSetting;
+  isRunnerEnabled: () => boolean;
   now: () => number;
   setTimer: (callback: () => void, delayMs: number) => TimerHandle;
   clearTimer: (handle: TimerHandle) => void;
@@ -43,6 +46,7 @@ const defaultDeps: TokenWindowKeepaliveDeps = {
   readUsage: (tokenId) => QgridFrame.usage(tokenId),
   dispatch: (input) => QgridFrame.query(input),
   readSetting: getSetting,
+  isRunnerEnabled: () => process.env[KEEPALIVE_ENV_KEY] === "true",
   now: () => Date.now(),
   setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimer: (handle) => clearTimeout(handle),
@@ -191,7 +195,11 @@ export async function startTokenWindowKeepalive(
   deps: TokenWindowKeepaliveDeps = defaultDeps,
 ): Promise<void> {
   clearScheduledTimers();
-  if (deps.readSetting(KEEPALIVE_SETTING_KEY, KEEPALIVE_ENV_KEY) === "false") {
+  if (!deps.isRunnerEnabled()) {
+    logger.info("token window keepalive runner disabled for this instance");
+    return;
+  }
+  if (deps.readSetting(KEEPALIVE_SETTING_KEY) === "false") {
     logger.info("token window keepalive disabled");
     return;
   }
@@ -206,7 +214,9 @@ export async function startTokenWindowKeepalive(
   }
   if (generation !== expectedGeneration) return;
 
-  const targets = tokens.filter((token) => token.active && token.provider === "anthropic");
+  const targets = tokens.filter(
+    (token) => token.active && token.provider === "anthropic" && token.keepalive_enabled,
+  );
   const targetIds = new Set(targets.map((token) => token.id));
   for (const tokenId of fireGuards.keys()) {
     if (!targetIds.has(tokenId)) fireGuards.delete(tokenId);

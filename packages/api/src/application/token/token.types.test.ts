@@ -42,4 +42,14 @@ describe("TokenSaveParams", () => {
       expect(() => TokenSaveParams.parse({ ...baseToken, weight })).toThrow();
     }
   });
+
+  it("keeps per-token keepalive opt-in optional and accepts booleans", () => {
+    expect(TokenSaveParams.parse(baseToken)).not.toHaveProperty("keepalive_enabled");
+    expect(
+      TokenSaveParams.parse({ ...baseToken, keepalive_enabled: true }).keepalive_enabled,
+    ).toBe(true);
+    expect(() =>
+      TokenSaveParams.parse({ ...baseToken, keepalive_enabled: "true" }),
+    ).toThrow();
+  });
 });

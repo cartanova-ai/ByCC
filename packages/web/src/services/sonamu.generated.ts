@@ -300,6 +300,7 @@ export const TokenBaseSchema = z.object({
   ord: z.int(),
   quota_threshold: z.int().nullable(),
   weight: z.int(),
+  keepalive_enabled: z.boolean(),
 });
 export type TokenBaseSchema = z.infer<typeof TokenBaseSchema> & {
   readonly __hasDefault__: readonly [
@@ -308,6 +309,7 @@ export type TokenBaseSchema = z.infer<typeof TokenBaseSchema> & {
     "ord",
     "quota_threshold",
     "weight",
+    "keepalive_enabled",
     "id",
   ];
 };
@@ -559,6 +561,7 @@ export const TokenSubsetA = z.object({
   ord: z.int(),
   quota_threshold: z.int().nullable(),
   weight: z.int(),
+  keepalive_enabled: z.boolean(),
 });
 export type TokenSubsetA = z.infer<typeof TokenSubsetA>;
 export type TokenSubsetMapping = {

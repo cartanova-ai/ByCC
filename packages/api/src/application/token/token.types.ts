@@ -41,6 +41,7 @@ export const TokenSaveParams = TokenBaseSchema.partial({
   ord: true,
   quota_threshold: true,
   weight: true,
+  keepalive_enabled: true,
 }).extend({
   quota_threshold: TokenQuotaThreshold.optional(),
   weight: TokenWeight.optional(),

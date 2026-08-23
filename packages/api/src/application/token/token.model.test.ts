@@ -111,6 +111,35 @@ describe("TokenModel.updateFields", () => {
   });
 });
 
+describe("TokenModel.replaceByAccount", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("re-login으로 row가 교체돼도 기존 keepalive 선택을 보존한다", async () => {
+    vi.spyOn(TokenModel, "findByAccountIdentifier").mockResolvedValue([
+      {
+        id: 1,
+        created_at: new Date(),
+        active: true,
+        ord: 0,
+        quota_threshold: 80,
+        weight: 1,
+        keepalive_enabled: true,
+        ...baseToken,
+      },
+    ]);
+    vi.spyOn(TokenModel, "del").mockResolvedValue(1);
+    const save = vi.spyOn(TokenModel, "save").mockResolvedValue([2]);
+
+    await TokenModel.replaceByAccount("anthropic", "acc-1", baseToken);
+
+    expect(save).toHaveBeenCalledWith([
+      expect.objectContaining({ keepalive_enabled: true }),
+    ]);
+  });
+});
+
 describe("TokenModel.findActiveByProviderAndName", () => {
   afterEach(() => {
     vi.restoreAllMocks();

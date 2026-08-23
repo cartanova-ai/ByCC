@@ -23,6 +23,7 @@ export type TokenUpdateFields = {
   name?: string;
   quota_threshold?: number | null;
   weight?: number;
+  keepalive_enabled?: boolean;
 };
 
 function applyCreateDefaults(sp: TokenSaveParams): TokenSaveParams {
@@ -235,8 +236,12 @@ class TokenModelClass extends BaseModelClass<
     accountId: string | undefined,
     saveParams: TokenSaveParams,
   ): Promise<void> {
+    let keepaliveEnabled = saveParams.keepalive_enabled;
     if (accountId) {
       const oldEntries = await this.findByAccountIdentifier("A", provider, accountId);
+      if (keepaliveEnabled === undefined && oldEntries.length > 0) {
+        keepaliveEnabled = oldEntries.some((entry) => entry.keepalive_enabled);
+      }
       if (oldEntries.length > 0) await this.del(oldEntries.map((o) => o.id));
     } else {
       logger.warn(
@@ -244,7 +249,11 @@ class TokenModelClass extends BaseModelClass<
       );
     }
 
-    await this.save([saveParams]);
+    await this.save([
+      keepaliveEnabled === undefined
+        ? saveParams
+        : { ...saveParams, keepalive_enabled: keepaliveEnabled },
+    ]);
   }
 
   /**

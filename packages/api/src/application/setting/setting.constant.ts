@@ -22,7 +22,7 @@ export type SettingGroup = "qgrid" | "slack" | "slackConnection";
 export type SettingDef = {
   key: string;
   group: SettingGroup;
-  envKey: string;
+  envKey?: string;
   label: string;
   kind: SettingKind;
   /** 적용 시점. 부팅 시 한 번만 읽히는 값은 재시작이 필요하다. */
@@ -39,16 +39,21 @@ export type SettingDef = {
   help?: string;
 };
 
+/**
+ * keepalive 스케줄러를 실제로 소유할 인스턴스만 켠다. Settings DB 값과 일부러 분리한다 —
+ * 같은 DB를 보는 개발자 로컬 인스턴스가 전역 설정을 읽고 함께 발사하면 중복 요청이 된다.
+ */
+export const TOKEN_WINDOW_KEEPALIVE_RUNNER_ENV_KEY = "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED";
+
 export const SETTING_DEFS: SettingDef[] = [
   {
     key: "qgrid.tokenWindowKeepaliveEnabled",
     fallback: "true",
     group: "qgrid",
-    envKey: "QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED",
     label: "토큰 윈도우 keepalive",
     kind: "boolean",
     applies: "immediate",
-    help: "끄면 활성 Anthropic 토큰의 5시간 윈도우 자동 유지 요청을 중단합니다",
+    help: "끄면 이 서버에서 선택한 Anthropic 토큰의 5시간 윈도우 자동 유지 요청을 중단합니다",
   },
   {
     key: "slack.enabled",

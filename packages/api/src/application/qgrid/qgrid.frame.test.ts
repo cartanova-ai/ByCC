@@ -111,6 +111,7 @@ const tokenEntry = {
   ord: 0,
   quota_threshold: null,
   weight: 1,
+  keepalive_enabled: false,
 };
 
 function deeplyNestedInputSchema(depth: number): unknown {
@@ -162,6 +163,14 @@ describe("QgridFrame.updateToken", () => {
     });
 
     expect(updateFieldsMock).toHaveBeenCalledWith(1, { weight: 4 });
+  });
+
+  it("updates only the supplied keepalive switch", async () => {
+    await expect(QgridFrame.updateToken(1, undefined, undefined, undefined, true)).resolves.toEqual({
+      updated: true,
+    });
+
+    expect(updateFieldsMock).toHaveBeenCalledWith(1, { keepalive_enabled: true });
   });
 
   it("reports a missing token from the atomic update result", async () => {
