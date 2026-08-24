@@ -25,6 +25,7 @@ import {
 import { loadSettings, setSettingChangeHandler } from "./application/setting/setting.store";
 import { handleServerError } from "./server-error-handler";
 import { AnthropicDispatcher } from "./utils/providers/anthropic/anthropic-dispatcher";
+import { stopOpenAICallbackRelay } from "./utils/providers/openai/openai-callback-relay";
 import { OpenAIDispatcher } from "./utils/providers/openai/openai-dispatcher";
 
 const host = process.env.HOST ?? "localhost";
@@ -241,6 +242,7 @@ export default defineConfig({
         const log = getLogger(["qgrid", "startup"]);
         stopExpiredTokenReminder();
         stopTokenWindowKeepalive();
+        stopOpenAICallbackRelay();
         setSettingChangeHandler(null);
         QgridDispatcher.subscriber?.setTokenChangeHandler(null);
         if (QgridDispatcher.openaiDispatcher) {

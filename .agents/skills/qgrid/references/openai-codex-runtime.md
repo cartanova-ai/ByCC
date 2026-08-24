@@ -8,7 +8,7 @@ Use this reference before changing OpenAI transport, concurrency, routing, promp
 - Direct client and transport interface: `openai-direct-client.ts`.
 - Request, identity headers, and normalized events: `openai-backend-protocol.ts`.
 - SSE decoding: `openai-sse.ts`.
-- Direct PKCE OAuth and refresh: `openai-oauth.ts`, `openai-refresh.ts`.
+- Direct PKCE OAuth and refresh: `openai-oauth.ts`, `openai-refresh.ts`, `openai-callback-relay.ts`.
 - Direct quota lookup: `openai-quota.ts`.
 - Provider integration and history: `packages/api/src/application/qgrid/qgrid.dispatcher.ts`, `conv-routing.ts`.
 
@@ -51,10 +51,15 @@ Stable affinity can improve provider prompt-cache reuse only when the serialized
 OpenAI browser login is implemented directly with authorization-code PKCE:
 
 1. Generate verifier, SHA-256 challenge, and state.
-2. Build the OpenAI authorize URL with Codex CLI-compatible client, scope, originator, and simplified-flow fields.
-3. Validate pending state on callback.
-4. Exchange the code directly at `https://auth.openai.com/oauth/token`.
-5. Parse account id and plan claims, then store access, refresh, and id tokens.
+2. Open a loopback callback relay on a port OpenAI registered for the Codex CLI client.
+3. Build the OpenAI authorize URL with Codex CLI-compatible client, scope, originator, and simplified-flow fields.
+4. Validate pending state on callback.
+5. Exchange the code directly at `https://auth.openai.com/oauth/token`.
+6. Parse account id and plan claims, then store access, refresh, and id tokens.
+
+The redirect URI is not qgrid's own server address. OpenAI matches the Codex CLI client's redirect URIs by exact string and registers only `http://localhost:1455/auth/callback` and `http://localhost:1457/auth/callback`. Sending qgrid's configurable port instead makes `/oauth/authorize` fail with `invalid_authorize_request`, which the browser renders as a generic "Authentication Error / error_code: unknown_error" page before any login screen. `openai-callback-relay.ts` therefore binds `127.0.0.1:1455` (falling back to `1457`) for the login window and 302-forwards only `code` and `state` to qgrid's own `/auth/callback` route. Both ports being busy — typically a running `codex login` — fails the login start with a message naming them.
+
+This flow needs the browser and the qgrid server on the same host. A dashboard opened from another machine cannot complete OpenAI login, unlike Anthropic's console code-paste fallback.
 
 Refresh posts the stored refresh token directly to the token endpoint, deduplicates concurrent refreshes, and persists rotated credentials. Generation sends Codex CLI identity headers built by `buildCodexIdentityHeaders`.
 

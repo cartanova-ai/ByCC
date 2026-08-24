@@ -40,6 +40,12 @@ vi.mock("../../utils/providers/openai/openai-oauth", async (importOriginal) => (
   exchangeOpenAICode: openAIExchangeMock,
 }));
 
+// The relay binds a real loopback port; these tests only assert which redirect URI is signed in.
+vi.mock("../../utils/providers/openai/openai-callback-relay", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../utils/providers/openai/openai-callback-relay")>()),
+  startOpenAICallbackRelay: async () => "http://localhost:1455/auth/callback",
+}));
+
 vi.mock("../token/token.model", () => ({
   TokenModel: {
     save: tokenSaveMock,
@@ -202,7 +208,8 @@ describe("QgridFrame direct OpenAI OAuth", () => {
     const url = new URL(result.authUrl);
     expect(result.mode).toBe("redirect");
     expect(url.origin + url.pathname).toBe("https://auth.openai.com/oauth/authorize");
-    expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:44900/auth/callback");
+    // OpenAI only accepts the Codex CLI's registered loopback callbacks.
+    expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
     expect(url.searchParams.get("state")).toBeTruthy();
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   });
@@ -228,7 +235,7 @@ describe("QgridFrame direct OpenAI OAuth", () => {
     expect(openAIExchangeMock).toHaveBeenCalledWith(
       "the-code",
       expect.any(String),
-      "http://localhost:44900/auth/callback",
+      "http://localhost:1455/auth/callback",
     );
     expect(tokenDelMock).toHaveBeenCalledOnce();
     expect(tokenSaveMock).toHaveBeenCalledWith([

@@ -64,8 +64,9 @@ export function useOAuthLoginFlow() {
         if (popup) popup.location.href = authUrl;
         else window.open(authUrl, "_blank");
 
-        // codex 가 콜백을 처리하므로 토큰이 늘어날 때까지 폴링한다. 로그인이 끝나면
-        // 바로 멈춰서, 성공한 뒤에도 남은 타임아웃 동안 계속 refetch 하지 않는다.
+        // 콜백은 새 탭에서 끝나므로(OpenAI 등록 콜백 포트 → 서버 /auth/callback) 토큰이
+        // 늘어날 때까지 폴링한다. 로그인이 끝나면 바로 멈춰서, 성공한 뒤에도 남은
+        // 타임아웃 동안 계속 refetch 하지 않는다.
         const before = countTokens(queryClient);
         stopPolling();
         pollTimers.current.interval = window.setInterval(() => {

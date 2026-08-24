@@ -13,6 +13,10 @@ import {
 } from "../../utils/providers/common/credentials";
 import { CallerSchemaValidationError } from "../../utils/providers/common/schema-validation";
 import {
+  OPENAI_CALLBACK_PORTS,
+  startOpenAICallbackRelay,
+} from "../../utils/providers/openai/openai-callback-relay";
+import {
   buildOpenAIAuthUrl,
   exchangeOpenAICode,
   generateOpenAIPKCE,
@@ -70,6 +74,7 @@ type PendingOAuth = {
 };
 const OAUTH_STATE_PREFIX = "oauth:state:";
 const OAUTH_STATE_TTL = "5m";
+const OAUTH_STATE_TTL_MS = 5 * 60_000;
 
 function unixSecondsToIso(seconds: number | null | undefined): string | null {
   return typeof seconds === "number" ? new Date(seconds * 1000).toISOString() : null;
@@ -664,7 +669,17 @@ class QgridFrameClass extends BaseFrameClass {
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
     const { codeVerifier, codeChallenge, state } = generateOpenAIPKCE();
-    const redirectUri = `${trustedLoopbackBase()}/auth/callback`;
+    // OpenAI only accepts the Codex CLI's registered loopback callbacks, so the browser lands on a
+    // short-lived local relay that forwards the code to qgrid's own callback route. Pointing the
+    // authorize request at qgrid's configurable port instead fails with `invalid_authorize_request`.
+    let redirectUri: string;
+    try {
+      redirectUri = await startOpenAICallbackRelay(trustedLoopbackBase(), OAUTH_STATE_TTL_MS);
+    } catch {
+      throw new BadRequestException(
+        `OpenAI login needs local port ${OPENAI_CALLBACK_PORTS.join(" or ")} — close any running \`codex login\` and retry` as LocalizedString,
+      );
+    }
     const authUrl = buildOpenAIAuthUrl(codeChallenge, state, redirectUri);
     await setOAuthState(state, { codeVerifier, name, redirectUri, provider: "openai" });
     return { authUrl, mode: "redirect" };
