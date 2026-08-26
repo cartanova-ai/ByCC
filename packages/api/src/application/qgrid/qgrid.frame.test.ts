@@ -14,6 +14,7 @@ const {
   updateFieldsMock,
   requestLogSaveMock,
   requestLogCreateRunMock,
+  requestLogFinishRunMock,
   appendStepMock,
   dispatcherQueryMock,
   dispatcherQueryStreamMock,
@@ -36,6 +37,7 @@ const {
     updateFieldsMock: vi.fn(),
     requestLogSaveMock: vi.fn(),
     requestLogCreateRunMock: vi.fn(),
+    requestLogFinishRunMock: vi.fn(),
     appendStepMock: vi.fn(),
     dispatcherQueryMock: vi.fn(),
     dispatcherQueryStreamMock: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("../request-log/request-log.model", () => ({
   RequestLogModel: {
     save: requestLogSaveMock,
     createRun: requestLogCreateRunMock,
+    finishRun: requestLogFinishRunMock,
     appendStep: appendStepMock,
   },
 }));
@@ -888,6 +891,46 @@ describe("QgridFrame raw lifecycle API", () => {
     );
     expect(requestLogCreateRunMock).toHaveBeenCalledWith(
       expect.not.objectContaining({ model_name: expect.anything() }),
+    );
+  });
+
+  it("passes optional structured metadata through the external createRun API", async () => {
+    requestLogCreateRunMock.mockReset().mockResolvedValue(82);
+    const jsonSchema = JSON.stringify({
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+    });
+
+    await QgridFrame.createRun({
+      userPrompt: "hi",
+      modelName: "google/gemini-3.5-flash-lite",
+      isStructured: true,
+      jsonSchema,
+    });
+
+    expect(requestLogCreateRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        is_structured: true,
+        json_schema: jsonSchema,
+      }),
+    );
+  });
+
+  it("passes optional response JSON validity through the external finishRun API", async () => {
+    requestLogFinishRunMock.mockReset().mockResolvedValue(undefined);
+
+    await QgridFrame.finishRun({
+      requestLogId: 82,
+      status: "succeeded",
+      response: '{"answer":"ok"}',
+      tokenName: "external",
+      responseJsonOk: true,
+    });
+
+    expect(requestLogFinishRunMock).toHaveBeenCalledWith(
+      82,
+      expect.objectContaining({ response_json_ok: true }),
     );
   });
 });

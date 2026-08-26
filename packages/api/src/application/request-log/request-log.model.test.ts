@@ -279,6 +279,27 @@ describe("RequestLogModel run lifecycle", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps legacy external runs unstructured when metadata is omitted", async () => {
+    const ubRegister = vi.fn();
+    const transaction = vi.fn(
+      async (cb: (trx: { ubUpsert: () => Promise<number[]> }) => Promise<number>) =>
+        cb({ ubUpsert: vi.fn(async () => [16]) }),
+    );
+    vi.spyOn(
+      RequestLogModel as unknown as {
+        getPuri: () => { ubRegister: typeof ubRegister; transaction: typeof transaction };
+      },
+      "getPuri",
+    ).mockReturnValue({ ubRegister, transaction });
+
+    await RequestLogModel.createRun({ user_prompt: "plain text" });
+
+    expect(ubRegister).toHaveBeenCalledWith(
+      "request_logs",
+      expect.objectContaining({ is_structured: false, json_schema: null }),
+    );
+  });
+
   it("stores the requested model and attached tools but no serving model when a run starts", async () => {
     const ubRegister = vi.fn();
     const transaction = vi.fn(
@@ -296,6 +317,8 @@ describe("RequestLogModel run lifecycle", () => {
       RequestLogModel.createRun({
         user_prompt: "hi",
         requested_model_name: "openai/gpt-5-codex",
+        is_structured: true,
+        json_schema: '{"type":"object"}',
         tools: [{ name: "getWeather", description: "Get weather", inputSchema: { type: "object" } }],
       }),
     ).resolves.toBe(17);
@@ -306,6 +329,8 @@ describe("RequestLogModel run lifecycle", () => {
         status: "running",
         requested_model_name: "openai/gpt-5-codex",
         model_name: null,
+        is_structured: true,
+        json_schema: '{"type":"object"}',
         tools: [{ name: "getWeather", description: "Get weather", inputSchema: { type: "object" } }],
       }),
     );

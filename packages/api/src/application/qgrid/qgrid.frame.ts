@@ -427,6 +427,8 @@ class QgridFrameClass extends BaseFrameClass {
       project_name: input.projectName,
       system_prompt: input.systemPrompt,
       history: input.history ? JSON.parse(input.history) : undefined,
+      is_structured: input.isStructured,
+      json_schema: input.jsonSchema,
     });
     return { requestLogId };
   }
@@ -483,6 +485,7 @@ class QgridFrameClass extends BaseFrameClass {
       duration_ms: input.totalDurationMs,
       history: input.history ? JSON.parse(input.history) : undefined,
       error_message: input.errorMessage,
+      response_json_ok: input.responseJsonOk,
     });
     return { ok: true };
   }

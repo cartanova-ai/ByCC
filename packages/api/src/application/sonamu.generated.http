@@ -438,7 +438,9 @@ Content-Type: application/json
     "modelName": "MODELNAME",
     "effort": "EFFORT",
     "projectName": "PROJECTNAME",
-    "history": "HISTORY"
+    "history": "HISTORY",
+    "isStructured": false,
+    "jsonSchema": null
   }
 }
 
@@ -502,7 +504,8 @@ Content-Type: application/json
     "costSource": "provider",
     "totalDurationMs": 0,
     "history": "HISTORY",
-    "errorMessage": "ERRORMESSAGE"
+    "errorMessage": "ERRORMESSAGE",
+    "responseJsonOk": false
   }
 }
 

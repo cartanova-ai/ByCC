@@ -27,6 +27,7 @@ type PendingToolCall = {
 type RunState = {
   requestLogId: number;
   requestedModelName: string;
+  isStructured: boolean;
   pendingSteps: Promise<unknown>[];
   pendingToolCalls: PendingToolCall[];
   startTime: number;
@@ -47,6 +48,15 @@ const DEFAULT_STALE_RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const STALE_RUN_GRACE_MS = 5000;
 const OVERLAPPING_RUN_ERROR =
   "createQgridLogger received overlapping runs for the same telemetry key. Pass a unique metadata.qgridRunId per AI SDK call or create a fresh logger integration per call.";
+
+function isParseableJson(value: string | undefined): boolean {
+  try {
+    JSON.parse(value ?? "");
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function fullModelName(provider: string | undefined, modelId: string | undefined) {
   if (!provider || !modelId) return undefined;
@@ -148,6 +158,9 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
       totalCacheReadTokens: result.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
       totalCacheCreationTokens: result.totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
       totalDurationMs: Date.now() - run.startTime,
+      ...(run.isStructured && result.status === "succeeded"
+        ? { responseJsonOk: isParseableJson(result.response) }
+        : {}),
       ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
     }).catch((e) => onLogError(e instanceof Error ? e : new Error(String(e))));
   };
@@ -216,12 +229,20 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
       try {
         const messages = event.messages ?? (Array.isArray(event.prompt) ? event.prompt : undefined);
         const history = serializeHistory(messages);
+        const responseFormat = event.output ? await event.output.responseFormat : undefined;
+        const isStructured = responseFormat?.type === "json";
+        const jsonSchema =
+          isStructured && responseFormat.schema !== undefined
+            ? (JSON.stringify(responseFormat.schema) ?? null)
+            : null;
         const result = await createRun(serverUrl, {
           userPrompt: extractUserPrompt(event.prompt, messages),
           systemPrompt: extractSystemPrompt(event.system),
           modelName: requestedModelName,
           projectName,
           history,
+          isStructured,
+          jsonSchema,
         });
 
         if (
@@ -290,6 +311,7 @@ export function createQgridLogger(config: QgridLoggerConfig = {}): TelemetrySett
         runs.set(runKey, {
           requestLogId: result.requestLogId,
           requestedModelName,
+          isStructured,
           pendingSteps: [],
           pendingToolCalls: [],
           startTime: Date.now(),

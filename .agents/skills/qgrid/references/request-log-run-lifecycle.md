@@ -116,3 +116,5 @@ If missing, qgrid maps TTFT to `0` in `QueryOutput` and nullable/optional places
 ## Logger integration
 
 `packages/ai-sdk/src/logger.ts` lets non-qgrid providers write logs into qgrid through the public lifecycle endpoints. It skips model provider `qgrid` to avoid double logging and skips any generation with `providerOptions.qgrid.logger: false`. Therefore one disabled generation produces neither native qgrid logs nor `createQgridLogger` telemetry logs. Preserve its stale-run fallback because AI SDK telemetry may emit start without a final event on provider failures.
+
+External structured output is detected from AI SDK telemetry's `output.responseFormat`, before provider-specific request projection. The logger sends optional `isStructured` and serialized `jsonSchema` fields on `createRun`; the server stores them in the existing `is_structured` and `json_schema` columns. On a succeeded structured run, `finishRun` may also carry `responseJsonOk`, which records JSON parseability only. Omitted fields retain the legacy unstructured defaults, and the native qgrid provider continues to own its existing server-side lifecycle without telemetry duplication.

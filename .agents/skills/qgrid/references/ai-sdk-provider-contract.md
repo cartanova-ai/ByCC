@@ -232,3 +232,5 @@ Do not store or replay `sessionKey` affinity coordinates for `anthropic/*` model
 ## Logger integration
 
 `createQgridLogger` records external provider calls into qgrid request logs. It skips qgrid provider calls to avoid double-logging, and it skips any external-provider generation whose `providerOptions.qgrid.logger` is `false`. This makes `logger: false` a single opt-out that produces zero native or telemetry request logs without changing the model call itself. When changing logger behavior, preserve stale-run fallback because AI SDK telemetry lacks a reliable error hook for all failure modes.
+
+For external providers, the logger reads AI SDK's provider-neutral `onStart.output.responseFormat`. JSON output modes send `isStructured: true` plus the serialized schema when present; ordinary text sends `isStructured: false` and `jsonSchema: null`. A succeeded structured run also sends `responseJsonOk`, based only on whether the final response text parses as JSON. Qgrid does not duplicate caller-side Zod/schema validation. These lifecycle fields are optional on the server so older SDK clients remain compatible.
