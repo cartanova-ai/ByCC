@@ -63,8 +63,9 @@ export function AddTokenModal() {
               </div>
 
               {/* Provider buttons / 코드 입력 단계 */}
-              {oauth.codeEntry ? (
+              {oauth.codeEntryProvider ? (
                 <OAuthCodeEntry
+                  provider={oauth.codeEntryProvider}
                   isPending={oauth.completeMutation.isPending}
                   isError={oauth.completeMutation.isError}
                   onSubmit={(code) => void submitPastedCode(code)}

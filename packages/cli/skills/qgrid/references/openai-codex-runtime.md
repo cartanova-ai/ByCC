@@ -57,9 +57,11 @@ OpenAI browser login is implemented directly with authorization-code PKCE:
 5. Exchange the code directly at `https://auth.openai.com/oauth/token`.
 6. Parse account id and plan claims, then store access, refresh, and id tokens.
 
-The redirect URI is not qgrid's own server address. OpenAI matches the Codex CLI client's redirect URIs by exact string and registers only `http://localhost:1455/auth/callback` and `http://localhost:1457/auth/callback`. Sending qgrid's configurable port instead makes `/oauth/authorize` fail with `invalid_authorize_request`, which the browser renders as a generic "Authentication Error / error_code: unknown_error" page before any login screen. `openai-callback-relay.ts` therefore binds `127.0.0.1:1455` (falling back to `1457`) for the login window and 302-forwards only `code` and `state` to qgrid's own `/auth/callback` route. Both ports being busy — typically a running `codex login` — fails the login start with a message naming them.
+The redirect URI is not qgrid's own server address. OpenAI matches the Codex CLI client's redirect URIs by exact string and registers only `http://localhost:1455/auth/callback` and `http://localhost:1457/auth/callback`. Sending qgrid's configurable port instead makes `/oauth/authorize` fail with `invalid_authorize_request`, which the browser renders as a generic "Authentication Error / error_code: unknown_error" page before any login screen.
 
-This flow needs the browser and the qgrid server on the same host. A dashboard opened from another machine cannot complete OpenAI login, unlike Anthropic's console code-paste fallback.
+Loopback dashboards use automatic completion: `openai-callback-relay.ts` binds `127.0.0.1:1455` (falling back to `1457`) for the login window and 302-forwards only `code` and `state` to qgrid's own `/auth/callback` route. Both ports being busy — typically a running `codex login` — fails the local login start with a message naming them.
+
+Remote dashboards use manual completion because the browser's `localhost` is not the qgrid server. Qgrid signs the authorize request with the registered `http://localhost:1455/auth/callback` URI without opening a server relay and returns `mode: "code"`. After login the browser may show a connection failure at that loopback URL; the user copies the full address-bar URL into the dashboard. `oauthComplete` validates the cached state, extracts only `code` and `state`, and performs the same token exchange and account replacement as the automatic callback.
 
 Refresh posts the stored refresh token directly to the token endpoint, deduplicates concurrent refreshes, and persists rotated credentials. Generation sends Codex CLI identity headers built by `buildCodexIdentityHeaders`.
 

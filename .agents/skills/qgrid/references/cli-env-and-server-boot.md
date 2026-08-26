@@ -139,4 +139,4 @@ HTTP listening opens before the dispatchers finish starting, so requests can arr
 ## OAuth callbacks
 
 - Anthropic OAuth: loopback dashboards use `/callback` on the qgrid server (base derived per request from `Origin`, falling back to `X-Forwarded-Host`/`Host`). Remote dashboards cannot use a public callback (client redirect-URI allowlist), so `oauthStart` returns `mode: "code"` with the console callback and the user pastes the shown `code#state` into the dashboard (`oauthComplete`). No env configuration either way; direct non-HTTP calls fall back to localhost and `PORT`.
-- OpenAI OAuth uses qgrid's direct PKCE authorize/callback flow and direct token exchange.
+- OpenAI OAuth uses direct PKCE and the Codex CLI's registered loopback callback. Local dashboards complete through a temporary 1455/1457 relay; remote dashboards return `mode: "code"` and ask the user to paste the full callback URL so qgrid can exchange it directly.

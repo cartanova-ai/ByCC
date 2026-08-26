@@ -41,7 +41,8 @@ Content-Type: application/json
       "active": false,
       "ord": 0,
       "quota_threshold": null,
-      "weight": 1
+      "weight": 1,
+      "keepalive_enabled": false
     }
   ]
 }

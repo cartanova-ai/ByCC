@@ -539,7 +539,7 @@ function ReloginButton({ token }: { token: Token }) {
         )}
       </button>
 
-      {oauth.codeEntry && (
+      {oauth.codeEntryProvider && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
           <div
             className="absolute inset-0 bg-sand-900/8 backdrop-blur-sm"
@@ -552,6 +552,7 @@ function ReloginButton({ token }: { token: Token }) {
             </div>
             <div className="px-5 py-4">
               <OAuthCodeEntry
+                provider={oauth.codeEntryProvider}
                 isPending={oauth.completeMutation.isPending}
                 isError={oauth.completeMutation.isError}
                 onSubmit={(code) => void submitCode(code)}
