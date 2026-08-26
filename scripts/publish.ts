@@ -24,7 +24,9 @@ async function isPublished(pkg: PackageInfo): Promise<boolean> {
 async function publishPackage(pkg: PackageInfo): Promise<void> {
   return new Promise((res, rej) => {
     console.log(`${pkg.name}@${pkg.version}: publishing...`);
-    const child = exec(`pnpm --filter ${pkg.name} publish --no-git-checks --access public`);
+    const child = exec(
+      `mise exec -- pnpm --filter ${pkg.name} publish --no-git-checks --access public`,
+    );
     child.stdout?.pipe(process.stdout);
     child.stderr?.pipe(process.stderr);
     child.on("close", (code) => {

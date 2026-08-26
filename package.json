@@ -1,15 +1,6 @@
 {
   "name": "qgrid",
   "private": true,
-  "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm --parallel dev",
-    "format": "oxlint --type-aware . --fix && oxfmt .",
-    "check": "pnpm qgrid-docs:check && oxlint && oxfmt --check .",
-    "qgrid-docs:sync": "node scripts/qgrid-doc-consistency.mjs --sync",
-    "qgrid-docs:check": "node scripts/qgrid-doc-consistency.mjs",
-    "publish:packages": "tsx scripts/publish.ts"
-  },
   "devDependencies": {
     "@types/node": "^25",
     "@vitest/coverage-v8": "^4.1.10",
@@ -21,5 +12,5 @@
     "typescript": "^6.0.3",
     "vitest": "catalog:"
   },
-  "packageManager": "pnpm@11.7.0"
+  "packageManager": "pnpm@11.24.0"
 }

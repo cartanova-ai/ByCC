@@ -26,10 +26,12 @@ qgrid dashboard work is usually a Sonamu API/model/generated-client/web change, 
 ## Migration workflow
 
 Sonamu entity definitions are the source of truth for managed database schema.
+These commands apply only inside the qgrid source repository. Downstream projects must use
+their own configured task and tool runner.
 
 1. Change the relevant `*.entity.json` files.
-2. Run `pnpm --dir packages/api sonamu migrate status` and inspect `preparedCodes`.
-3. Run `pnpm --dir packages/api sonamu migrate generate`.
+2. Run `mise exec -- pnpm --dir packages/api sonamu migrate status` and inspect `preparedCodes`.
+3. Run `mise exec -- pnpm --dir packages/api sonamu migrate generate`.
 4. Inspect the generated, table-scoped migration files without rewriting them by hand.
 5. Apply them through Sonamu's migration target flow or qgrid's startup migration runner.
 6. Re-run migration status and require `pending: []` and `preparedCodes: []`.

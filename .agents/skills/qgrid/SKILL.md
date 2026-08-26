@@ -5,6 +5,11 @@ description: Work on the qgrid repository, an LLM subscription-token proxy with 
 
 # Qgrid
 
+## Command Scope
+
+Run the repository-specific `mise` commands in this skill only from the qgrid source
+repository. In a downstream project, use that project's configured task and tool runner.
+
 ## Start Here
 
 Use this skill for qgrid repository work. Treat qgrid as a runtime-contract-heavy system: model input travels through the active AI SDK provider, Sonamu API, provider dispatcher, provider-specific runtime, response mapping, request logging, and dashboard display.
@@ -45,7 +50,7 @@ Request logging is enabled by default. Use `providerOptions.qgrid.logger: false`
 - Treat Fable 5 safety fallback as upstream Claude Code behavior, not qgrid routing: a classifier refusal can retry on Opus 4.8. Do not add a second qgrid retry. Preserve requested Fable versus actual serving Opus, fallback history, and provider-reported cost; a fresh Claude Code process means the fallback is not sticky across qgrid requests.
 - Treat dashboard work as Sonamu API/model/generated-client/web work, not isolated frontend work.
 - Prefer `getPuri()` for Sonamu model queries. Treat `getDB()` as a legacy escape hatch only when Puri cannot express the required query. Inside `@transactional` methods, all participating queries must use `getPuri()`; `getDB()` does not reuse Sonamu's ambient transaction connection.
-- Never hand-author migration files for Sonamu-managed schema. Change the entity definition, inspect `sonamu migrate status`, and create migration files with `pnpm --dir packages/api sonamu migrate generate`. Inspect the generated files before applying them. If Sonamu cannot express a required schema change, stop and ask rather than silently replacing its workflow with a custom migration.
+- Never hand-author migration files for Sonamu-managed schema. In the qgrid source repository, change the entity definition, inspect `sonamu migrate status`, and create migration files with `mise exec -- pnpm --dir packages/api sonamu migrate generate`. Inspect the generated files before applying them. If Sonamu cannot express a required schema change, stop and ask rather than silently replacing its workflow with a custom migration.
 - Keep OpenAI Codex built-in tools, apps, plugins, skills, web search, shell, and environment instruction blocks disabled unless the user explicitly asks for agentic Codex behavior.
 - Treat OpenAI image generation as an opt-in Codex `image_generation` tool path. Inspect current code before modifying it; it is not a direct Images API call and its image cost is an estimate.
 
@@ -53,7 +58,7 @@ Request logging is enabled by default. Use `providerOptions.qgrid.logger: false`
 
 Choose verification by blast radius:
 
-- Type/lint/format: `pnpm check`.
+- In the qgrid source repository, run type/lint/format with `mise run check`.
 - Package tests: use the relevant package test command or targeted Vitest files.
 - Provider runtime changes: run targeted tests for `packages/api/src/utils/providers/**` and, when practical, the relevant smoke script in `scripts/` or `packages/api/scripts/`.
 - AI SDK changes: run `packages/ai-sdk` tests and inspect generated request payload behavior.
