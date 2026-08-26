@@ -26,8 +26,8 @@ function countTokens(queryClient: ReturnType<typeof useQueryClient>): number {
 export function useOAuthLoginFlow() {
   // 로그인 진행 중인 provider — 스피너를 해당 버튼에만 표시한다.
   const [loadingProvider, setLoadingProvider] = useState<Provider | null>(null);
-  // 원격 접속(code 모드): 인증 후 표시된 코드를 붙여넣는 단계.
-  const [codeEntry, setCodeEntry] = useState(false);
+  // 원격 접속(code 모드): provider에 맞는 인증 결과를 붙여넣는 단계.
+  const [codeEntryProvider, setCodeEntryProvider] = useState<Provider | null>(null);
 
   const queryClient = useQueryClient();
   const oauthStartMutation = QgridService.useOauthStartMutation();
@@ -60,9 +60,15 @@ export function useOAuthLoginFlow() {
 
     try {
       if (provider === "openai") {
-        const { authUrl } = await oauthStartOpenAIMutation.mutateAsync({ name: trimmed });
+        const { authUrl, mode } = await oauthStartOpenAIMutation.mutateAsync({ name: trimmed });
         if (popup) popup.location.href = authUrl;
         else window.open(authUrl, "_blank");
+
+        if (mode === "code") {
+          setCodeEntryProvider(provider);
+          setLoadingProvider(null);
+          return;
+        }
 
         // 콜백은 새 탭에서 끝나므로(OpenAI 등록 콜백 포트 → 서버 /auth/callback) 토큰이
         // 늘어날 때까지 폴링한다. 로그인이 끝나면 바로 멈춰서, 성공한 뒤에도 남은
@@ -89,7 +95,7 @@ export function useOAuthLoginFlow() {
         // 원격 접속: 새 탭에서 인증 → 표시된 코드를 붙여넣는다.
         if (popup) popup.location.href = authUrl;
         else window.open(authUrl, "_blank");
-        setCodeEntry(true);
+        setCodeEntryProvider(provider);
         setLoadingProvider(null);
       } else {
         popup?.close();
@@ -119,13 +125,13 @@ export function useOAuthLoginFlow() {
   const reset = () => {
     stopPolling();
     setLoadingProvider(null);
-    setCodeEntry(false);
+    setCodeEntryProvider(null);
     oauthCompleteMutation.reset();
   };
 
   return {
     loadingProvider,
-    codeEntry,
+    codeEntryProvider,
     start,
     submitCode,
     reset,

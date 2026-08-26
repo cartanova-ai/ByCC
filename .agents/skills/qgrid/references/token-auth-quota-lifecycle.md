@@ -129,6 +129,8 @@ Browser registration:
 5. Existing OpenAI tokens with the same `accountId` are deleted.
 6. qgrid saves the access, refresh, and id tokens as a new `provider: "openai"` token.
 
+Completion follows the request origin. Loopback dashboards use a temporary relay on the Codex client's registered 1455/1457 callback ports. Remote dashboards cannot reach that server-side loopback, so qgrid returns `mode: "code"`; after authentication the user pastes the full `localhost:1455/auth/callback?code=...&state=...` URL into the dashboard, and `oauthComplete` validates the pending state and performs the same exchange.
+
 Refresh:
 
 - qgrid posts the stored refresh token directly to the OpenAI token endpoint through `handleChatgptAuthTokensRefresh(tokenId)`.

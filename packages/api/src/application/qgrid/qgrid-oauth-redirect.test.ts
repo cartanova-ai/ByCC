@@ -4,10 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONSOLE_CALLBACK_URL } from "./oauth";
 import { QgridFrame } from "./qgrid.frame";
 
-const { exchangeMock, openAIExchangeMock, tokenSaveMock, tokenDelMock, findByAccountMock, notifyMock } =
-  vi.hoisted(() => ({
+const {
+  exchangeMock,
+  openAIExchangeMock,
+  relayStartMock,
+  tokenSaveMock,
+  tokenDelMock,
+  findByAccountMock,
+  notifyMock,
+} = vi.hoisted(() => ({
   exchangeMock: vi.fn(),
   openAIExchangeMock: vi.fn(),
+  relayStartMock: vi.fn(async () => "http://localhost:1455/auth/callback"),
   tokenSaveMock: vi.fn(async () => [1]),
   tokenDelMock: vi.fn(async () => 1),
   findByAccountMock: vi.fn(async () => []),
@@ -43,7 +51,7 @@ vi.mock("../../utils/providers/openai/openai-oauth", async (importOriginal) => (
 // The relay binds a real loopback port; these tests only assert which redirect URI is signed in.
 vi.mock("../../utils/providers/openai/openai-callback-relay", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../utils/providers/openai/openai-callback-relay")>()),
-  startOpenAICallbackRelay: async () => "http://localhost:1455/auth/callback",
+  startOpenAICallbackRelay: relayStartMock,
 }));
 
 vi.mock("../token/token.model", () => ({
@@ -199,23 +207,36 @@ describe("QgridFrame direct OpenAI OAuth", () => {
     tokenDelMock.mockClear();
     findByAccountMock.mockClear().mockResolvedValue([]);
     notifyMock.mockClear();
+    relayStartMock.mockClear();
   });
 
-  it("uses the pinned loopback callback despite hostile forwarding headers", async () => {
+  it("uses manual code completion without opening a server relay on remote origins", async () => {
     mockHttpContext({ origin: "https://qgrid.example.com" });
 
     const result = await QgridFrame.oauthStartOpenAI("openai-token");
     const url = new URL(result.authUrl);
-    expect(result.mode).toBe("redirect");
+    expect(result.mode).toBe("code");
     expect(url.origin + url.pathname).toBe("https://auth.openai.com/oauth/authorize");
-    // OpenAI only accepts the Codex CLI's registered loopback callbacks.
     expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
     expect(url.searchParams.get("state")).toBeTruthy();
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(relayStartMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the automatic callback relay for loopback origins", async () => {
+    mockHttpContext({ origin: "http://localhost:44900" });
+
+    const result = await QgridFrame.oauthStartOpenAI("openai-token");
+
+    expect(result.mode).toBe("redirect");
+    expect(authUrlParam(result.authUrl, "redirect_uri")).toBe(
+      "http://localhost:1455/auth/callback",
+    );
+    expect(relayStartMock).toHaveBeenCalledWith("http://localhost:44900", 5 * 60_000);
   });
 
   it("exchanges an OpenAI callback, replaces the duplicate account, and notifies", async () => {
-    mockHttpContext({ origin: "https://qgrid.example.com" });
+    mockHttpContext({ origin: "http://localhost:44900" });
     const { authUrl } = await QgridFrame.oauthStartOpenAI("openai-token");
     const state = authUrlParam(authUrl, "state")!;
     findByAccountMock.mockResolvedValueOnce([{ id: 9, active: true }] as never);
@@ -249,8 +270,43 @@ describe("QgridFrame direct OpenAI OAuth", () => {
     expect(reply.redirect).toHaveBeenCalledWith("/?oauth=success&name=openai-token");
   });
 
-  it("consumes OpenAI state before a failed exchange", async () => {
+  it("exchanges a pasted OpenAI callback URL for remote login", async () => {
     mockHttpContext({ origin: "https://qgrid.example.com" });
+    const { authUrl } = await QgridFrame.oauthStartOpenAI("remote-openai-token");
+    const state = authUrlParam(authUrl, "state")!;
+    openAIExchangeMock.mockResolvedValueOnce({
+      accessToken: "access",
+      refreshToken: "refresh",
+      idToken: "id",
+      accessTokenExpiresAt: 123,
+      idTokenExpiresAt: 456,
+      accountId: "account-1",
+      planType: "pro",
+    });
+
+    await expect(
+      QgridFrame.oauthComplete(
+        `http://localhost:1455/auth/callback?code=the-code&state=${state}`,
+      ),
+    ).resolves.toEqual({ added: true, name: "remote-openai-token" });
+
+    expect(openAIExchangeMock).toHaveBeenCalledWith(
+      "the-code",
+      expect.any(String),
+      "http://localhost:1455/auth/callback",
+    );
+    expect(tokenSaveMock).toHaveBeenCalledWith([
+      expect.objectContaining({
+        provider: "openai",
+        name: "remote-openai-token",
+        credentials: expect.objectContaining({ accountId: "account-1" }),
+      }),
+    ]);
+    expect(notifyMock).toHaveBeenCalledWith("remote-openai-token", "openai");
+  });
+
+  it("consumes OpenAI state before a failed exchange", async () => {
+    mockHttpContext({ origin: "http://localhost:44900" });
     const { authUrl } = await QgridFrame.oauthStartOpenAI("openai-token");
     const state = authUrlParam(authUrl, "state")!;
     openAIExchangeMock.mockRejectedValueOnce(new Error("exchange rejected"));

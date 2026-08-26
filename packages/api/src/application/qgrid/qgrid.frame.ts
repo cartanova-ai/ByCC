@@ -14,6 +14,7 @@ import {
 import { CallerSchemaValidationError } from "../../utils/providers/common/schema-validation";
 import {
   OPENAI_CALLBACK_PORTS,
+  openAICallbackRedirectUri,
   startOpenAICallbackRelay,
 } from "../../utils/providers/openai/openai-callback-relay";
 import {
@@ -106,9 +107,7 @@ async function deleteOAuthState(state: string): Promise<void> {
 
 const trustedLoopbackBase = () => `http://localhost:${process.env.PORT ?? "44900"}`;
 
-// Anthropic's remote/manual flow uses its fixed console callback. Headers may select between two
-// allowlisted URIs, but never contribute authority or path bytes to either URI.
-function resolveOAuthRedirect(): { redirectUri: string; mode: "redirect" | "code" } {
+function isRemoteOAuthRequest(): boolean {
   try {
     const { headers } = Sonamu.getContext();
     const origin = typeof headers.origin === "string" ? headers.origin : undefined;
@@ -117,11 +116,33 @@ function resolveOAuthRedirect(): { redirectUri: string; mode: "redirect" | "code
     const host = origin
       ? new URL(origin).hostname
       : new URL(`http://${rawHost ?? "localhost"}`).hostname;
-    if (!new Set(["localhost", "127.0.0.1", "::1", "[::1]"]).has(host)) {
-      return { redirectUri: CONSOLE_CALLBACK_URL, mode: "code" };
-    }
+    return !new Set(["localhost", "127.0.0.1", "::1", "[::1]"]).has(host);
   } catch {}
+  return false;
+}
+
+// Anthropic's remote/manual flow uses its fixed console callback. Headers may select between two
+// allowlisted URIs, but never contribute authority or path bytes to either URI.
+function resolveOAuthRedirect(): { redirectUri: string; mode: "redirect" | "code" } {
+  if (isRemoteOAuthRequest()) {
+    return { redirectUri: CONSOLE_CALLBACK_URL, mode: "code" };
+  }
   return { redirectUri: `${trustedLoopbackBase()}/callback`, mode: "redirect" };
+}
+
+function parsePastedOAuthResult(input: string): { code: string; state: string } | null {
+  const trimmed = input.trim();
+  try {
+    const callback = new URL(trimmed);
+    const code = callback.searchParams.get("code")?.trim() ?? "";
+    const state = callback.searchParams.get("state")?.trim() ?? "";
+    if (code && state) return { code, state };
+  } catch {}
+
+  const separatorAt = trimmed.indexOf("#");
+  const code = separatorAt > 0 ? trimmed.slice(0, separatorAt).trim() : "";
+  const state = separatorAt > 0 ? trimmed.slice(separatorAt + 1).trim() : "";
+  return code && state ? { code, state } : null;
 }
 
 function rejectImageGenerationStream(args: QueryInput): void {
@@ -579,18 +600,16 @@ class QgridFrameClass extends BaseFrameClass {
     return { authUrl, mode };
   }
 
-  // 코드 붙여넣기 플로우(원격 접속): 콘솔 콜백이 표시한 `code#state` 를 받아 교환한다.
+  // 원격 접속의 수동 완료: Anthropic `code#state` 또는 OpenAI callback URL을 받아 교환한다.
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async oauthComplete(pastedCode: string): Promise<{ added: boolean; name: string }> {
-    const trimmed = pastedCode.trim();
-    const separatorAt = trimmed.indexOf("#");
-    const code = separatorAt > 0 ? trimmed.slice(0, separatorAt) : "";
-    const state = separatorAt > 0 ? trimmed.slice(separatorAt + 1) : "";
-    if (!code || !state) {
+    const result = parsePastedOAuthResult(pastedCode);
+    if (!result) {
       throw new BadRequestException(
-        "expected the code shown after login, in code#state form" as LocalizedString,
+        "expected the callback URL or code shown after login, in code#state form" as LocalizedString,
       );
     }
+    const { code, state } = result;
 
     const pending = await getOAuthState(state);
     if (!pending) {
@@ -600,11 +619,12 @@ class QgridFrameClass extends BaseFrameClass {
     }
     await deleteOAuthState(state);
 
-    if (pending.provider !== "anthropic") {
-      throw new BadRequestException("login session is not for Anthropic" as LocalizedString);
+    if (pending.provider === "openai") {
+      await this.completeOpenAILogin(code, pending);
+    } else {
+      await this.completeAnthropicLogin(code, state, pending);
     }
 
-    await this.completeAnthropicLogin(code, state, pending);
     return { added: true, name: pending.name };
   }
 
@@ -635,6 +655,17 @@ class QgridFrameClass extends BaseFrameClass {
     notifyTokenAdded(pending.name, "anthropic");
   }
 
+  private async completeOpenAILogin(code: string, pending: PendingOAuth): Promise<void> {
+    const creds = await exchangeOpenAICode(code, pending.codeVerifier, pending.redirectUri);
+    await TokenModel.replaceByAccount("openai", creds.accountId, {
+      provider: "openai",
+      credentials: creds,
+      name: pending.name,
+    });
+    logger.info(`OpenAI token saved for ${pending.name}`);
+    notifyTokenAdded(pending.name, "openai");
+  }
+
   async handleOAuthCallback(code: string, state: string, reply: FastifyReply): Promise<void> {
     const pending = await getOAuthState(state);
     if (!pending) {
@@ -645,14 +676,7 @@ class QgridFrameClass extends BaseFrameClass {
 
     try {
       if (pending.provider === "openai") {
-        const creds = await exchangeOpenAICode(code, pending.codeVerifier, pending.redirectUri);
-        await TokenModel.replaceByAccount("openai", creds.accountId, {
-          provider: "openai",
-          credentials: creds,
-          name: pending.name,
-        });
-        logger.info(`OpenAI token saved for ${pending.name}`);
-        notifyTokenAdded(pending.name, "openai");
+        await this.completeOpenAILogin(code, pending);
       } else {
         await this.completeAnthropicLogin(code, state, pending);
       }
@@ -669,20 +693,24 @@ class QgridFrameClass extends BaseFrameClass {
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async oauthStartOpenAI(name: string): Promise<OAuthStartResult> {
     const { codeVerifier, codeChallenge, state } = generateOpenAIPKCE();
-    // OpenAI only accepts the Codex CLI's registered loopback callbacks, so the browser lands on a
-    // short-lived local relay that forwards the code to qgrid's own callback route. Pointing the
-    // authorize request at qgrid's configurable port instead fails with `invalid_authorize_request`.
+    const mode = isRemoteOAuthRequest() ? "code" : "redirect";
     let redirectUri: string;
-    try {
-      redirectUri = await startOpenAICallbackRelay(trustedLoopbackBase(), OAUTH_STATE_TTL_MS);
-    } catch {
-      throw new BadRequestException(
-        `OpenAI login needs local port ${OPENAI_CALLBACK_PORTS.join(" or ")} — close any running \`codex login\` and retry` as LocalizedString,
-      );
+    if (mode === "code") {
+      // OpenAI accepts only the Codex CLI's registered loopback URI. On a remote dashboard the
+      // browser cannot reach the server's loopback, so the user pastes the resulting callback URL.
+      redirectUri = openAICallbackRedirectUri(OPENAI_CALLBACK_PORTS[0]);
+    } else {
+      try {
+        redirectUri = await startOpenAICallbackRelay(trustedLoopbackBase(), OAUTH_STATE_TTL_MS);
+      } catch {
+        throw new BadRequestException(
+          `OpenAI login needs local port ${OPENAI_CALLBACK_PORTS.join(" or ")} — close any running \`codex login\` and retry` as LocalizedString,
+        );
+      }
     }
     const authUrl = buildOpenAIAuthUrl(codeChallenge, state, redirectUri);
     await setOAuthState(state, { codeVerifier, name, redirectUri, provider: "openai" });
-    return { authUrl, mode: "redirect" };
+    return { authUrl, mode };
   }
 
   @api({ httpMethod: "GET", clients: ["axios", "tanstack-query"] })
