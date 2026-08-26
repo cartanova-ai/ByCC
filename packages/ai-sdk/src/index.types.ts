@@ -139,6 +139,8 @@ export type CreateRunInput = {
   effort?: string;
   projectName?: string;
   history?: string;
+  isStructured?: boolean;
+  jsonSchema?: string | null;
 };
 
 export type AppendStepInput = {
@@ -216,4 +218,5 @@ export type FinishRunInput = {
   totalDurationMs?: number;
   history?: string;
   errorMessage?: string;
+  responseJsonOk?: boolean;
 };

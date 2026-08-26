@@ -483,6 +483,7 @@ class RequestLogModelClass extends BaseModelClass<
     history?: unknown;
     tools?: ToolDefinitions;
     is_image_generation?: boolean;
+    is_structured?: boolean;
     json_schema?: string | null;
   }): Promise<number> {
     const wdb = this.getPuri("w");
@@ -505,7 +506,8 @@ class RequestLogModelClass extends BaseModelClass<
       // 이미지 turn 식별(R13). run 경로(tools+image 조합)도 auto 경로와 동일하게 마킹.
       is_image_generation: params.is_image_generation ?? false,
       json_schema: params.json_schema ?? null,
-      is_structured: params.json_schema !== null && params.json_schema !== undefined,
+      is_structured:
+        params.is_structured ?? (params.json_schema !== null && params.json_schema !== undefined),
       ...(params.history !== undefined ? { history: params.history as { type: string }[] } : {}),
       ...(params.tools !== undefined ? { tools: params.tools } : {}),
     });

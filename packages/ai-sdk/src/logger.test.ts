@@ -1,5 +1,7 @@
-import { type TelemetryIntegration } from "ai";
+import { generateText, Output, type TelemetryIntegration } from "ai";
+import { MockLanguageModelV3 } from "ai/test";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { createQgridLogger } from "./logger";
 
@@ -90,6 +92,8 @@ describe("createQgridLogger", () => {
       systemPrompt: "You are helpful",
       modelName: "google/gemini-3-flash",
       projectName: "test",
+      isStructured: false,
+      jsonSchema: null,
     });
 
     const appendCalls = calls.filter((c) => c.url.includes("/appendStep"));
@@ -110,6 +114,87 @@ describe("createQgridLogger", () => {
       tokenName: "external",
       modelName: "google/gemini-3-flash-001",
       requestedModelName: "google/gemini-3-flash",
+    });
+    expect(finishCall?.body.input).not.toHaveProperty("responseJsonOk");
+  });
+
+  it.each([
+    ["valid JSON", '{"answer":"ok"}', true],
+    ["invalid JSON", "not-json", false],
+  ])("logs Output.object schema and %s response validity", async (_label, response, expectedOk) => {
+    const calls = mockFetch();
+    const logger = getIntegration({ serverUrl: SERVER, projectName: "structured-test" });
+
+    await logger.onStart!({
+      model: { provider: "google", modelId: "gemini-3.5-flash-lite" },
+      prompt: "Return an answer object",
+      output: Output.object({ schema: z.object({ answer: z.string() }) }),
+    } as never);
+
+    await logger.onFinish!({
+      model: { provider: "google", modelId: "gemini-3.5-flash-lite" },
+      response: { modelId: "gemini-3.5-flash-lite" },
+      finishReason: "stop",
+      text: response,
+      totalUsage: { inputTokens: 10, outputTokens: 5, inputTokenDetails: {} },
+    } as never);
+
+    const createInput = calls.find((call) => call.url.includes("/createRun"))?.body.input;
+    expect(createInput).toMatchObject({
+      isStructured: true,
+      projectName: "structured-test",
+    });
+    expect(JSON.parse(String(createInput?.jsonSchema))).toMatchObject({
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+    });
+
+    const finishInput = calls.find((call) => call.url.includes("/finishRun"))?.body.input;
+    expect(finishInput?.responseJsonOk).toBe(expectedOk);
+  });
+
+  it("detects Output.object through the real AI SDK generateText telemetry chain", async () => {
+    const calls = mockFetch();
+    const model = new MockLanguageModelV3({
+      provider: "google",
+      modelId: "gemini-3.5-flash-lite",
+      doGenerate: {
+        content: [{ type: "text", text: '{"answer":"integrated"}' }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: {
+          inputTokens: { total: 4, noCache: 4, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 3, text: 3, reasoning: 0 },
+        },
+        response: { modelId: "gemini-3.5-flash-lite" },
+        warnings: [],
+      },
+    });
+
+    await generateText({
+      model,
+      prompt: "Return an answer object",
+      output: Output.object({ schema: z.object({ answer: z.string() }) }),
+      experimental_telemetry: createQgridLogger({
+        serverUrl: SERVER,
+        projectName: "telemetry-integration",
+      }),
+    });
+
+    const createInput = calls.find((call) => call.url.includes("/createRun"))?.body.input;
+    const finishInput = calls.find((call) => call.url.includes("/finishRun"))?.body.input;
+    expect(createInput).toMatchObject({
+      modelName: "google/gemini-3.5-flash-lite",
+      projectName: "telemetry-integration",
+      isStructured: true,
+    });
+    expect(JSON.parse(String(createInput?.jsonSchema))).toMatchObject({
+      properties: { answer: { type: "string" } },
+    });
+    expect(finishInput).toMatchObject({
+      status: "succeeded",
+      response: '{"answer":"integrated"}',
+      responseJsonOk: true,
     });
   });
 

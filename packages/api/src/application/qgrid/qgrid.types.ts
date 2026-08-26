@@ -214,6 +214,8 @@ export const CreateRunInput = z.object({
   effort: z.string().optional(),
   projectName: z.string().optional(),
   history: z.string().optional(),
+  isStructured: z.boolean().optional(),
+  jsonSchema: z.string().nullable().optional(),
 });
 export type CreateRunInput = z.infer<typeof CreateRunInput>;
 
@@ -266,6 +268,7 @@ export const FinishRunInput = z.object({
   totalDurationMs: z.number().optional(),
   history: z.string().optional(),
   errorMessage: z.string().optional(),
+  responseJsonOk: z.boolean().optional(),
 });
 export type FinishRunInput = z.infer<typeof FinishRunInput>;
 
