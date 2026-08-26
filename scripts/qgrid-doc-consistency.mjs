@@ -111,7 +111,7 @@ for (const relativeMirror of docMap.skillMirrors) {
 if (errors.length > 0) {
   console.error("qgrid documentation consistency check failed:");
   for (const error of errors) console.error(`- ${error}`);
-  console.error("Run `pnpm qgrid-docs:sync` after updating the canonical skill.");
+  console.error("Run `mise run qgrid-docs:sync` after updating the canonical skill.");
   process.exit(1);
 }
 

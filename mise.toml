@@ -1,0 +1,30 @@
+[tools]
+node = "24.19"
+"npm:pnpm" = "11.24"
+
+[settings]
+auto_install = true
+lockfile = true
+locked = true
+
+[tasks.build]
+run = "pnpm -r build"
+
+[tasks.dev]
+run = "pnpm --parallel dev"
+
+[tasks.format]
+run = "pnpm exec oxlint --type-aware . --fix && pnpm exec oxfmt ."
+
+[tasks.check]
+depends = ["qgrid-docs:check"]
+run = "pnpm exec oxlint && pnpm exec oxfmt --check ."
+
+[tasks."qgrid-docs:sync"]
+run = "node scripts/qgrid-doc-consistency.mjs --sync"
+
+[tasks."qgrid-docs:check"]
+run = "node scripts/qgrid-doc-consistency.mjs"
+
+[tasks."publish:packages"]
+run = "pnpm exec tsx scripts/publish.ts"

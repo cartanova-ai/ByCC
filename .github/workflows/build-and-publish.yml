@@ -16,39 +16,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup mise
+        uses: jdx/mise-action@v3
         with:
-          node-version: "25"
-          cache: "pnpm"
-          registry-url: "https://registry.npmjs.org"
+          install_args: --locked
+
+      - name: Configure npm registry authentication
+        shell: bash
+        run: |
+          NPMRC="$RUNNER_TEMP/.npmrc"
+          {
+            printf '%s\n' "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}"
+            printf '%s\n' 'registry=https://registry.npmjs.org/'
+            printf '%s\n' 'always-auth=false'
+          } > "$NPMRC"
+          printf '%s\n' "NPM_CONFIG_USERCONFIG=$NPMRC" >> "$GITHUB_ENV"
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            printf '%s\n' 'NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX' >> "$GITHUB_ENV"
+          fi
 
       - name: Install dependencies
-        run: pnpm install
+        run: mise exec -- pnpm install
 
       - name: Check
-        run: pnpm check
+        run: mise run check
 
       - name: Test CLI packaging contract
-        run: pnpm --filter @cartanova/qgrid-cli test
+        run: mise exec -- pnpm --filter @cartanova/qgrid-cli test
 
       - name: Build
-        run: pnpm build
+        run: mise run build
 
       - name: Smoke test published CLI runtime
         run: |
           PACK_DIR="$(mktemp -d)"
           INSTALL_DIR="$(mktemp -d)"
-          pnpm --dir packages/cli pack --pack-destination "$PACK_DIR"
-          npm install --prefix "$INSTALL_DIR" --ignore-scripts "$PACK_DIR"/cartanova-qgrid-cli-*.tgz
+          NODE_BIN="$(mise exec -- node -e 'process.stdout.write(process.execPath)')"
+          mise exec -- pnpm --dir packages/cli pack --pack-destination "$PACK_DIR"
+          mise exec -- npm install --prefix "$INSTALL_DIR" --ignore-scripts "$PACK_DIR"/cartanova-qgrid-cli-*.tgz
           cd "$INSTALL_DIR/node_modules/@cartanova/qgrid-cli"
-          node --input-type=module -e "await import('sonamu')"
+          "$NODE_BIN" --input-type=module -e "await import('sonamu')"
 
       # npm publish (버전 안 바뀌면 스킵)
       - name: Publish packages
-        run: pnpm publish:packages
+        run: mise run publish:packages
         env:
           NPM_CONFIG_PROVENANCE: true

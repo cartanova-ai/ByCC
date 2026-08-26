@@ -12,36 +12,39 @@ Use this reference to choose tests, smoke scripts, and first debugging targets f
 
 ## Package Scripts
 
+The commands in this section apply only inside the qgrid source repository. In a downstream
+project, use that project's configured task and tool runner.
+
 Root:
 
-- `pnpm check`: oxlint plus oxfmt check for the repo.
-- `pnpm build`: recursive package build.
-- `pnpm dev`: parallel package dev servers.
+- `mise run check`: qgrid docs consistency, oxlint, and oxfmt check for the repo.
+- `mise run build`: recursive package build.
+- `mise run dev`: parallel package dev servers.
 
 API package `qgrid-api`:
 
-- `pnpm --filter qgrid-api test`: Vitest run.
-- `pnpm --filter qgrid-api test:watch`: standalone watch mode.
-- `pnpm --filter qgrid-api build`: Sonamu build.
-- `pnpm --filter qgrid-api sonamu`: run Sonamu CLI.
+- `mise exec -- pnpm --filter qgrid-api test`: Vitest run.
+- `mise exec -- pnpm --filter qgrid-api test:watch`: standalone watch mode.
+- `mise exec -- pnpm --filter qgrid-api build`: Sonamu build.
+- `mise exec -- pnpm --filter qgrid-api sonamu`: run Sonamu CLI.
 
 AI SDK package `@cartanova/qgrid-ai-sdk`:
 
-- `pnpm --filter @cartanova/qgrid-ai-sdk test`.
-- `pnpm --filter @cartanova/qgrid-ai-sdk build`.
-- `pnpm --filter @cartanova/qgrid-ai-sdk e2e`.
-- `pnpm --filter @cartanova/qgrid-ai-sdk e2e:tools-output`.
-- `pnpm --filter @cartanova/qgrid-ai-sdk e2e:logger`.
+- `mise exec -- pnpm --filter @cartanova/qgrid-ai-sdk test`.
+- `mise exec -- pnpm --filter @cartanova/qgrid-ai-sdk build`.
+- `mise exec -- pnpm --filter @cartanova/qgrid-ai-sdk e2e`.
+- `mise exec -- pnpm --filter @cartanova/qgrid-ai-sdk e2e:tools-output`.
+- `mise exec -- pnpm --filter @cartanova/qgrid-ai-sdk e2e:logger`.
 
 CLI package `@cartanova/qgrid-cli`:
 
-- `pnpm --filter @cartanova/qgrid-cli build`.
-- `pnpm --filter @cartanova/qgrid-cli bundle` builds the API first and copies the server bundle.
+- `mise exec -- pnpm --filter @cartanova/qgrid-cli build`.
+- `mise exec -- pnpm --filter @cartanova/qgrid-cli bundle` builds the API first and copies the server bundle.
 
 Web package `qgrid-web`:
 
-- `pnpm --filter qgrid-web dev`.
-- `pnpm --filter qgrid-web preview`.
+- `mise exec -- pnpm --filter qgrid-web dev`.
+- `mise exec -- pnpm --filter qgrid-web preview`.
 
 The old v1 SDK package (`packages/sdk`) has been removed from the repository; all public-SDK verification goes through `packages/ai-sdk`.
 
