@@ -5,8 +5,6 @@ node = "24.19"
 [settings]
 auto_install = true
 lockfile = true
-
-[tool_config]
 locked = true
 
 [tasks.build]
