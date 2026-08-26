@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { applyQgridDatabaseEnv } from "./database-env";
 
 describe("applyQgridDatabaseEnv", () => {
+  it("설정이 없으면 CLI 기본값을 내부 SONAMU_DB_*에 적용한다", () => {
+    const env: NodeJS.ProcessEnv = {};
+
+    applyQgridDatabaseEnv(env);
+
+    expect(env.SONAMU_DB_HOST).toBe("localhost");
+    expect(env.SONAMU_DB_PORT).toBe("5432");
+    expect(env.SONAMU_DB_USER).toBe("postgres");
+    expect(env.SONAMU_DB_PASSWORD).toBe("postgres");
+    expect(env.SONAMU_DB_NAME).toBe("qgrid");
+  });
+
   it("QGRID_DB_*를 내부 SONAMU_DB_*로 복사한다", () => {
     const env: NodeJS.ProcessEnv = {
       QGRID_DB_HOST: "100.100.102.1",
