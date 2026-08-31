@@ -75,6 +75,20 @@ function sseDone(data: unknown) {
 }
 
 describe("qgrid AI SDK provider", () => {
+  it("rejects an explicitly empty tokenName before generate or stream transport", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const model = qgrid("anthropic/claude-fable-5");
+    const options = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: { qgrid: { tokenName: "" } },
+    } as never;
+
+    await expect(model.doGenerate(options)).rejects.toThrow(/tokenName must not be empty/);
+    await expect(model.doStream(options)).rejects.toThrow(/tokenName must not be empty/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sends QGRID_PROJECT_NAME for provider request logs", async () => {
     vi.stubEnv("QGRID_PROJECT_NAME", "deti");
     let queryBody: unknown;
@@ -143,6 +157,7 @@ describe("qgrid AI SDK provider", () => {
           serviceTier: "flex",
           timeoutMs: 360_000,
           logger: false,
+          tokenName: "openai/yds",
           fallbackModels: ["openai/gpt-5.4-mini"],
         },
       },
@@ -156,6 +171,7 @@ describe("qgrid AI SDK provider", () => {
         serviceTier: "flex",
         timeout: 360_000,
         logger: false,
+        tokenName: "openai/yds",
       },
     });
     expect((queryBody as { args: Record<string, unknown> }).args).not.toHaveProperty(
@@ -840,14 +856,20 @@ describe("qgrid AI SDK provider", () => {
 
     const result = await qgrid("openai/gpt-5.5").doStream({
       prompt: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-      providerOptions: { qgrid: { logger: false, timeoutMs: 360_000 } },
+      providerOptions: {
+        qgrid: { logger: false, timeoutMs: 360_000, tokenName: "openai/yds" },
+      },
     } as never);
     for await (const _part of result.stream) {
       // drain
     }
 
     const prepareCall = calls.find((c) => c.url.includes("/prepareStream"));
-    expect(prepareCall?.body.args).toMatchObject({ logger: false, timeout: 360_000 });
+    expect(prepareCall?.body.args).toMatchObject({
+      logger: false,
+      timeout: 360_000,
+      tokenName: "openai/yds",
+    });
     expect(prepareCall?.body.args).not.toHaveProperty("logMode");
 
     // SDK는 직접 lifecycle 호출 안 함

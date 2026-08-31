@@ -26,7 +26,11 @@ import {
 import { serializeAndValidateDispatchSchema } from "../common/schema-validation";
 import { SmoothWeightedRoundRobin } from "../common/smooth-weighted-round-robin";
 import { assertSupportedOneMillionSuffix, canonicalAnthropicModel } from "./anthropic-constants";
-import { readAnthropicQuotaUsage, type AnthropicQuotaUsageResult } from "./anthropic-quota";
+import {
+  invalidateAnthropicQuotaUsage,
+  readAnthropicQuotaUsage,
+  type AnthropicQuotaUsageResult,
+} from "./anthropic-quota";
 import { makeAnthropicWorkerId, runClaudeSession } from "./claude-session";
 
 const logger = getLogger(["qgrid", "anthropic-dispatcher"]);
@@ -163,7 +167,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
 
   // 지정 요청은 해당 토큰만 quota 판정하고 weighted 상태를 건드리지 않는다.
   // 미지정 요청만 quota 통과 후보로 smooth weighted round-robin 을 진행한다.
-  private async selectToken(preferredTokenId?: number): Promise<PooledToken | null> {
+  private async selectToken(model: string, preferredTokenId?: number): Promise<PooledToken | null> {
     const preferred =
       preferredTokenId === undefined ? undefined : this.tokenPool.get(preferredTokenId);
     if (preferredTokenId !== undefined && !preferred) {
@@ -172,7 +176,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
 
     const rows = preferred ? [preferred] : [...this.tokenPool.values()];
     if (rows.length === 0) return null;
-    const { eligible, overThresholdTokens } = await this.filterEligibleTokens(rows);
+    const { eligible, overThresholdTokens } = await this.filterEligibleTokens(rows, model);
     if (eligible.length === 0) {
       logger.warn("quota_threshold gate: all_exceeded", {
         provider: "anthropic",
@@ -193,7 +197,10 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     return this.tokenPool.get(selectedId) ?? null;
   }
 
-  private async filterEligibleTokens(rows: PooledToken[]): Promise<{
+  private async filterEligibleTokens(
+    rows: PooledToken[],
+    model: string,
+  ): Promise<{
     eligible: PooledToken[];
     overThresholdTokens: Array<{ tokenName: string; threshold: number }>;
   }> {
@@ -207,7 +214,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     const checks = await Promise.allSettled(
       thresholded.map(async (token) => ({
         token,
-        result: await readAnthropicQuotaUsage(token.credentials.accessToken),
+        result: await readAnthropicQuotaUsage(token.credentials.accessToken, model),
       })),
     );
 
@@ -314,7 +321,7 @@ export class AnthropicDispatcher implements ProviderDispatcher {
     const model = canonicalAnthropicModel(req.model);
     const jsonSchema = serializeAndValidateDispatchSchema(req.outputSchema, "anthropic");
 
-    const token = await this.selectToken(req.preferredTokenId);
+    const token = await this.selectToken(model, req.preferredTokenId);
     if (!token) throw new Error("No anthropic tokens available");
 
     const exec = async (): Promise<GenerateResult> => {
@@ -359,7 +366,13 @@ export class AnthropicDispatcher implements ProviderDispatcher {
         onDelta,
       );
 
-      if (session.quotaExhausted) throw new Error(`quota exhausted (${token.name})`);
+      if (session.quotaExhausted) {
+        invalidateAnthropicQuotaUsage(token.credentials.accessToken);
+        if (accessToken !== token.credentials.accessToken) {
+          invalidateAnthropicQuotaUsage(accessToken);
+        }
+        throw new Error(`quota exhausted (${token.name})`);
+      }
       if (session.isError) {
         // 진단(SON-495): isError 판정 사유(subtype/terminal_reason)를 메시지 앞에 드러낸다.
         // 그동안 detail 이 session.text(완전한 JSON 본문)뿐이라 "schema 위반인지 / max retries 인지 /

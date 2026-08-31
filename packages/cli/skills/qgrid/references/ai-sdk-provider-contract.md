@@ -57,6 +57,10 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
 
 `providerOptions.qgrid` supports:
 
+- `tokenName`: strict active-token targeting for both providers. Include the provider prefix and
+  match it to the model (`anthropic/yds` with `anthropic/*`, for example). Missing, inactive, or
+  over-threshold targets fail without falling back to another token. An explicitly empty value is
+  rejected by the SDK before transport; omission keeps weighted round-robin routing.
 - `logger`: request-log switch. Omitted or `true` is the default and enables qgrid logging; `false` guarantees that generation creates zero qgrid request-log rows.
 - `sessionKey`: source for model-scoped opaque OpenAI prompt-cache affinity. Disabled for Anthropic models.
 - `effort`
@@ -143,6 +147,7 @@ Payload responsibilities:
 - Send `jsonSchema` whenever the response format top-level schema is `object`, including requests that also contain tools.
 - Send `history` as JSON string when prior messages exist.
 - Send `projectName` when configured.
+- Send `tokenName` when configured so generate and stream use the same strict target.
 - Send `logger: false` when the per-call option disables request logging; otherwise rely on the server default.
 - Preserve and resend `runContext` for tool-call follow-ups.
 - Let the server infer single-turn completion versus an open tool-call run. Logging-disabled tool calls still use the SDK's local pending-call correlation and continue without a request-log id.

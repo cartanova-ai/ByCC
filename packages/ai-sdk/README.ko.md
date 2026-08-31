@@ -201,6 +201,7 @@ const { text } = await generateText({
 
 | 옵션 | 값 | 적용 범위 | 설명 |
 |---|---|---|---|
+| `tokenName` | provider prefix를 포함한 토큰 이름 | 공통 | `anthropic/yds`처럼 활성 토큰 하나를 엄격히 지정. prefix는 model provider와 같아야 하며 빈 값·누락·inactive·quota 초과 시 다른 토큰으로 fallback하지 않음 |
 | `logger` | `boolean` | 공통 | qgrid request log 저장 여부. 기본값은 `true`. `false`로 설정해도 client tool 실행과 multi-step 연결은 계속 동작 |
 | `sessionKey` | `string` | OpenAI 전용 | 전체 history 재전송 시 불투명 prompt-cache affinity를 파생하는 멀티턴 대화 식별자 ([아래](#멀티턴-prompt-cache-sessionkey) 참조) |
 | `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | 공통 (지원 값은 모델별 상이, 예: `"max"`는 GPT-5.6+) | reasoning 모델의 추론 깊이. 기본값은 config의 `defaultEffort` (`"low"`) |
@@ -211,6 +212,18 @@ const { text } = await generateText({
 | `imageGeneration` | `boolean` | OpenAI 전용, non-stream | codex 내장 `image_generation` tool 활성화 ([아래](#image-generation) 참조) |
 | `imageGenerationOptions` | `{ quality?, size? }` | OpenAI 전용 | 이미지 품질/크기 힌트. `quality: "low" \| "medium" \| "high"`, `size: "1024x1024" \| "1024x1536" \| "1536x1024"` (기본: `medium` / `1536x1024`) |
 | `fallbackModels` | `string[]` | 예약 | 향후 qgrid 서버 fallback routing용 예약 필드. 현재 동작하지 않으며 Claude Code의 Fable refusal fallback과 무관 |
+
+```typescript
+await generateText({
+  model: qgrid("anthropic/claude-fable-5"),
+  prompt,
+  providerOptions: {
+    qgrid: { tokenName: "anthropic/yds" } satisfies QgridProviderOptions,
+  },
+});
+```
+
+`tokenName`은 `streamText`에서도 같은 방식으로 동작합니다.
 
 AI SDK 최상위 `timeout`은 전체 클라이언트 제한시간이며 custom provider 실행 전에
 `AbortSignal`로 변환됩니다. 따라서 그 숫자 자체는 qgrid에 전달되지 않습니다. qgrid 서버의

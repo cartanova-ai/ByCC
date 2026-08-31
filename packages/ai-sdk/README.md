@@ -210,6 +210,7 @@ const { text } = await generateText({
 
 | Option | Values | Applies to | Description |
 |---|---|---|---|
+| `tokenName` | provider-prefixed token name | both providers | Strictly targets one active token, such as `anthropic/yds`. The prefix must match the model provider; empty, missing, inactive, or over-threshold targets fail without fallback |
 | `logger` | `boolean` | both providers | qgrid request logging. Defaults to `true`; `false` disables request-log persistence for this generation without disabling client tools or multi-step continuation |
 | `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier used to derive opaque prompt-cache affinity while replaying full history (see [below](#multi-turn-prompt-cache-sessionkey)) |
 | `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | both providers (supported values are model-dependent, e.g. `"max"` is GPT-5.6+) | Reasoning depth. Defaults to the config's `defaultEffort` (`"low"`) |
@@ -220,6 +221,18 @@ const { text } = await generateText({
 | `imageGeneration` | `boolean` | OpenAI only, non-stream | Enables codex's built-in `image_generation` tool (see [below](#image-generation)) |
 | `imageGenerationOptions` | `{ quality?, size? }` | OpenAI only | Image quality/size hints. `quality: "low" \| "medium" \| "high"`, `size: "1024x1024" \| "1024x1536" \| "1536x1024"` (defaults: `medium` / `1536x1024`) |
 | `fallbackModels` | `string[]` | reserved | Reserved for future qgrid server-side fallback routing. Not functional yet and unrelated to Claude Code's Fable refusal fallback |
+
+```typescript
+await generateText({
+  model: qgrid("anthropic/claude-fable-5"),
+  prompt,
+  providerOptions: {
+    qgrid: { tokenName: "anthropic/yds" } satisfies QgridProviderOptions,
+  },
+});
+```
+
+`tokenName` works the same way with `streamText`.
 
 AI SDK's top-level `timeout` remains the overall client-side budget and is converted to an
 `AbortSignal` before the custom provider runs. It does not expose the numeric timeout to qgrid.

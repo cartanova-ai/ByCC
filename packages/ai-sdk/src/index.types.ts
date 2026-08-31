@@ -11,6 +11,10 @@ export type QgridProviderConfig = {
  */
 export type QgridProviderOptions = {
   /**
+   * 이 요청을 처리할 활성 qgrid 토큰 이름. provider prefix를 포함해야 하며 다른 토큰으로 fallback하지 않는다.
+   */
+  tokenName?: string;
+  /**
    * qgrid request log 저장 여부. 기본값은 true.
    * false여도 client tool 실행과 multi-step 연결은 계속 동작한다.
    */
