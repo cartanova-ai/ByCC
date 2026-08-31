@@ -44,7 +44,11 @@ Anthropic tokens live in an in-memory `Map<tokenId, PooledToken>`.
 
 Quota threshold:
 
-- `quota_threshold` is checked through Anthropic quota usage.
+- `quota_threshold` checks `five_hour.utilization` for every model and also checks
+  `seven_day_overage_included.utilization` for Fable 5, using the higher utilization.
+- A runtime quota-exhausted result invalidates every 60-second usage-cache key used before and
+  after a possible OAuth refresh, so the next untargeted request rechecks usage and can select
+  another token.
 - Lookup failure is fail-open.
 - If all eligible tokens exceed threshold, throw `QuotaThresholdExceededError`.
 

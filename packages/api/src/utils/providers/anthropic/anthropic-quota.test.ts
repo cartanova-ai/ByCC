@@ -34,6 +34,28 @@ describe("readAnthropicQuotaUsage", () => {
     });
   });
 
+  it("uses the separate Fable 5 limit only for Fable requests", async () => {
+    const usage = {
+      data: {
+        five_hour: { utilization: 10, resets_at: null },
+        seven_day_overage_included: { utilization: 100, resets_at: null },
+      },
+      cachedAt: Date.now(),
+    };
+    fetchUsageWithMetaMock.mockResolvedValue(usage);
+
+    await expect(readAnthropicQuotaUsage("access-token", "claude-fable-5")).resolves.toMatchObject({
+      kind: "ok",
+      utilizationPct: 100,
+    });
+    await expect(
+      readAnthropicQuotaUsage("access-token", "claude-sonnet-4-6"),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      utilizationPct: 10,
+    });
+  });
+
   it("keeps low percent utilization unchanged", async () => {
     fetchUsageWithMetaMock.mockResolvedValueOnce({
       data: { five_hour: { utilization: 1, resets_at: null } },

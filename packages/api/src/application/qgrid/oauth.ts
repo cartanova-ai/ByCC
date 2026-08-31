@@ -9,6 +9,7 @@ export type AnthropicUsageRaw = {
   error?: string;
   five_hour?: { utilization: number | null; resets_at: string | null } | null;
   seven_day?: { utilization: number | null; resets_at: string | null } | null;
+  seven_day_overage_included?: { utilization: number | null; resets_at: string | null } | null;
 };
 export type AnthropicUsageWithMeta = {
   data: AnthropicUsageRaw;
@@ -168,6 +169,10 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
 
 const usageCache: Record<string, AnthropicUsageWithMeta> = {};
 const USAGE_API_CACHE_TTL = 60_000; // 1분
+
+export function invalidateAnthropicQuotaUsage(accessToken: string): void {
+  delete usageCache[accessToken.slice(-10)];
+}
 
 export async function fetchUsage(accessToken: string): Promise<AnthropicUsageRaw> {
   return (await fetchUsageWithMeta(accessToken)).data;

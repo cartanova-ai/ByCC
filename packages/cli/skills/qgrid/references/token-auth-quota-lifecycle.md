@@ -113,7 +113,8 @@ Usage/quota:
 
 - Usage API is `https://api.anthropic.com/api/oauth/usage`.
 - qgrid caches Anthropic usage by access-token suffix for 60 seconds.
-- Quota threshold uses `five_hour.utilization`.
+- Quota threshold uses `five_hour.utilization`; Fable 5 additionally uses the model-specific
+  `seven_day_overage_included.utilization`, and either window can exclude the token.
 - Usage lookup failure is fail-open for routing.
 
 ## OpenAI OAuth And Refresh Flow
@@ -234,7 +235,9 @@ When a refresh fails in a way that only re-login can fix, qgrid removes the toke
 - A targeted request never falls back. Missing, inactive, or over-threshold targets fail rather than silently serving from another account — the whole point of addressing a token is that the answer comes from that account.
 - Targeted selection does not consume weighted round-robin state. Without that guarantee, background targeting such as keepalive would skew the token distribution of ordinary traffic.
 - Targeting is distinct from cache affinity. Affinity sets `preferredTokenId` as a preference and still falls back when the token is ineligible; explicit targeting adds `requirePreferredToken` so the same field becomes strict. The Anthropic path only ever receives explicit targeting — affinity coordinates are not forwarded there, so making it strict cannot break affinity behavior.
-- Exposure boundary: `tokenName` is not part of the AI SDK provider options. It is reachable on the qgrid frame wire and used by the dashboard chat token picker and internal callers; SDK consumers keep round-robin.
+- Exposure boundary: raw qgrid callers and AI SDK consumers can pass `tokenName`; the AI SDK sends
+  it from `providerOptions.qgrid.tokenName` on both generate and stream. Callers that omit it keep
+  weighted round-robin routing, while an explicitly empty SDK value fails before transport.
 
 ## Token Window Keepalive
 

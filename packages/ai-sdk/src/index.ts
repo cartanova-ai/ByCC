@@ -129,7 +129,11 @@ function qgridProviderMetadata(data: QueryOutput) {
 }
 
 function getQgridProviderOptions(options: LanguageModelV3CallOptions): QgridProviderOptions {
-  return (options.providerOptions?.qgrid as QgridProviderOptions | undefined) ?? {};
+  const qgridOptions = (options.providerOptions?.qgrid as QgridProviderOptions | undefined) ?? {};
+  if (qgridOptions.tokenName !== undefined && qgridOptions.tokenName.trim() === "") {
+    throw new Error("qgrid: tokenName must not be empty");
+  }
+  return qgridOptions;
 }
 
 function toAiSdkUsage(usage: QueryOutput["usage"]) {
@@ -234,6 +238,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const serviceTier = qgridOptions.serviceTier;
       const timeoutMs = qgridOptions.timeoutMs;
       const logger = qgridOptions.logger;
+      const tokenName = qgridOptions.tokenName;
       const imageGenerationOptions = qgridOptions.imageGenerationOptions;
       if (imageGeneration) {
         assertImageInputFitsJsonTransport(imageUrls);
@@ -291,6 +296,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
               ...(projectName ? { projectName } : {}),
               ...(cacheAffinityKey ? { cacheAffinityKey } : {}),
               ...(logger === false ? { logger: false } : {}),
+              ...(tokenName ? { tokenName } : {}),
               ...(runContext ? { runContext } : {}),
               ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
               ...(imageGeneration ? { imageGeneration } : {}),
@@ -394,6 +400,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
       const serviceTier = qgridOptions.serviceTier;
       const timeoutMs = qgridOptions.timeoutMs;
       const logger = qgridOptions.logger;
+      const tokenName = qgridOptions.tokenName;
       // 이미지 생성은 non-stream 전용(R2). 서버 왕복 전에 클라이언트에서 명시적으로 거부한다.
       if (qgridOptions.imageGeneration) {
         throw new Error(
@@ -448,6 +455,7 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
             ...(projectName ? { projectName } : {}),
             ...(cacheAffinityKey ? { cacheAffinityKey } : {}),
             ...(logger === false ? { logger: false } : {}),
+            ...(tokenName ? { tokenName } : {}),
             ...(runContext ? { runContext } : {}),
             ...(toolResultsPayload ? { toolResults: toolResultsPayload } : {}),
           },

@@ -114,7 +114,7 @@ export const QueryInput = z.looseObject({
   serviceTier: ServiceTier.optional(),
   history: z.string().optional(),
   projectName: z.string().optional(),
-  // 내부·대시보드 호출용 지정 주소. 공개 AI SDK provider options 에는 노출하지 않는다.
+  // raw/dashboard와 공개 AI SDK providerOptions.qgrid.tokenName이 공유하는 지정 주소.
   tokenName: z.string().optional(),
   // SDK-derived opaque affinity. It is intentionally distinct from the caller's sessionKey.
   cacheAffinityKey: z
