@@ -210,6 +210,7 @@ export const tokenSubsetQueries = {
       credentials: "tokens.credentials",
       name: "tokens.name",
       active: "tokens.active",
+      reauth_required: "tokens.reauth_required",
       ord: "tokens.ord",
       quota_threshold: "tokens.quota_threshold",
       weight: "tokens.weight",

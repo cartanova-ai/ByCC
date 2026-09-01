@@ -37,6 +37,7 @@ export const TOKENS_TRIGGER_SETUP_SQL = `
   FOR EACH ROW
   WHEN (
     OLD.active IS DISTINCT FROM NEW.active OR
+    OLD.reauth_required IS DISTINCT FROM NEW.reauth_required OR
     OLD.credentials IS DISTINCT FROM NEW.credentials OR
     OLD.provider IS DISTINCT FROM NEW.provider OR
     OLD.name IS DISTINCT FROM NEW.name OR

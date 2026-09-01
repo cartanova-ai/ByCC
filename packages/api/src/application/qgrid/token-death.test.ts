@@ -3,14 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SLACK_COLOR } from "../../utils/slack-notify";
 import { deactivateAuthDeadToken, notifyTokenAdded } from "./token-death";
 
-const { findOneMock, deactivateMock, notifySlackMock } = vi.hoisted(() => ({
-  findOneMock: vi.fn(),
+const { deactivateMock, notifySlackMock } = vi.hoisted(() => ({
   deactivateMock: vi.fn(),
   notifySlackMock: vi.fn(),
 }));
 
 vi.mock("../token/token.model", () => ({
-  TokenModel: { findOne: findOneMock, deactivateIfActive: deactivateMock },
+  TokenModel: { markReauthRequired: deactivateMock },
 }));
 
 // SLACK_COLOR 는 상수라 가릴 이유가 없다 — 전송 함수만 스텁한다.
@@ -19,32 +18,34 @@ vi.mock("../../utils/slack-notify", async (importOriginal) => ({
   notifySlack: notifySlackMock,
 }));
 
-const token = { id: 7, name: "anthropic/test-token", provider: "anthropic" };
-
-function storedRefreshToken(refreshToken: string) {
-  return {
-    id: 7,
-    provider: "anthropic",
-    credentials: { accessToken: "at", refreshToken, expiresAt: 0, accountUuid: "acc-1" },
-  };
-}
+const token = {
+  id: 7,
+  name: "anthropic/test-token",
+  provider: "anthropic",
+  credentials: {
+    accessToken: "at",
+    refreshToken: "rt-current",
+    expiresAt: 0,
+    accountUuid: "acc-1",
+  },
+};
 
 describe("deactivateAuthDeadToken", () => {
   afterEach(() => {
-    findOneMock.mockReset();
     deactivateMock.mockReset();
     notifySlackMock.mockReset();
   });
 
   it("deactivates and notifies when the failed attempt used the current refresh token", async () => {
-    findOneMock.mockResolvedValue(storedRefreshToken("rt-current"));
-    deactivateMock.mockResolvedValue({ deactivated: true, keptAsLastActive: false });
+    deactivateMock.mockResolvedValue({
+      marked: true,
+      keptAsLastActive: false,
+      staleCredentials: false,
+    });
 
-    await expect(
-      deactivateAuthDeadToken(token, "rt-current", "anthropic:400"),
-    ).resolves.toBe(true);
+    await expect(deactivateAuthDeadToken(token, "anthropic:400")).resolves.toBe(true);
 
-    expect(deactivateMock).toHaveBeenCalledWith(7);
+    expect(deactivateMock).toHaveBeenCalledWith(7, token.credentials);
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
     const notification = notifySlackMock.mock.calls[0]![0] as {
       subject: string;
@@ -56,34 +57,39 @@ describe("deactivateAuthDeadToken", () => {
     expect(notification.color).toBe(SLACK_COLOR.bad);
   });
 
-  it("skips deactivation when the refresh token rotated since the failed attempt", async () => {
-    findOneMock.mockResolvedValue(storedRefreshToken("rt-rotated"));
+  it("skips deactivation when credentials rotated since the failed attempt", async () => {
+    deactivateMock.mockResolvedValue({
+      marked: false,
+      keptAsLastActive: false,
+      staleCredentials: true,
+    });
 
-    await expect(deactivateAuthDeadToken(token, "rt-stale", "anthropic:400")).resolves.toBe(false);
+    await expect(deactivateAuthDeadToken(token, "anthropic:400")).resolves.toBe(false);
 
-    expect(deactivateMock).not.toHaveBeenCalled();
+    expect(deactivateMock).toHaveBeenCalledWith(7, token.credentials);
     expect(notifySlackMock).not.toHaveBeenCalled();
   });
 
   it("does not notify when another process won the deactivation race", async () => {
-    findOneMock.mockResolvedValue(storedRefreshToken("rt-current"));
-    deactivateMock.mockResolvedValue({ deactivated: false, keptAsLastActive: false });
+    deactivateMock.mockResolvedValue({
+      marked: false,
+      keptAsLastActive: false,
+      staleCredentials: false,
+    });
 
-    await expect(deactivateAuthDeadToken(token, "rt-current", "anthropic:400")).resolves.toBe(
-      false,
-    );
+    await expect(deactivateAuthDeadToken(token, "anthropic:400")).resolves.toBe(false);
 
     expect(notifySlackMock).not.toHaveBeenCalled();
   });
 
   it("alerts instead of deactivating when the dying token is the last active one", async () => {
-    // 알림 쿨다운이 모듈 수준 상태라 다른 테스트의 발송 기록에 가려질 수 있다.
-    vi.resetModules();
-    const { deactivateAuthDeadToken: freshDeactivate } = await import("./token-death");
-    findOneMock.mockResolvedValue(storedRefreshToken("rt-current"));
-    deactivateMock.mockResolvedValue({ deactivated: false, keptAsLastActive: true });
+    deactivateMock.mockResolvedValue({
+      marked: true,
+      keptAsLastActive: true,
+      staleCredentials: false,
+    });
 
-    await expect(freshDeactivate(token, "rt-current", "anthropic:400")).resolves.toBe(false);
+    await expect(deactivateAuthDeadToken(token, "anthropic:400")).resolves.toBe(false);
 
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
     const notification = notifySlackMock.mock.calls[0]![0] as { title: string; context: string };
@@ -91,36 +97,34 @@ describe("deactivateAuthDeadToken", () => {
     expect(notification.context).toContain("anthropic:400");
   });
 
-  it("suppresses repeat last-active alerts for the same provider within the cooldown", async () => {
-    // 이 경로는 토큰을 비활성화하지 않아 상태 변화가 없다 — 억제가 없으면 요청마다 알림이 간다.
-    // 쿨다운은 모듈 수준 상태라 앞 테스트의 발송 기록이 남는다. 새로 불러 격리한다.
-    vi.resetModules();
-    const { deactivateAuthDeadToken: freshDeactivate } = await import("./token-death");
-    findOneMock.mockResolvedValue(storedRefreshToken("rt-current"));
-    deactivateMock.mockResolvedValue({ deactivated: false, keptAsLastActive: true });
+  it("does not repeat a last-active alert after another process records auth death", async () => {
+    deactivateMock
+      .mockResolvedValueOnce({
+        marked: true,
+        keptAsLastActive: true,
+        staleCredentials: false,
+      })
+      .mockResolvedValue({
+        marked: false,
+        keptAsLastActive: false,
+        staleCredentials: false,
+      });
 
-    await freshDeactivate(token, "rt-current", "anthropic:400");
-    await freshDeactivate(token, "rt-current", "anthropic:400");
-    await freshDeactivate(token, "rt-current", "anthropic:401");
+    await deactivateAuthDeadToken(token, "anthropic:400");
+    await deactivateAuthDeadToken(token, "anthropic:400");
+    await deactivateAuthDeadToken(token, "anthropic:401");
 
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does nothing when the token no longer exists", async () => {
-    findOneMock.mockResolvedValue(undefined);
-
-    await expect(deactivateAuthDeadToken(token, "rt-current", "anthropic:400")).resolves.toBe(
-      false,
-    );
-
-    expect(deactivateMock).not.toHaveBeenCalled();
-  });
-
   it("never puts the raw provider error body in the notification", async () => {
-    findOneMock.mockResolvedValue(storedRefreshToken("rt-current"));
-    deactivateMock.mockResolvedValue({ deactivated: true, keptAsLastActive: false });
+    deactivateMock.mockResolvedValue({
+      marked: true,
+      keptAsLastActive: false,
+      staleCredentials: false,
+    });
 
-    await deactivateAuthDeadToken(token, "rt-current", "anthropic:400");
+    await deactivateAuthDeadToken(token, "anthropic:400");
 
     // 필드가 늘어도 새는 곳이 생기지 않도록 페이로드 전체를 훑는다.
     const payload = JSON.stringify(notifySlackMock.mock.calls[0]![0]);

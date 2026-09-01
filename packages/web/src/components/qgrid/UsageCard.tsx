@@ -643,7 +643,7 @@ function SortableTokenCard({ token }: { token: Token }) {
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {/* 만료를 확인하는 곳이 대시보드인데 조치는 Tokens 페이지에서만 되면 동선이
               어긋난다. 조치가 필요한 카드에서 바로 재로그인한다. */}
-          {!token.active && <ReloginButton token={token} />}
+          {token.reauth_required && <ReloginButton token={token} />}
           <div className="flex-1" />
           <WeightControl token={token} />
           <ThresholdControl token={token} />

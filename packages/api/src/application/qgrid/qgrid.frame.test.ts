@@ -10,6 +10,7 @@ const {
   findOneMock,
   findManyMock,
   findActiveByProviderAndNameMock,
+  toggleActiveMock,
   saveMock,
   updateFieldsMock,
   requestLogSaveMock,
@@ -33,6 +34,7 @@ const {
     findOneMock: vi.fn(),
     findManyMock: vi.fn(),
     findActiveByProviderAndNameMock: vi.fn(),
+    toggleActiveMock: vi.fn(),
     saveMock: vi.fn(),
     updateFieldsMock: vi.fn(),
     requestLogSaveMock: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock("../token/token.model", () => ({
     findOne: findOneMock,
     findMany: findManyMock,
     findActiveByProviderAndName: findActiveByProviderAndNameMock,
+    toggleActive: toggleActiveMock,
     save: saveMock,
     updateFields: updateFieldsMock,
   },
@@ -111,11 +114,30 @@ const tokenEntry = {
   },
   name: "tok-A",
   active: true,
+  reauth_required: false,
   ord: 0,
   quota_threshold: null,
   weight: 1,
   keepalive_enabled: false,
 };
+
+describe("QgridFrame.toggleToken", () => {
+  beforeEach(() => {
+    toggleActiveMock.mockReset();
+  });
+
+  it("does not reactivate a token whose login has expired", async () => {
+    toggleActiveMock.mockResolvedValue({ active: false, reauthRequired: true });
+
+    await expect(QgridFrame.toggleToken(1)).rejects.toThrow("Re-login required");
+  });
+
+  it("reactivates a manually disabled token without requiring login", async () => {
+    toggleActiveMock.mockResolvedValue({ active: true, reauthRequired: false });
+
+    await expect(QgridFrame.toggleToken(1)).resolves.toEqual({ active: true });
+  });
+});
 
 function deeplyNestedInputSchema(depth: number): unknown {
   return JSON.parse(`${"[".repeat(depth)}0${"]".repeat(depth)}`) as unknown;

@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findOneMock, saveMock, deactivateMock } = vi.hoisted(() => ({
-  findOneMock: vi.fn(),
-  saveMock: vi.fn(),
-  deactivateMock: vi.fn(),
-}));
+const { findOneMock, saveMock, deactivateMock } = vi.hoisted(() => {
+  // isolate:false 공유 레지스트리에 실제 TokenModel 이 먼저 올라와도 이 파일의 mock을 보장한다.
+  vi.resetModules();
+  return {
+    findOneMock: vi.fn(),
+    saveMock: vi.fn(),
+    deactivateMock: vi.fn(),
+  };
+});
 
 vi.mock("../../../application/token/token.model", () => ({
   TokenModel: { findOne: findOneMock, save: saveMock },
@@ -80,6 +84,7 @@ describe("OpenAI refresh", () => {
     expect(saveMock).toHaveBeenCalledWith([
       expect.objectContaining({
         id: 10,
+        reauth_required: false,
         credentials: expect.objectContaining({
           accessToken: "new-access",
           refreshToken: "new-refresh",
@@ -112,8 +117,12 @@ describe("OpenAI refresh", () => {
 
     await expect(handleChatgptAuthTokensRefresh(11)).rejects.toThrow("OpenAI refresh failed: 401");
     expect(deactivateMock).toHaveBeenCalledWith(
-      { id: 11, name: "token-11", provider: "openai" },
-      "old-refresh",
+      {
+        id: 11,
+        name: "token-11",
+        provider: "openai",
+        credentials: expect.objectContaining({ refreshToken: "old-refresh" }),
+      },
       "openai:refresh_token_reused",
     );
   });

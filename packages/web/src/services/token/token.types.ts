@@ -43,6 +43,7 @@ export const TokenSaveParams = TokenBaseSchema.partial({
   id: true,
   created_at: true,
   active: true,
+  reauth_required: true,
   ord: true,
   quota_threshold: true,
   weight: true,

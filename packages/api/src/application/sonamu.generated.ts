@@ -296,6 +296,7 @@ export const TokenBaseSchema = z.object({
   credentials: TokenCredentials,
   name: z.string(),
   active: z.boolean(),
+  reauth_required: z.boolean(),
   ord: z.int(),
   quota_threshold: z.int().nullable(),
   weight: z.int(),
@@ -305,6 +306,7 @@ export type TokenBaseSchema = z.infer<typeof TokenBaseSchema> & {
   readonly __hasDefault__: readonly [
     "created_at",
     "active",
+    "reauth_required",
     "ord",
     "quota_threshold",
     "weight",
@@ -557,6 +559,7 @@ export const TokenSubsetA = z.object({
   credentials: TokenCredentials,
   name: z.string(),
   active: z.boolean(),
+  reauth_required: z.boolean(),
   ord: z.int(),
   quota_threshold: z.int().nullable(),
   weight: z.int(),

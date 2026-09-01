@@ -14,6 +14,12 @@
     },
     { "name": "name", "desc": "토큰 이름", "type": "string" },
     { "name": "active", "type": "boolean", "desc": "활성 여부", "dbDefault": "true" },
+    {
+      "name": "reauth_required",
+      "type": "boolean",
+      "desc": "인증 만료로 재로그인이 필요한지 여부",
+      "dbDefault": "false"
+    },
     { "name": "ord", "type": "integer", "desc": "정렬 순서", "dbDefault": "0" },
     {
       "name": "quota_threshold",
@@ -50,6 +56,7 @@
       "credentials",
       "name",
       "active",
+      "reauth_required",
       "ord",
       "quota_threshold",
       "weight",

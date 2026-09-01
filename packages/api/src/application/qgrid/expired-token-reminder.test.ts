@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findInactiveMock, getSettingMock, notifySlackMock } = vi.hoisted(() => ({
-  findInactiveMock: vi.fn(),
+const { findReauthRequiredMock, getSettingMock, notifySlackMock } = vi.hoisted(() => ({
+  findReauthRequiredMock: vi.fn(),
   getSettingMock: vi.fn(),
   notifySlackMock: vi.fn(),
 }));
@@ -97,10 +97,12 @@ describe("expired token reminder scheduling", () => {
     minutes = "10";
     rawUserMap = "yds:U-OLD";
     remindersEnabled = "true";
-    findInactiveMock.mockReset();
+    findReauthRequiredMock.mockReset();
     getSettingMock.mockReset();
     notifySlackMock.mockReset();
-    findInactiveMock.mockResolvedValue([{ name: "anthropic/yds", provider: "anthropic" }]);
+    findReauthRequiredMock.mockResolvedValue([
+      { name: "anthropic/yds", provider: "anthropic" },
+    ]);
     getSettingMock.mockImplementation((key: string) => {
       if (key === "slack.expiryReminderMinutes") return minutes;
       if (key === "slack.userMap") return rawUserMap;
@@ -109,7 +111,7 @@ describe("expired token reminder scheduling", () => {
     });
     notifySlackMock.mockResolvedValue(undefined);
     deps = {
-      findInactive: findInactiveMock,
+      findReauthRequired: findReauthRequiredMock,
       getSlackUserMap: () => getSlackUserMap(getSettingMock),
       readSetting: getSettingMock,
       sendSlack: notifySlackMock,
@@ -159,7 +161,7 @@ describe("expired token reminder scheduling", () => {
   });
 
   it("보낼 대상이 없으면 0을 돌려주고 아무것도 보내지 않는다", async () => {
-    findInactiveMock.mockResolvedValue([]);
+    findReauthRequiredMock.mockResolvedValue([]);
 
     const sent = await sendExpiredTokenReminderNow(deps);
 

@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { getLogger } from "@logtape/logtape";
 import {
   api,
@@ -12,12 +14,13 @@ import {
 import { SD } from "../../i18n/sd.generated";
 import { type TokenSubsetKey, type TokenSubsetMapping } from "../sonamu.generated";
 import { tokenLoaderQueries, tokenSubsetQueries } from "../sonamu.generated.sso";
-import { type TokenListParams, type TokenSaveParams } from "./token.types";
+import { type TokenCredentials, type TokenListParams, type TokenSaveParams } from "./token.types";
 
 const logger = getLogger(["qgrid", "token"]);
 
 const DEFAULT_QUOTA_THRESHOLD = 80;
 const DEFAULT_WEIGHT = 1;
+const TOKEN_AUTH_DEATH_LOCK_CLASS_ID = 719;
 
 export type TokenUpdateFields = {
   name?: string;
@@ -167,13 +170,10 @@ class TokenModelClass extends BaseModelClass<
     return result.rows[0];
   }
 
-  /**
-   * 라우팅에서 빠진 토큰들. 세션 만료로 자동 비활성화된 것과 수동으로 끈 것이 섞여 있다 —
-   * 둘 다 "재로그인하면 살아나는" 상태라 알림 대상으로는 같게 본다.
-   */
-  async findInactive<T extends TokenSubsetKey>(subset: T): Promise<TokenSubsetMapping[T][]> {
+  /** 실제 인증 만료가 확인돼 재로그인이 필요한 토큰들. 수동 비활성화는 제외한다. */
+  async findReauthRequired<T extends TokenSubsetKey>(subset: T): Promise<TokenSubsetMapping[T][]> {
     const { qb } = this.getSubsetQueries(subset);
-    qb.where("tokens.active", false);
+    qb.where("tokens.reauth_required", true);
     qb.orderBy("tokens.name", "asc");
     const enhancers = this.createEnhancers({ A: (row) => ({ ...row }) });
     const result = await this.executeSubsetQuery({
@@ -200,7 +200,6 @@ class TokenModelClass extends BaseModelClass<
     return result.rows;
   }
 
-  @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async save(spa: TokenSaveParams[]): Promise<number[]> {
     const wdb = this.getPuri("w");
     spa.forEach((sp) => {
@@ -216,15 +215,26 @@ class TokenModelClass extends BaseModelClass<
     return wdb.transaction((trx) => trx.table("tokens").where("id", id).update(fields));
   }
 
-  /**
-   * 세션 만료 토큰을 라우팅에서 제외한다. `active=true` 조건부 갱신이므로 공유 DB 를 쓰는
-   * 여러 인스턴스가 동시에 같은 만료를 감지해도 true 를 받는 프로세스는 하나뿐이다
-   * (호출부의 알림 발송 게이트).
-   *
-   * 단, 대상이 해당 provider 의 마지막 활성 토큰이면 갱신하지 않고 false 를 반환한다.
-   * client_id 취소나 OAuth 계약 변경처럼 전 토큰이 동시에 실패하는 상황에서 풀이
-   * 통째로 비는 것을 막는 안전판이다.
-   */
+  async toggleActive(id: number): Promise<{ active: boolean; reauthRequired: boolean } | null> {
+    const wdb = this.getPuri("w");
+    return wdb.transaction(async (trx) => {
+      const token = await trx
+        .from("tokens")
+        .select({ active: "active", reauth_required: "reauth_required" })
+        .where("id", id)
+        .forUpdate()
+        .first();
+      if (!token) return null;
+      if (!token.active && token.reauth_required) {
+        return { active: false, reauthRequired: true };
+      }
+
+      const active = !token.active;
+      await trx.from("tokens").where("id", id).update({ active });
+      return { active, reauthRequired: false };
+    });
+  }
+
   /**
    * 같은 계정의 기존 토큰을 지우고 새로 저장한다(로그인·재로그인 공통 경로).
    *
@@ -257,43 +267,61 @@ class TokenModelClass extends BaseModelClass<
   }
 
   /**
-   * @returns `deactivated` 는 이 호출이 실제로 비활성화를 수행했는지 — 호출부의 알림
-   *   게이트다. `keptAsLastActive` 는 마지막 활성 토큰이라 거부한 경우로, 사망 자체는
-   *   사실이지만 풀을 비우지 않으려고 살려둔 상태다(systemic 실패 신호).
+   * 인증 사망을 한 번만 기록하고, 다른 활성 토큰이 있으면 라우팅에서도 제외한다.
+   * 마지막 활성 토큰은 systemic 장애 안전판 때문에 active 상태를 유지하되 재로그인
+   * 필요 상태는 기록한다. `marked`가 공유 DB 인스턴스들의 알림 발송 게이트다.
    */
-  async deactivateIfActive(
+  async markReauthRequired(
     id: number,
-  ): Promise<{ deactivated: boolean; keptAsLastActive: boolean }> {
+    expectedCredentials: TokenCredentials,
+  ): Promise<{ marked: boolean; keptAsLastActive: boolean; staleCredentials: boolean }> {
     const wdb = this.getPuri("w");
+    return wdb.transaction(async (trx) => {
+      const token = await trx
+        .from("tokens")
+        .select({
+          provider: "provider",
+          credentials: "credentials",
+          reauth_required: "reauth_required",
+        })
+        .where("id", id)
+        .forUpdate()
+        .first();
+      if (!token || token.reauth_required) {
+        return { marked: false, keptAsLastActive: false, staleCredentials: false };
+      }
+      if (!isDeepStrictEqual(token.credentials, expectedCredentials)) {
+        return { marked: false, keptAsLastActive: false, staleCredentials: true };
+      }
 
-    // 활성 여부와 "마지막 남은 토큰인가"를 한 statement 안에서 판정한다. 두 조건을
-    // 따로 읽고 나중에 갱신하면 그 사이에 다른 인스턴스가 같은 provider 의 토큰을
-    // 비활성화해 풀이 통째로 빌 수 있다.
-    const updated = await wdb.knex.raw<{ rowCount: number }>(
-      `UPDATE tokens SET active = false
-       WHERE id = ? AND active = true
-         AND (SELECT count(*) FROM tokens peer
-              WHERE peer.provider = tokens.provider AND peer.active) > 1`,
-      [id],
-    );
-    if ((updated.rowCount ?? 0) > 0) return { deactivated: true, keptAsLastActive: false };
-
-    // 갱신되지 않은 이유는 둘 중 하나다: 이미 비활성이거나(정상 경쟁 결과), 마지막
-    // 활성 토큰이거나. 후자는 systemic 실패 신호라 남겨야 하므로 이때만 한 번 더 읽는다.
-    const survivor = (
-      await wdb.knex.raw<{ rows: { provider: string }[] }>(
-        "SELECT provider FROM tokens WHERE id = ? AND active = true",
+      await trx.knex.raw("SELECT pg_advisory_xact_lock(?, hashtext(?))", [
+        TOKEN_AUTH_DEATH_LOCK_CLASS_ID,
+        token.provider,
+      ]);
+      const updated = await trx.knex.raw<{ rows: { active: boolean }[] }>(
+        `UPDATE tokens
+         SET reauth_required = true,
+             active = CASE
+               WHEN active AND (SELECT count(*) FROM tokens peer
+                 WHERE peer.provider = tokens.provider AND peer.active) > 1
+               THEN false
+               ELSE active
+             END
+         WHERE id = ? AND reauth_required = false
+         RETURNING active`,
         [id],
-      )
-    ).rows[0];
-    if (survivor) {
-      logger.error(
-        `refusing to auto-deactivate token ${id}: last active ${survivor.provider} token — ` +
-          `systemic refresh failure suspected, keeping the pool non-empty`,
       );
-      return { deactivated: false, keptAsLastActive: true };
-    }
-    return { deactivated: false, keptAsLastActive: false };
+      const marked = updated.rows[0];
+      if (!marked) return { marked: false, keptAsLastActive: false, staleCredentials: false };
+
+      if (marked.active) {
+        logger.error(
+          `refusing to auto-deactivate token ${id}: last active provider token — ` +
+            `systemic refresh failure suspected, keeping the pool non-empty`,
+        );
+      }
+      return { marked: true, keptAsLastActive: marked.active, staleCredentials: false };
+    });
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })

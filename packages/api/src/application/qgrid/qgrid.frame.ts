@@ -575,20 +575,12 @@ class QgridFrameClass extends BaseFrameClass {
    */
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
   async toggleToken(id: number): Promise<{ active: boolean }> {
-    const entry = await TokenModel.findOne("A", { id });
-    if (!entry) return { active: false };
-
-    const newActive = !entry.active;
-    await TokenModel.save([
-      {
-        id,
-        provider: entry.provider,
-        credentials: entry.credentials,
-        active: newActive,
-        name: entry.name,
-      },
-    ]);
-    return { active: newActive };
+    const result = await TokenModel.toggleActive(id);
+    if (!result) return { active: false };
+    if (result.reauthRequired) {
+      throw new BadRequestException("Re-login required" as LocalizedString);
+    }
+    return { active: result.active };
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
@@ -812,7 +804,7 @@ class QgridFrameClass extends BaseFrameClass {
       refreshed = await refreshAccessToken(rt);
     } catch (e) {
       if (e instanceof RefreshFailedError && e.isAuthDead) {
-        await deactivateAuthDeadToken(token, rt, `anthropic:${e.status}`);
+        await deactivateAuthDeadToken(token, `anthropic:${e.status}`);
       }
       throw e;
     }
@@ -829,6 +821,7 @@ class QgridFrameClass extends BaseFrameClass {
         provider: token.provider,
         credentials: updated,
         name: token.name,
+        reauth_required: false,
       },
     ]);
     return refreshed.accessToken;

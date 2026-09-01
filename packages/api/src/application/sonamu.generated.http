@@ -22,33 +22,6 @@ Content-Type: application/json
 
 ###
 
-POST {{baseUrl}}/api/token/save
-Content-Type: application/json
-
-{
-  "spa": [
-    {
-      "id": 0,
-      "created_at": "2000-01-01",
-      "provider": "PROVIDER",
-      "credentials": {
-        "accessToken": "ACCESSTOKEN",
-        "refreshToken": "REFRESHTOKEN",
-        "expiresAt": 0,
-        "accountUuid": "ACCOUNTUUID"
-      },
-      "name": "NAME",
-      "active": false,
-      "ord": 0,
-      "quota_threshold": null,
-      "weight": 1,
-      "keepalive_enabled": false
-    }
-  ]
-}
-
-###
-
 POST {{baseUrl}}/api/token/reorder
 Content-Type: application/json
 

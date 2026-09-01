@@ -12,4 +12,10 @@ describe("tokens trigger setup", () => {
       "OLD.keepalive_enabled IS DISTINCT FROM NEW.keepalive_enabled",
     );
   });
+
+  it("notifies subscribers when a token starts requiring re-login", () => {
+    expect(TOKENS_TRIGGER_SETUP_SQL).toContain(
+      "OLD.reauth_required IS DISTINCT FROM NEW.reauth_required",
+    );
+  });
 });

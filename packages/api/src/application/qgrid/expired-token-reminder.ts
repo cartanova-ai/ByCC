@@ -8,7 +8,8 @@
  * 여러 토큰이 만료돼 있으면 한 메시지에 모은다. 토큰마다 메시지를 보내면 채널이 시끄러워
  * 정작 읽히지 않는다.
  *
- * 비활성 토큰이 없으면 보내지 않는다 — "이상 없음"을 주기적으로 알리면 채널이 무뎌진다.
+ * 재로그인이 필요한 토큰이 없으면 보내지 않는다 — "이상 없음"을 주기적으로 알리면
+ * 채널이 무뎌진다.
  */
 import { getLogger } from "@logtape/logtape";
 
@@ -22,14 +23,14 @@ const logger = getLogger(["qgrid", "expired-reminder"]);
 const MINUTE_MS = 60_000;
 
 export type ExpiredTokenReminderDeps = {
-  findInactive: () => Promise<{ name: string | null; provider: string }[]>;
+  findReauthRequired: () => Promise<{ name: string | null; provider: string }[]>;
   getSlackUserMap: () => Map<string, string>;
   readSetting: typeof getSetting;
   sendSlack: typeof notifySlack;
 };
 
 const defaultDeps: ExpiredTokenReminderDeps = {
-  findInactive: () => TokenModel.findInactive("A"),
+  findReauthRequired: () => TokenModel.findReauthRequired("A"),
   getSlackUserMap,
   readSetting: getSetting,
   sendSlack: notifySlack,
@@ -54,20 +55,20 @@ export function buildReminderContext(
 }
 
 async function sendReminder(deps: ExpiredTokenReminderDeps, urgent = false): Promise<number> {
-  const inactive = await deps.findInactive();
-  if (inactive.length === 0) return 0;
+  const expired = await deps.findReauthRequired();
+  if (expired.length === 0) return 0;
 
   const userMap = deps.getSlackUserMap();
 
   await deps.sendSlack({
     // 만료 순간 알림과 같은 제목을 쓴다. 같은 사건이므로 다른 이름을 붙이면 별개 문제로 읽힌다.
     title: "세션 만료",
-    subject: inactive.length > 1 ? `${inactive.length}건` : (inactive[0]!.name ?? "unnamed"),
-    context: buildReminderContext(inactive, userMap),
+    subject: expired.length > 1 ? `${expired.length}건` : (expired[0]!.name ?? "unnamed"),
+    context: buildReminderContext(expired, userMap),
     color: SLACK_COLOR.bad,
     urgent,
   });
-  return inactive.length;
+  return expired.length;
 }
 
 /**

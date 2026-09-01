@@ -162,7 +162,14 @@ export function TokenTable({ data, isLoading }: TokenTableProps) {
                         type="button"
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${token.active ? "bg-sage-400" : "bg-sand-300"}`}
                         onClick={() => handleToggle(token)}
-                        disabled={toggleMutation.isPending}
+                        disabled={
+                          toggleMutation.isPending || (!token.active && token.reauth_required)
+                        }
+                        title={
+                          !token.active && token.reauth_required
+                            ? "재로그인이 필요한 토큰입니다"
+                            : undefined
+                        }
                       >
                         <span
                           className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform duration-200 ${token.active ? "translate-x-4.5" : "translate-x-0.5"}`}

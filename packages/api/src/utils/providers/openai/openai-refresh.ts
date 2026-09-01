@@ -114,8 +114,7 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
     // 상태코드를 바꿀 때 판정이 조용히 멎는다.
     if (errorCode && PERMANENT_FAILURE_CODES.has(errorCode)) {
       await deactivateAuthDeadToken(
-        { id: tokenId, name: token.name, provider: "openai" },
-        creds.refreshToken,
+        { id: tokenId, name: token.name, provider: "openai", credentials: creds },
         `openai:${errorCode}`,
       );
     }
@@ -158,6 +157,7 @@ async function doRefresh(tokenId: number): Promise<RefreshResult> {
         provider: "openai",
         credentials: updatedCreds,
         name: token.name,
+        reauth_required: false,
       },
     ]);
   } catch (e) {

@@ -317,6 +317,7 @@ const entityLabels = {
   "entity.Token.credentials": "인증 정보 (JSONB)",
   "entity.Token.name": "토큰 이름",
   "entity.Token.active": "활성 여부",
+  "entity.Token.reauth_required": "인증 만료로 재로그인이 필요한지 여부",
   "entity.Token.ord": "정렬 순서",
   "entity.Token.quota_threshold": "quota 사용률 임계치(%). null이면 미설정",
   "entity.Token.weight": "가중 라운드로빈 라우팅 가중치 (1..100)",

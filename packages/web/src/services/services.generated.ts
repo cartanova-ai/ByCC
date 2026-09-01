@@ -67,7 +67,7 @@ import {
   dedupeAndFlatten,
   useRefreshable,
 } from "./sonamu.shared";
-import { TokenListParams, TokenSaveParams, TokenCredentials } from "./token/token.types";
+import { TokenListParams, TokenCredentials } from "./token/token.types";
 
 export namespace TokenService {
   export async function getToken<T extends TokenSubsetKey>(
@@ -162,19 +162,6 @@ export namespace TokenService {
         ...options,
       }),
     );
-
-  export async function save(spa: TokenSaveParams[]): Promise<number[]> {
-    return fetch({
-      method: "POST",
-      url: `/api/token/save`,
-      data: { spa },
-    });
-  }
-
-  export const useSaveMutation = () =>
-    useMutation({
-      mutationFn: (params: { spa: TokenSaveParams[] }) => save(params.spa),
-    });
 
   export async function reorder(ids: number[]): Promise<{ done: boolean }> {
     return fetch({

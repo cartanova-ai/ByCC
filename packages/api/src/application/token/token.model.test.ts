@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+
+import { Sonamu } from "sonamu";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { TokenModel } from "./token.model";
 
@@ -122,6 +125,7 @@ describe("TokenModel.replaceByAccount", () => {
         id: 1,
         created_at: new Date(),
         active: true,
+        reauth_required: false,
         ord: 0,
         quota_threshold: 80,
         weight: 1,
@@ -177,51 +181,122 @@ describe("TokenModel.findActiveByProviderAndName", () => {
   });
 });
 
-describe("TokenModel.deactivateIfActive", () => {
+describe("TokenModel.findReauthRequired", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  function mockKnex(responses: unknown[]) {
-    const raw = vi.fn();
-    for (const response of responses) raw.mockResolvedValueOnce(response);
-    vi.spyOn(TokenModel as unknown as { getPuri: (mode: "w") => unknown }, "getPuri").mockReturnValue(
-      { knex: { raw } } as unknown as MockPuri,
-    );
-    return raw;
-  }
+  it("queries auth-dead tokens instead of every inactive token", async () => {
+    const where = vi.fn();
+    const orderBy = vi.fn();
+    const qb = { where, orderBy };
+    vi.spyOn(
+      TokenModel as unknown as { getSubsetQueries: (subset: "A") => { qb: typeof qb } },
+      "getSubsetQueries",
+    ).mockReturnValue({ qb });
+    vi.spyOn(
+      TokenModel as unknown as {
+        executeSubsetQuery: (input: unknown) => Promise<{ rows: unknown[] }>;
+      },
+      "executeSubsetQuery",
+    ).mockResolvedValue({ rows: [] });
 
-  it("deactivates in one statement that carries the last-token guard", async () => {
-    const raw = mockKnex([{ rowCount: 1 }]);
+    await TokenModel.findReauthRequired("A");
 
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toEqual({
-      deactivated: true,
-      keptAsLastActive: false,
-    });
-    expect(raw).toHaveBeenCalledTimes(1);
-    const sql = raw.mock.calls[0]![0] as string;
-    expect(sql).toContain("UPDATE tokens SET active = false");
-    expect(sql).toContain("count(*)");
+    expect(where).toHaveBeenCalledWith("tokens.reauth_required", true);
+    expect(where).not.toHaveBeenCalledWith("tokens.active", false);
+  });
+});
+
+describe("TokenModel.markReauthRequired", () => {
+  beforeAll(async () => {
+    await Sonamu.initForTesting();
   });
 
-  it("returns false without a diagnostic read when the token is already inactive", async () => {
-    const raw = mockKnex([{ rowCount: 0 }, { rows: [] }]);
+  it("serializes provider deaths, preserves one active token, and rejects stale credentials", async () => {
+    const suffix = randomUUID();
+    const tokens = [
+      {
+        ...baseToken,
+        name: `auth-state-a-${suffix}`,
+        credentials: { ...baseToken.credentials, accountUuid: `account-a-${suffix}` },
+      },
+      {
+        ...baseToken,
+        name: `auth-state-b-${suffix}`,
+        credentials: { ...baseToken.credentials, accountUuid: `account-b-${suffix}` },
+      },
+    ];
+    const ids = await TokenModel.save(tokens);
 
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toEqual({
-      deactivated: false,
-      keptAsLastActive: false,
-    });
-    expect(raw).toHaveBeenCalledTimes(2);
-  });
+    try {
+      await expect(
+        TokenModel.markReauthRequired(ids[0]!, {
+          ...tokens[0]!.credentials,
+          accessToken: "stale-access-token",
+        }),
+      ).resolves.toEqual({
+        marked: false,
+        keptAsLastActive: false,
+        staleCredentials: true,
+      });
 
-  it("refuses to deactivate the provider's last active token", async () => {
-    const raw = mockKnex([{ rowCount: 0 }, { rows: [{ provider: "anthropic" }] }]);
+      const results = await Promise.all([
+        TokenModel.markReauthRequired(ids[0]!, tokens[0]!.credentials),
+        TokenModel.markReauthRequired(ids[1]!, tokens[1]!.credentials),
+      ]);
+      expect(results.every((result) => result.marked)).toBe(true);
 
-    // 마지막 활성 토큰은 살려두되, 호출부가 systemic 실패로 알릴 수 있게 구분해 알린다.
-    await expect(TokenModel.deactivateIfActive(7)).resolves.toEqual({
-      deactivated: false,
-      keptAsLastActive: true,
-    });
-    expect(raw).toHaveBeenCalledTimes(2);
+      const { rows } = await TokenModel.findMany("A", { id: ids, num: 2 });
+      expect(rows.every((row) => row.reauth_required)).toBe(true);
+      expect(rows.filter((row) => row.active)).toHaveLength(1);
+
+      await expect(
+        TokenModel.markReauthRequired(ids[0]!, tokens[0]!.credentials),
+      ).resolves.toEqual({
+        marked: false,
+        keptAsLastActive: false,
+        staleCredentials: false,
+      });
+
+      const inactive = rows.find((row) => !row.active)!;
+      const refreshedCredentials = {
+        ...inactive.credentials,
+        accessToken: "refreshed-access-token",
+        refreshToken: "refreshed-refresh-token",
+      };
+      await TokenModel.save([
+        {
+          id: inactive.id,
+          provider: inactive.provider,
+          credentials: refreshedCredentials,
+          name: inactive.name,
+          reauth_required: false,
+        },
+      ]);
+      await expect(
+        TokenModel.markReauthRequired(inactive.id, inactive.credentials),
+      ).resolves.toEqual({
+        marked: false,
+        keptAsLastActive: false,
+        staleCredentials: true,
+      });
+
+      await expect(TokenModel.toggleActive(inactive.id)).resolves.toEqual({
+        active: true,
+        reauthRequired: false,
+      });
+      await TokenModel.toggleActive(inactive.id);
+      await Promise.all([
+        TokenModel.toggleActive(inactive.id),
+        TokenModel.markReauthRequired(inactive.id, refreshedCredentials),
+      ]);
+      await expect(TokenModel.findById("A", inactive.id)).resolves.toMatchObject({
+        active: false,
+        reauth_required: true,
+      });
+    } finally {
+      await TokenModel.del(ids);
+    }
   });
 });

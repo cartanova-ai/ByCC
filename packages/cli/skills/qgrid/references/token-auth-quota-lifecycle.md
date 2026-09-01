@@ -34,11 +34,13 @@ Use this reference before changing token storage, OAuth flows, token activation,
 - `credentials`: JSONB credentials.
 - `name`: display/logging name.
 - `active`: whether provider dispatchers may use it.
+- `reauth_required`: whether a permanent refresh failure proved that OAuth login must be repeated.
 - `ord`: dashboard ordering.
 - `quota_threshold`: nullable integer percentage, validated as 1..100 when present.
 - `weight`: non-null integer 1..100, database default 1. Relative share for weighted round-robin routing of new requests. Weight does not enable or disable a token; that stays on `active`.
 
-On creation, `TokenModel.save` applies defaults `quota_threshold = 80` and `weight = 1` independently for any field not provided (skipped entirely when `id` is present).
+On creation, the database defaults `reauth_required = false`; `TokenModel.save` also applies `quota_threshold = 80` and `weight = 1` independently for any field not provided (skipped entirely when `id` is present).
+`TokenModel.save` is internal only; callers use the curated qgrid token APIs so they cannot write lifecycle fields directly.
 
 OpenAI credentials:
 
@@ -77,7 +79,7 @@ Duplicate account replacement is account-identifier based:
 - `addToken(provider, credentials, name)`: saves a token directly.
 - `updateToken(id, name?, quotaThreshold?, weight?)`: partial field update through `TokenModel.updateFields`; omitted fields preserve stored values, so one control cannot overwrite another control's setting. `weight` is validated as an integer 1..100. The web client uses a hand-written `useUpdateTokenMutation` hook instead of the generated tanstack-mutation client for this endpoint.
 - `removeToken(id)`: deletes token row.
-- `toggleToken(id)`: flips `active`.
+- `toggleToken(id)`: atomically flips `active`; it refuses to reactivate a token with `reauth_required = true`, because only OAuth can restore a dead login.
 - `stats()`: reports dispatcher cache stats.
 - `health()`: reports active token cache count and subscriber status.
 - `usage(tokenId?)`: returns provider usage/rate-limit summary.
@@ -154,7 +156,7 @@ Triggers notify on:
 
 - INSERT
 - DELETE
-- UPDATE when `active`, `credentials`, `provider`, `name`, or `quota_threshold` changes.
+- UPDATE when `active`, `reauth_required`, `credentials`, `provider`, `name`, or `quota_threshold` changes.
 - UPDATE when `weight` changes, through a separate `tokens_weight_changed_upd` trigger owned by the versioned migration `20260710090000_alter_tokens_add_weight.ts`. The boot-time setup SQL intentionally leaves `weight` out of its WHEN clause (test-enforced in `token-trigger-setup.test.ts`) so exactly one trigger fires per weight-only change.
 
 `TokenSubscriber`:
@@ -201,14 +203,15 @@ Anthropic token changes only affect the in-memory token pool because every reque
 When a refresh fails in a way that only re-login can fix, qgrid removes the token from routing instead of letting every subsequent request 401.
 
 - Detection lives at the existing refresh failure points, not a background scanner. OpenAI classifies on the error code (`refresh_token_expired`, `refresh_token_reused`, `refresh_token_invalidated`) regardless of HTTP status; Anthropic treats refresh 400/401 as auth-dead.
-- Before deactivating, qgrid re-reads the token and confirms the refresh token used by the failed attempt still matches the stored one. Anthropic refresh tokens rotate, so a late retry carrying an already-rotated token is a normal race, not a death — those are logged and skipped. `QgridFrame.refreshToken` also dedups concurrent refreshes per token.
-- Deactivation is one conditional `active=true → false` update. The process whose update affects a row is the only one that sends the Slack death notification, so a shared database produces exactly one alert per event.
-- The provider's last active token is never auto-deactivated. A systemic failure (client_id revocation, OAuth contract change) would otherwise empty the pool; qgrid logs an error, keeps the token, and sends its own Slack alert. That path leaves no state change behind, so every following request would re-alert — a per-provider 30-minute cooldown holds it to one. The cooldown is in-process, so N instances can each emit once per window.
+- Before deactivating, qgrid locks the token row and confirms the full credentials used by the failed attempt still match the stored credentials. A successful concurrent refresh therefore wins without a stale failure killing the rotated login. `QgridFrame.refreshToken` also dedups concurrent refreshes per token.
+- Auth death is one conditional `reauth_required=false → true` transaction. Provider-scoped advisory locking serializes the last-active decision, and the update also sets `active=false` when another active token exists. The process whose update affects a row is the only one that sends the Slack death notification, so a shared database produces exactly one alert per event. Manual active toggles never set `reauth_required`, and an expired inactive token cannot be reactivated without completing OAuth.
+- A successful refresh clears a concurrent stale `reauth_required` mark but preserves `active`, so it never overrides an operator's manual inactive choice.
+- The provider's last active token is marked `reauth_required=true` but never auto-deactivated. A systemic failure (client_id revocation, OAuth contract change) would otherwise empty the pool; qgrid logs an error, keeps the token, and sends its own urgent Slack alert. The persisted flag gates repeat alerts across every instance.
 - The other notification is registration: every completed login sends one alert, whether the account is new or replacing an existing row through the account dedup. Manually toggling a token back to active is not a registration and sends nothing.
-- Quiet hours suppress non-urgent Slack notifications: weekends, plus 20:00–08:00 on weekdays, in `Asia/Seoul`. All three parts are settings (`slack.quietFromHour`, `slack.quietUntilHour`, `slack.notifyOnWeekends`), defaulting to that window. The hour is computed through `Intl` with an explicit timezone rather than `getHours()` — dev0 runs in UTC, where "20:00" would land at 05:00 Korean time. Expiry alerts repeat, so one dropped in quiet hours returns on the first cycle of the next working window. The last-active-token death alert sets `urgent: true` and ignores quiet hours: it means the provider pool is empty, which cannot wait for the next working day.
+- Quiet hours suppress non-urgent Slack notifications: weekends, plus 20:00–08:00 on weekdays, in `Asia/Seoul`. All three parts are settings (`slack.quietFromHour`, `slack.quietUntilHour`, `slack.notifyOnWeekends`), defaulting to that window. The hour is computed through `Intl` with an explicit timezone rather than `getHours()` — dev0 runs in UTC, where "20:00" would land at 05:00 Korean time. Expiry alerts repeat, so one dropped in quiet hours returns on the first cycle of the next working window. The last-active-token death alert sets `urgent: true` and ignores quiet hours: it means that provider has no usable login, which cannot wait for the next working day.
 - `slack.enabled` exists because holidays cannot be expressed as a recurring rule — substitute holidays, one-off national days, and company closures change every year, so an operator turns notifications off directly instead. It gates the same non-urgent path as quiet hours, which keeps the escape hatch for pool-empty alerts identical in both mechanisms.
 - Notifications are fail-open: unset `SLACK_BOT_TOKEN`/`SLACK_CHANNEL_ID` is a silent no-op, and send failures (including HTTP 200 with `ok:false`) only warn. Payloads carry an internal reason code such as `anthropic:400`, never the raw provider response body.
-- `expired-token-reminder.ts` repeats the session-expiry alert for tokens that are still inactive, because the one-shot alert is lost on anyone not watching the channel at that moment and re-login only happens when a person does it. It reuses the same `세션 만료` title rather than inventing a second name — there is one event, so a differently-named alert would read as a separate problem. It runs once at startup and then every `SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES` (unset or 0 disables), batches every inactive token into one message, and sends nothing when none are inactive. The startup run matters because a restart is exactly when someone is watching, and waiting a full interval to learn a token is already dead is backwards; the cost is one extra alert per restart — a periodic "all clear" trains people to ignore the channel.
+- `expired-token-reminder.ts` repeats the session-expiry alert only for tokens with `reauth_required = true`; manually inactive tokens are not expired sessions. It reuses the same `세션 만료` title rather than inventing a second name — there is one event, so a differently-named alert would read as a separate problem. It runs once at startup and then every `SLACK_EXPIRY_REMINDER_INTERVAL_MINUTES` (unset or 0 disables), batches every expired token into one message, and sends nothing when none require re-login. The startup run matters because a restart is exactly when someone is watching, and waiting a full interval to learn a token is already dead is backwards; the cost is one extra alert per restart — a periodic "all clear" trains people to ignore the channel.
 - Owners are mentioned through `SLACK_USER_MAP` (`tokenName:SlackUserId`) on every token notification, not just the reminder. The map is explicit rather than resolved through `users.list`: Slack handles diverge from token names often enough (`haze`→`haze.lee`, `byeongjun`→`potados`) that auto-matching drops the mention silently, and an alert nobody is tagged in has no one to act on it. Shared accounts are left out of the map on purpose and appear by name only. Each instance sends its own reminder — unlike deactivation there is no state change to gate on, and a few duplicates a day cost less than a locking scheme.
 
 ## Quota Threshold Semantics
