@@ -3,6 +3,7 @@ import { getLogger } from "@logtape/logtape";
 import { QuotaThresholdExceededError } from "../../../application/qgrid/qgrid.types";
 import { TokenModel } from "../../../application/token/token.model";
 import { type OpenAICredentials } from "../../../application/token/token.types";
+import { resolveOpenAIEffort } from "../common/effort";
 import {
   type GenerateRequest,
   type GenerateResult,
@@ -97,11 +98,11 @@ function inputItems(req: GenerateRequest): OpenAIResponseItem[] {
 function asReasoning(req: GenerateRequest): OpenAIResponsesOptions["reasoning"] | undefined {
   const summary =
     req.reasoningSummary && req.reasoningSummary !== "none" ? req.reasoningSummary : undefined;
-  if (!req.effort && !summary) return undefined;
+  // Codex 어휘·모델 상한 밖의 effort 는 여기서 조용히 버린다(백엔드 기본값 적용).
+  const effort = resolveOpenAIEffort(req.model ?? "", req.effort);
+  if (!effort && !summary) return undefined;
   return {
-    ...(req.effort
-      ? { effort: req.effort as NonNullable<OpenAIResponsesOptions["reasoning"]>["effort"] }
-      : {}),
+    ...(effort ? { effort } : {}),
     ...(summary
       ? {
           summary: summary as NonNullable<OpenAIResponsesOptions["reasoning"]>["summary"],

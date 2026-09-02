@@ -416,3 +416,23 @@ describe("OpenAIDispatcher direct runtime", () => {
     await expect(blocked.generate(request())).rejects.toThrow("NO_OPENAI_WORKERS");
   });
 });
+
+describe("effort 어휘 해석 (Codex 카탈로그 기준)", () => {
+  async function mappedEffortFor(model: string, effort: string): Promise<unknown> {
+    let mapped: OpenAIResponsesOptions | undefined;
+    const d = dispatcher((options) => {
+      mapped = options;
+      return events({ type: "completed", responseId: "r1" });
+    });
+    await d.onTokenAdded(7, "primary", credentials, null, 1);
+    await d.generate(request({ model, effort }));
+    return mapped?.reasoning?.effort;
+  }
+
+  it("모델이 지원하는 값은 그대로 보내고, 상한 초과·공개 API 어휘는 reasoning 에서 빼 백엔드 기본값을 쓴다", async () => {
+    await expect(mappedEffortFor("gpt-5.6-terra", "ultra")).resolves.toBe("ultra");
+    await expect(mappedEffortFor("gpt-5.5", "xhigh")).resolves.toBe("xhigh");
+    await expect(mappedEffortFor("gpt-5.5", "max")).resolves.toBeUndefined();
+    await expect(mappedEffortFor("gpt-5.6-terra", "minimal")).resolves.toBeUndefined();
+  });
+});

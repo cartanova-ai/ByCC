@@ -25,7 +25,7 @@ const {
 }));
 
 vi.mock("@logtape/logtape", () => ({
-  getLogger: () => ({ info: loggerInfoMock, warn: loggerWarnMock }),
+  getLogger: () => ({ debug: vi.fn(), info: loggerInfoMock, warn: loggerWarnMock }),
 }));
 
 vi.mock("./claude-session", async (importActual) => {

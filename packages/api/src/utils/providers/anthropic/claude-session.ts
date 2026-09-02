@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 
+import { resolveAnthropicEffort } from "../common/effort";
 import { type JsonValue, type TokenUsageBreakdown, type UserInput } from "../common/provider-types";
 import {
   ARGV_SAFE_MAX_UTF8_BYTES,
@@ -245,8 +246,9 @@ export function buildClaudeArgs(opts: {
     ...systemArgs,
     // Fable 5 는 adaptive thinking 이 필수이고, Opus 5 는 공식 기본 adaptive 동작을 보존한다.
     ...(usesAdaptiveThinking(opts.model) ? [] : ["--thinking", "disabled"]),
+    // Claude Code 어휘 밖의 effort(OpenAI 전용 ultra, 옛 none/minimal 등)는 조용히 버리고 qgrid 기본을 쓴다.
     "--effort",
-    opts.effort ?? ANTHROPIC_DEFAULT_EFFORT,
+    resolveAnthropicEffort(opts.effort) ?? ANTHROPIC_DEFAULT_EFFORT,
     "--disable-slash-commands",
     "--session-id",
     opts.sessionId,

@@ -402,3 +402,16 @@ describe("decorateAndSerialize (envelope, U2 P1-#3 위임분)", () => {
     expect(parsed[0]!.uuid).not.toBe(parsed[1]!.uuid);
   });
 });
+
+describe("effort 어휘 해석 (Claude Code --effort 기준)", () => {
+  it("허용값은 그대로, OpenAI 전용·옛 어휘는 조용히 qgrid 기본(low)으로 바꾼다", () => {
+    const effortOf = (effort: string) => {
+      const args = buildClaudeArgs({ model: "claude-opus-5", sessionId: "u", effort });
+      return args[args.indexOf("--effort") + 1];
+    };
+    expect(effortOf("max")).toBe("max");
+    expect(effortOf("xhigh")).toBe("xhigh");
+    expect(effortOf("ultra")).toBe("low");
+    expect(effortOf("minimal")).toBe("low");
+  });
+});

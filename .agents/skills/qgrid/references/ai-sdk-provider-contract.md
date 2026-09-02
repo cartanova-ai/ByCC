@@ -23,7 +23,7 @@ Main files:
 `qgrid(modelId, config)` supports:
 
 - `serverUrl`: default `process.env.QGRID_URL`, then `http://localhost:44900`.
-- `defaultEffort`: default `low`.
+- `defaultEffort`: default `low`. `qgrid()` is overloaded on the model id prefix, so this is typed `QgridOpenAIEffort` (`low | medium | high | xhigh | max | ultra`) for `openai/*` and `QgridAnthropicEffort` (`low | medium | high | xhigh | max`) for `anthropic/*`.
 - `projectName`: default `process.env.QGRID_PROJECT_NAME`.
 
 Strongly recommend setting `QGRID_PROJECT_NAME` in the environment for real workloads. The config-level `projectName` override is valid, but the env var is the preferred project-wide default. It is stored as `request_logs.project_name` and makes high-volume request logs usable: operators can filter by project/workflow, identify which task produced which request, compare token/cache/cost/TTFT metrics by workload, and debug noisy callers without scanning prompts manually.
@@ -63,7 +63,7 @@ Do not write `providerOptions: { ... } satisfies QgridProviderOptions`: the expo
   rejected by the SDK before transport; omission keeps weighted round-robin routing.
 - `logger`: request-log switch. Omitted or `true` is the default and enables qgrid logging; `false` guarantees that generation creates zero qgrid request-log rows.
 - `sessionKey`: source for model-scoped opaque OpenAI prompt-cache affinity. Disabled for Anthropic models.
-- `effort`
+- `effort`: provider-specific vocabulary. OpenAI (ChatGPT-subscription Codex route): `low | medium | high | xhigh | max | ultra`, where `max`/`ultra` exist on GPT-5.6 models only; the public OpenAI API's `none`/`minimal` do not exist on this route. Anthropic (Claude Code `--effort`): `low | medium | high | xhigh | max`. The server resolves the value per provider and model (`providers/common/effort.ts`): anything outside the provider set, or above the Codex model's supported maximum, is silently dropped and treated as unspecified — Anthropic falls back to qgrid's default `low`, OpenAI omits `reasoning` so the backend default applies. No error, no metadata; a debug log line only. Use `QgridOpenAIProviderOptions` / `QgridAnthropicProviderOptions` for provider-typed `satisfies`; `QgridProviderOptions` is their union.
 - `verbosity`: OpenAI/Codex route only.
 - `reasoningSummary`: OpenAI/Codex route only.
 - `serviceTier`: OpenAI/Codex route only.

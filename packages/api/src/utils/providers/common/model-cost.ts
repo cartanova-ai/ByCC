@@ -10,6 +10,8 @@
  * @see https://platform.claude.com/docs/en/about-claude/pricing
  */
 
+import { type OpenAIEffort } from "./effort";
+
 export interface ModelCosts {
   inputTokens: number;
   outputTokens: number;
@@ -45,13 +47,19 @@ const LONG_CONTEXT_272K: NonNullable<ModelCosts["longContext"]> = {
   outputMultiplier: 1.5,
 };
 
-const OPENAI_COSTS: Record<string, ModelCosts> = {
+// OpenAI 모델 카탈로그. 단가와 함께 Codex 백엔드가 모델별로 받는 최대 reasoning effort 를 한 곳에 둔다.
+// maxEffort 출처: ~/.codex/models_cache.json 의 supported_reasoning_levels (2026-09-02 확인).
+// 미기재 모델은 xhigh 까지만 받는다.
+type OpenAIModelSpec = ModelCosts & { maxEffort?: OpenAIEffort };
+
+const OPENAI_COSTS: Record<string, OpenAIModelSpec> = {
   // GPT-5.6 Sol, Terra, Luna. cache write 단가는 외부 logger/manual usage 입력을 위해
   // 유지한다. 현재 OpenAI 응답 usage 에 cache write 토큰 필드가 없으면 비용은 0으로 계산된다.
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-sol
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-terra
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-luna
   "gpt-5.6-sol": {
+    maxEffort: "ultra",
     inputTokens: 5,
     outputTokens: 30,
     cachedInputTokens: 0.5,
@@ -59,6 +67,7 @@ const OPENAI_COSTS: Record<string, ModelCosts> = {
     longContext: LONG_CONTEXT_272K,
   },
   "gpt-5.6-terra": {
+    maxEffort: "ultra",
     inputTokens: 2.5,
     outputTokens: 15,
     cachedInputTokens: 0.25,
@@ -66,6 +75,7 @@ const OPENAI_COSTS: Record<string, ModelCosts> = {
     longContext: LONG_CONTEXT_272K,
   },
   "gpt-5.6-luna": {
+    maxEffort: "max",
     inputTokens: 1,
     outputTokens: 6,
     cachedInputTokens: 0.1,
@@ -147,6 +157,11 @@ const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
 // 지원 타입은 유지하되, 공식 단가가 공개될 때까지 아래 generic estimate 로 계산한다.
 // @see https://help.openai.com/en/articles/20001106-codex-rate-card
 const DEFAULT_COSTS: ModelCosts = { inputTokens: 3, outputTokens: 15, cachedInputTokens: 0.3 };
+
+/** Codex 백엔드가 이 모델에 허용하는 최대 effort. 카탈로그에 없는 모델은 xhigh 까지다. */
+export function openaiModelMaxEffort(model: string): OpenAIEffort {
+  return OPENAI_COSTS[model]?.maxEffort ?? "xhigh";
+}
 
 export function getModelCosts(model: string): ModelCosts {
   const normalizedModel = (model.split("/").pop() ?? model).replace(/\[1m\]$/i, "");

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { qgrid } from "./index";
+import {
+  qgrid,
+  type QgridAnthropicProviderOptions,
+  type QgridOpenAIProviderOptions,
+} from "./index";
 
 const usage = {
   input_tokens: 10,
@@ -2038,5 +2042,24 @@ describe("qgrid AI SDK provider", () => {
       expect(textDeltas.length).toBeGreaterThan(1);
       expect(textDeltas.map((p) => p.delta).join("")).toBe(answer);
     });
+  });
+});
+
+describe("provider 별 effort 타입", () => {
+  it("qgrid() 오버로드가 defaultEffort 를 provider 어휘로 제한한다", () => {
+    expect(qgrid("openai/gpt-5.6-terra", { defaultEffort: "ultra" })).toBeDefined();
+    expect(qgrid("anthropic/claude-opus-5", { defaultEffort: "max" })).toBeDefined();
+    // @ts-expect-error ultra 는 Claude Code 어휘가 아니다
+    expect(qgrid("anthropic/claude-opus-5", { defaultEffort: "ultra" })).toBeDefined();
+    // @ts-expect-error none 은 어느 경로에도 없다
+    expect(qgrid("openai/gpt-5.6-terra", { defaultEffort: "none" })).toBeDefined();
+  });
+
+  it("provider 별 옵션 타입은 effort 어휘를 나눠 검사한다", () => {
+    const openai = { effort: "ultra", verbosity: "low" } satisfies QgridOpenAIProviderOptions;
+    const anthropic = { effort: "max", timeoutMs: 1_000 } satisfies QgridAnthropicProviderOptions;
+    // @ts-expect-error Anthropic 옵션에는 ultra 가 없다
+    const wrong = { effort: "ultra" } satisfies QgridAnthropicProviderOptions;
+    expect([openai, anthropic, wrong]).toHaveLength(3);
   });
 });

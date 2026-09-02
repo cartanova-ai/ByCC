@@ -204,7 +204,8 @@ const { text } = await generateText({
 | `tokenName` | provider prefix를 포함한 토큰 이름 | 공통 | `anthropic/yds`처럼 활성 토큰 하나를 엄격히 지정. prefix는 model provider와 같아야 하며 빈 값·누락·inactive·quota 초과 시 다른 토큰으로 fallback하지 않음 |
 | `logger` | `boolean` | 공통 | qgrid request log 저장 여부. 기본값은 `true`. `false`로 설정해도 client tool 실행과 multi-step 연결은 계속 동작 |
 | `sessionKey` | `string` | OpenAI 전용 | 전체 history 재전송 시 불투명 prompt-cache affinity를 파생하는 멀티턴 대화 식별자 ([아래](#멀티턴-prompt-cache-sessionkey) 참조) |
-| `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | 공통 (지원 값은 모델별 상이, 예: `"max"`는 GPT-5.6+) | reasoning 모델의 추론 깊이. 기본값은 config의 `defaultEffort` (`"low"`) |
+| `effort` | OpenAI: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| `"ultra"` | OpenAI 전용 (`QgridOpenAIProviderOptions`) | ChatGPT 구독 Codex 경로의 reasoning 깊이. `"max"`/`"ultra"`는 GPT-5.6 계열만 지원하며, 모델이 지원하지 않는 값은 서버가 조용히 무시하고 백엔드 기본값을 적용. 공개 OpenAI API의 `"none"`/`"minimal"`은 이 경로에 없음 |
+| `effort` | Anthropic: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | Anthropic 전용 (`QgridAnthropicProviderOptions`) | Claude Code `--effort` 허용값. 집합 밖의 값은 서버가 조용히 무시하고 qgrid 기본(`"low"`)을 적용. 모델별 상한(예: Sonnet 4.6은 `"xhigh"` 없음)은 Claude Code가 처리 |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI 전용 | 응답 텍스트의 상세도 |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI 전용 | 추론 요약 출력 방식 |
 | `serviceTier` | `string` | OpenAI 전용 | OpenAI/codex service tier |
@@ -414,10 +415,12 @@ Claude Code는 Fable의 safety refusal을 다른 Opus 모델로 자동 재시도
 ```typescript
 qgrid(modelId, {
   serverUrl?: string;      // qgrid 서버 주소 (기본: QGRID_URL 환경변수 또는 http://localhost:44900)
-  defaultEffort?: string;  // effort 기본값 (기본: "low")
+  defaultEffort?: ...;     // effort 기본값 (기본: "low"). 모델 ID prefix에 따라 provider 어휘로 타입 검사
   projectName?: string;    // request_logs.project_name (기본: QGRID_PROJECT_NAME 환경변수)
 });
 ```
+
+`qgrid()`는 모델 ID prefix로 오버로드되어 `openai/*`에는 `QgridOpenAIEffort`, `anthropic/*`에는 `QgridAnthropicEffort`가 `defaultEffort` 타입으로 적용됩니다. `providerOptions.qgrid`는 AI SDK 타입이 모델과 연결해 주지 않으므로 `QgridProviderOptions`는 `QgridOpenAIProviderOptions | QgridAnthropicProviderOptions`의 union이며, provider를 아는 호출자는 provider별 타입에 `satisfies`를 쓰는 편이 정확합니다.
 
 여러 프로젝트/워크플로우가 한 qgrid 서버를 공유한다면 `QGRID_PROJECT_NAME`을 설정하세요. 대시보드에서 request log를 프로젝트별로 필터링하고 토큰/비용/캐시 지표를 워크로드별로 비교할 수 있습니다. config `projectName`은 특정 호출자만 다른 이름을 써야 할 때의 override 용도입니다.
 

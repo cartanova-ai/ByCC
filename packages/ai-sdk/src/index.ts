@@ -18,8 +18,12 @@ import {
 import {
   type QgridSupportedModel,
   type QueryOutput,
+  type QgridAnthropicModel,
+  type QgridAnthropicProviderConfig,
+  type QgridOpenAIModel,
+  type QgridOpenAIProviderConfig,
   type QgridProviderConfig,
-  type QgridProviderOptions,
+  type QgridResolvedProviderOptions,
   type QgridThreadCoord,
 } from "./index.types";
 import {
@@ -128,8 +132,11 @@ function qgridProviderMetadata(data: QueryOutput) {
   };
 }
 
-function getQgridProviderOptions(options: LanguageModelV3CallOptions): QgridProviderOptions {
-  const qgridOptions = (options.providerOptions?.qgrid as QgridProviderOptions | undefined) ?? {};
+function getQgridProviderOptions(
+  options: LanguageModelV3CallOptions,
+): QgridResolvedProviderOptions {
+  const qgridOptions =
+    (options.providerOptions?.qgrid as QgridResolvedProviderOptions | undefined) ?? {};
   if (qgridOptions.tokenName !== undefined && qgridOptions.tokenName.trim() === "") {
     throw new Error("qgrid: tokenName must not be empty");
   }
@@ -155,6 +162,16 @@ function toAiSdkUsage(usage: QueryOutput["usage"]) {
   };
 }
 
+// 모델 ID prefix 로 오버로드해 `defaultEffort` 가 provider 어휘로 타입 검사되게 한다.
+// providerOptions 는 AI SDK 가 모델과 연결해 주지 않으므로 여기가 유일한 타입 수준 강제 지점이다.
+export function qgrid(
+  modelId: QgridOpenAIModel,
+  config?: QgridOpenAIProviderConfig,
+): LanguageModelV3;
+export function qgrid(
+  modelId: QgridAnthropicModel,
+  config?: QgridAnthropicProviderConfig,
+): LanguageModelV3;
 export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig): LanguageModelV3 {
   const serverUrl = config?.serverUrl ?? process.env.QGRID_URL ?? DEFAULT_QGRID_SERVER_URL;
   const effort = config?.defaultEffort ?? DEFAULT_QGRID_EFFORT;
@@ -606,5 +623,18 @@ export function qgrid(modelId: QgridSupportedModel, config?: QgridProviderConfig
 }
 
 export { createQgridLogger } from "./logger";
-export type { QgridLoggerConfig, QgridProviderOptions, QgridSupportedModel } from "./index.types";
+export type {
+  QgridAnthropicEffort,
+  QgridAnthropicModel,
+  QgridAnthropicProviderConfig,
+  QgridAnthropicProviderOptions,
+  QgridLoggerConfig,
+  QgridOpenAIEffort,
+  QgridOpenAIModel,
+  QgridOpenAIProviderConfig,
+  QgridOpenAIProviderOptions,
+  QgridProviderConfig,
+  QgridProviderOptions,
+  QgridSupportedModel,
+} from "./index.types";
 export default qgrid;

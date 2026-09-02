@@ -1,5 +1,7 @@
 import os from "node:os";
 
+import { type OpenAIEffort } from "../common/effort";
+
 export const CHATGPT_CODEX_RESPONSES_URL =
   "https://chatgpt.com/backend-api/codex/responses" as const;
 
@@ -58,7 +60,7 @@ export interface OpenAIResponsesOptions {
   toolChoice?: string | OpenAIResponseItem;
   parallelToolCalls?: boolean;
   reasoning?: {
-    effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+    effort?: OpenAIEffort;
     summary?: "auto" | "concise" | "detailed";
   };
   verbosity?: "low" | "medium" | "high";

@@ -1,15 +1,33 @@
-export type QgridProviderConfig = {
+/**
+ * OpenAI 경로(ChatGPT 구독 Codex 백엔드)의 reasoning effort. 백엔드 모델 카탈로그의
+ * supported_reasoning_levels 합집합이며, 공개 OpenAI API 의 `none`/`minimal` 은 이 경로에 없다.
+ * `max`/`ultra` 는 GPT-5.6 계열만 받고, 모델이 지원하지 않는 값은 서버가 조용히 무시한다.
+ */
+export type QgridOpenAIEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+/**
+ * Anthropic 경로(Claude Code `--effort`)의 reasoning effort. 모델별 상한(예: Sonnet 4.6 은 `xhigh`
+ * 없음)은 Claude Code 가 처리하고, 이 집합 밖의 값은 서버가 조용히 무시한다.
+ */
+export type QgridAnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export type QgridOpenAIModel = Extract<QgridSupportedModel, `openai/${string}`>;
+export type QgridAnthropicModel = Extract<QgridSupportedModel, `anthropic/${string}`>;
+
+type QgridCommonProviderConfig = {
   serverUrl?: string;
-  defaultEffort?: string;
   /** request_logs.project_name. default: process.env.QGRID_PROJECT_NAME */
   projectName?: string;
 };
+export type QgridOpenAIProviderConfig = QgridCommonProviderConfig & {
+  defaultEffort?: QgridOpenAIEffort;
+};
+export type QgridAnthropicProviderConfig = QgridCommonProviderConfig & {
+  defaultEffort?: QgridAnthropicEffort;
+};
+/** `qgrid()` 는 모델 ID prefix 로 오버로드되므로 보통 provider 별 타입이 추론된다. */
+export type QgridProviderConfig = QgridOpenAIProviderConfig | QgridAnthropicProviderConfig;
 
-/**
- * qgrid provider options.
- * providerOptions.qgrid 로 전달한다.
- */
-export type QgridProviderOptions = {
+type QgridCommonProviderOptions = {
   /**
    * 이 요청을 처리할 활성 qgrid 토큰 이름. provider prefix를 포함해야 하며 다른 토큰으로 fallback하지 않는다.
    */
@@ -20,33 +38,30 @@ export type QgridProviderOptions = {
    */
   logger?: boolean;
   /**
+   * @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록.
+   * Claude Code가 처리하는 Fable safety-refusal fallback과는 무관하다.
+   */
+  fallbackModels?: string[];
+};
+
+/** `providerOptions.qgrid` — OpenAI(Codex) 모델용. */
+export type QgridOpenAIProviderOptions = QgridCommonProviderOptions & {
+  /**
    * 멀티턴 프롬프트 캐시 어피니티용 대화 식별자, 호출자가 자기 도메인 ID(예: 게임 세션 ID) 하나만 넘기면
    * provider가 model+sessionKey에서 opaque cache affinity를 결정적으로 파생해 회송한다.
    * 원문 sessionKey는 서버에 전송하지 않으며 좌표는 model+sessionKey 별로 격리된다.
    */
   sessionKey?: string;
-  /** reasoning 모델의 추론 깊이. 기본값은 qgrid config의 defaultEffort. */
-  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  /** 응답 텍스트의 상세도. OpenAI route에서만 적용된다. */
+  /** reasoning 깊이. 기본값은 qgrid config의 defaultEffort. 모델이 지원하지 않는 값은 서버가 무시한다. */
+  effort?: QgridOpenAIEffort;
+  /** 응답 텍스트의 상세도. */
   verbosity?: "low" | "medium" | "high";
-  /** reasoning 모델의 추론 요약 출력 방식. OpenAI route에서만 적용된다. */
+  /** reasoning 요약 출력 방식. */
   reasoningSummary?: "auto" | "concise" | "detailed" | "none";
-  /** OpenAI service tier. OpenAI route에서만 적용된다. */
+  /** Codex service tier. */
   serviceTier?: string;
   /**
-   * qgrid 서버의 provider 실행 제한(ms). Anthropic 경로에서는 Claude Code 프로세스 타이머로
-   * 사용되며, SDK의 non-stream 요청별 HTTP headers/body timeout은 이 값보다 60초 길게 설정된다.
-   * AI SDK 표준 timeout은 provider에 숫자를 전달하지 않고 abortSignal로 변환되므로, 서버 측
-   * 제한을 바꾸려면 이 옵션을 사용한다. 양의 정수만 허용하며 최대 30분, 기본 240초다.
-   */
-  timeoutMs?: number;
-  /**
-   * @todo 향후 qgrid 서버 fallback routing에 사용할 후보 모델 목록.
-   * Claude Code가 처리하는 Fable 5 safety-refusal fallback과는 무관하다.
-   */
-  fallbackModels?: string[];
-  /**
-   * OpenAI Responses image_generation tool 을 켠다. OpenAI route + non-stream 전용.
+   * OpenAI Responses image_generation tool 을 켠다. non-stream 전용.
    * generateText 결과의 files 로 이미지를 받는다. streaming(streamText)에서는 거부된다.
    */
   imageGeneration?: boolean;
@@ -60,6 +75,30 @@ export type QgridProviderOptions = {
     size?: "1024x1024" | "1024x1536" | "1536x1024";
   };
 };
+
+/** `providerOptions.qgrid` — Anthropic(Claude Code) 모델용. */
+export type QgridAnthropicProviderOptions = QgridCommonProviderOptions & {
+  /** reasoning 깊이. 기본값은 qgrid config의 defaultEffort. 집합 밖의 값은 서버가 무시한다. */
+  effort?: QgridAnthropicEffort;
+  /**
+   * qgrid 서버의 provider 실행 제한(ms). Claude Code 프로세스 타이머로 사용되며, SDK의 non-stream
+   * 요청별 HTTP headers/body timeout은 이 값보다 60초 길게 설정된다. AI SDK 표준 timeout은
+   * provider에 숫자를 전달하지 않고 abortSignal로 변환되므로, 서버 측 제한을 바꾸려면 이 옵션을
+   * 사용한다. 양의 정수만 허용하며 최대 30분, 기본 240초다.
+   */
+  timeoutMs?: number;
+};
+
+/**
+ * `providerOptions.qgrid` 의 공용 타입. AI SDK 의 providerOptions 는 모델과 연결되지 않은 JSON
+ * 레코드라 여기서는 두 provider 타입의 union 이다. provider 를 아는 호출자는
+ * `QgridOpenAIProviderOptions` / `QgridAnthropicProviderOptions` 를 직접 쓰는 편이 정확하다.
+ */
+export type QgridProviderOptions = QgridOpenAIProviderOptions | QgridAnthropicProviderOptions;
+
+/** SDK 내부용: 어느 provider 옵션이든 읽을 수 있게 합친 형태. 패키지 밖으로 내보내지 않는다. */
+export type QgridResolvedProviderOptions = Omit<QgridOpenAIProviderOptions, "effort"> &
+  Omit<QgridAnthropicProviderOptions, "effort"> & { effort?: string };
 
 /**
  * OpenAI cache affinity 좌표(구 codex thread 좌표)

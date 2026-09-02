@@ -213,7 +213,8 @@ const { text } = await generateText({
 | `tokenName` | provider-prefixed token name | both providers | Strictly targets one active token, such as `anthropic/yds`. The prefix must match the model provider; empty, missing, inactive, or over-threshold targets fail without fallback |
 | `logger` | `boolean` | both providers | qgrid request logging. Defaults to `true`; `false` disables request-log persistence for this generation without disabling client tools or multi-step continuation |
 | `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier used to derive opaque prompt-cache affinity while replaying full history (see [below](#multi-turn-prompt-cache-sessionkey)) |
-| `effort` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | both providers (supported values are model-dependent, e.g. `"max"` is GPT-5.6+) | Reasoning depth. Defaults to the config's `defaultEffort` (`"low"`) |
+| `effort` | OpenAI: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| `"ultra"` | OpenAI only (`QgridOpenAIProviderOptions`) | Reasoning depth on the ChatGPT-subscription Codex route. `"max"`/`"ultra"` exist on GPT-5.6 models only; a value the model does not support is silently ignored by the server and the backend default applies. The public OpenAI API's `"none"`/`"minimal"` do not exist on this route |
+| `effort` | Anthropic: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | Anthropic only (`QgridAnthropicProviderOptions`) | Claude Code `--effort` levels. Values outside this set are silently ignored and qgrid's default (`"low"`) applies; per-model limits (for example no `"xhigh"` on Sonnet 4.6) are handled by Claude Code |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI only | Response text verbosity |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI only | Reasoning summary output mode |
 | `serviceTier` | `string` | OpenAI only | OpenAI/codex service tier |
@@ -424,10 +425,12 @@ Claude Code may automatically retry a Fable safety refusal on another Opus model
 ```typescript
 qgrid(modelId, {
   serverUrl?: string;      // qgrid server address (default: QGRID_URL env var, then http://localhost:44900)
-  defaultEffort?: string;  // default effort (default: "low")
+  defaultEffort?: ...;     // default effort (default: "low"); typed per provider from the model id prefix
   projectName?: string;    // request_logs.project_name (default: QGRID_PROJECT_NAME env var)
 });
 ```
+
+`qgrid()` is overloaded on the model id prefix, so `defaultEffort` accepts `QgridOpenAIEffort` for `openai/*` models and `QgridAnthropicEffort` for `anthropic/*` models. `providerOptions.qgrid` cannot be linked to the model by the AI SDK types, so `QgridProviderOptions` is the union of `QgridOpenAIProviderOptions` and `QgridAnthropicProviderOptions`; use the provider-specific type with `satisfies` when you know the provider.
 
 If multiple projects/workflows share one qgrid server, set `QGRID_PROJECT_NAME`. It lets you filter request logs by project in the dashboard and compare token/cost/cache metrics per workload. The config-level `projectName` is an override for callers that need a different label.
 

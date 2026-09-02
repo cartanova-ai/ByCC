@@ -50,7 +50,7 @@ export function createStartupMigrationSource(
       const entries = await readdir(dirs.sourceDir);
       return entries
         .filter((name) => MIGRATION_FILE_RE.test(name) && !name.endsWith(".d.ts"))
-        .sort();
+        .toSorted();
     },
     getMigrationName(name) {
       return name;
