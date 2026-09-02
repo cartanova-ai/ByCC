@@ -13,6 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: deployment
 
+    # 패키지된 CLI 를 빈 DB 에 실제로 부팅해 migration 전체가 dist 산출물로 실행되는지 검증한다.
+    # 2.9.0 은 pending migration 을 .ts 로 import 하다 부팅에 실패했는데, import 만 하는 스모크로는 잡히지 않았다.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +71,37 @@ jobs:
           mise exec -- npm install --prefix "$INSTALL_DIR" --ignore-scripts "$PACK_DIR"/cartanova-qgrid-cli-*.tgz
           cd "$INSTALL_DIR/node_modules/@cartanova/qgrid-cli"
           "$NODE_BIN" --input-type=module -e "await import('sonamu')"
+          printf '%s\n' "QGRID_SMOKE_INSTALL_DIR=$INSTALL_DIR" >> "$GITHUB_ENV"
+
+      - name: Boot published CLI against an empty database
+        run: |
+          NODE_BIN="$(mise exec -- node -e 'process.stdout.write(process.execPath)')"
+          DB_URL="postgres://postgres:postgres@localhost:5432/postgres"
+          BOOT_LOG="$RUNNER_TEMP/qgrid-boot.log"
+          cd "$QGRID_SMOKE_INSTALL_DIR/node_modules/@cartanova/qgrid-cli"
+          "$NODE_BIN" dist/cli.js --skip-update --db "$DB_URL" --port 44990 > "$BOOT_LOG" 2>&1 &
+          QGRID_PID=$!
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:44990/api/qgrid/health > /dev/null; then break; fi
+            if ! kill -0 "$QGRID_PID" 2> /dev/null; then
+              echo "qgrid exited before listening"; cat "$BOOT_LOG"; exit 1
+            fi
+            sleep 2
+          done
+          curl -sf http://localhost:44990/api/qgrid/health || { cat "$BOOT_LOG"; exit 1; }
+          EXPECTED="$(ls "$GITHUB_WORKSPACE"/packages/api/src/migrations/*.ts | wc -l | tr -d ' ')"
+          APPLIED="$("$NODE_BIN" --input-type=module -e "
+            import pg from 'pg';
+            const c = new pg.Client({ connectionString: process.argv[1] });
+            await c.connect();
+            const r = await c.query('select count(*)::int as n from knex_migrations');
+            await c.end();
+            process.stdout.write(String(r.rows[0].n));
+          " "$DB_URL")"
+          echo "migrations applied=$APPLIED expected=$EXPECTED"
+          kill "$QGRID_PID" || true
+          grep -q 'migration: ' "$BOOT_LOG" || { echo "boot log has no migration line"; cat "$BOOT_LOG"; exit 1; }
+          test "$APPLIED" = "$EXPECTED" || { cat "$BOOT_LOG"; exit 1; }
 
       # npm publish (버전 안 바뀌면 스킵)
       - name: Publish packages
