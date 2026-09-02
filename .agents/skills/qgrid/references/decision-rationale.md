@@ -144,6 +144,7 @@ Key decisions:
   Fable-only `seven_day_overage_included.utilization` when applicable; OpenAI uses
   `primary.usedPercent`.
 - Threshold gates are by token id, not token name. Names are display/logging labels and can change.
+- Token window keepalive is opt-in at two levels since 2.8.0 (`ea7feb3`): an instance fires only with env `QGRID_TOKEN_WINDOW_KEEPALIVE_ENABLED=true`, and only for tokens with `keepalive_enabled = true`. The runner gate exists because developer instances sharing the production DB fired duplicate pings under the 2.7.6 default-on switch; the per-token flag lets shared or credit-metered accounts stay out. The cost is that upgrades start with zero targets until both are set.
 - Lookup failure is fail-open with logs/metrics. Hard failure happens only when usage was read successfully and the token is over threshold.
 - OpenAI applies the gate during token selection. An affinity-preferred token over threshold must fall back to another eligible token when possible.
 
