@@ -30,6 +30,8 @@ describe("calculateCostUsd", () => {
   );
 
   it.each([
+    // Fable 5.1 은 cache read 만 0.025x 특례($0.25), 나머지 배율은 표준과 같다.
+    ["claude-fable-5-1", 10, 50, 0.25, 20],
     ["claude-fable-5", 10, 50, 1, 20],
     ["claude-haiku-4-5", 1, 5, 0.1, 2],
     ["claude-sonnet-4", 3, 15, 0.3, 6],
@@ -43,6 +45,7 @@ describe("calculateCostUsd", () => {
     ["claude-opus-4-7", 5, 25, 0.5, 10],
     ["claude-opus-4-8", 5, 25, 0.5, 10],
     ["claude-opus-5", 5, 25, 0.5, 10],
+    ["claude-sonnet-5", 2, 10, 0.2, 4],
   ])(
     "%s official Anthropic rates for 5m/1h cache writes",
     (model, inputTokens, outputTokens, cachedInputTokens, cacheCreationInputTokens) => {
@@ -57,8 +60,8 @@ describe("calculateCostUsd", () => {
     },
   );
 
-  it("Claude Sonnet 5 introductory pricing switches to standard pricing on 2026-09-01", () => {
-    expect(getModelCosts("claude-sonnet-5", Date.UTC(2026, 7, 31))).toEqual({
+  it("Claude Sonnet 5 는 introductory $2/$10 이 정식 단가라 날짜 분기 없이 고정된다", () => {
+    expect(getModelCosts("claude-sonnet-5")).toEqual({
       inputTokens: 2,
       outputTokens: 10,
       cachedInputTokens: 0.2,
@@ -66,18 +69,11 @@ describe("calculateCostUsd", () => {
       cacheCreationInputTokens5m: 2.5,
       cacheCreationInputTokens1h: 4,
     });
-    expect(getModelCosts("claude-sonnet-5", Date.UTC(2026, 8, 1))).toEqual({
-      inputTokens: 3,
-      outputTokens: 15,
-      cachedInputTokens: 0.3,
-      cacheCreationInputTokens: 6,
-      cacheCreationInputTokens5m: 3.75,
-      cacheCreationInputTokens1h: 6,
-    });
   });
 
   it("provider prefix 와 [1m] suffix 를 제거한 canonical model 로 가격을 찾는다", () => {
     expect(getModelCosts("anthropic/claude-fable-5")).toBe(getModelCosts("claude-fable-5"));
+    expect(getModelCosts("anthropic/claude-fable-5-1[1m]")).toBe(getModelCosts("claude-fable-5-1"));
     expect(getModelCosts("anthropic/claude-sonnet-4-6[1m]")).toBe(
       getModelCosts("claude-sonnet-4-6"),
     );
@@ -184,6 +180,17 @@ describe("calculateCostUsd", () => {
     ).toBeCloseTo(5.8, 10);
   });
 
+  it("Fable 5.1 은 cache read 만 $0.25 로 계산하고 나머지 단가는 Fable 5 와 같다", () => {
+    const usage = {
+      inputTokens: 100_000,
+      outputTokens: 100_000,
+      cachedInputTokens: 50_000,
+      cacheCreationInputTokens: 25_000,
+    };
+    // Fable 5: 5.8. cache read 50K 가 $1 → $0.25 로 바뀌면 0.05 → 0.0125 만큼 줄어든다.
+    expect(calculateCostUsd("claude-fable-5-1", usage)).toBeCloseTo(5.7625, 10);
+  });
+
   it("Fable 의 5분/1시간 cache write 단가도 구분한다", () => {
     expect(
       calculateCostUsd("claude-fable-5", {
@@ -197,21 +204,14 @@ describe("calculateCostUsd", () => {
     ).toBeCloseTo(5.725, 10);
   });
 
-  it("Sonnet 5 introductory/standard 단가 전환을 cost 계산에도 적용한다", () => {
+  it("Sonnet 5 는 $2/$10 단가로 cost 를 계산한다", () => {
     const usage = {
       inputTokens: 100_000,
       outputTokens: 100_000,
       cachedInputTokens: 50_000,
       cacheCreationInputTokens: 25_000,
     };
-    expect(calculateCostUsd("claude-sonnet-5", usage, Date.UTC(2026, 7, 31))).toBeCloseTo(
-      1.16,
-      10,
-    );
-    expect(calculateCostUsd("claude-sonnet-5", usage, Date.UTC(2026, 8, 1))).toBeCloseTo(
-      1.74,
-      10,
-    );
+    expect(calculateCostUsd("claude-sonnet-5", usage)).toBeCloseTo(1.16, 10);
   });
 
   it("legacy/원시 Anthropic usage 처럼 cache 가 input 보다 커도 음수 비용을 만들지 않는다", () => {

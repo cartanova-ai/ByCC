@@ -48,7 +48,7 @@ Tool calls are produced through qgrid structured-output emulation, not native pr
 
 New request logs store routed model identity in the existing model fields; they do not add a separate provider column:
 
-- While the parent is running, `requested_model_name` is the full requested id such as `openai/gpt-5.4` and `model_name` is `NULL`.
+- While the parent is running, `requested_model_name` is the full requested id such as `openai/gpt-5.6-terra` and `model_name` is `NULL`.
 - Completed parent and generate-step model values use full `provider/model` ids.
 - `requested_model_name` preserves the exact requested route, including modifiers such as Anthropic `[1m]`; `model_name` is the actual canonical serving route. They differ after a Fable refusal fallback, for example requested Fable versus serving Opus.
 - A completed multi-step parent uses the final turn's requested and serving models. It never stores the literal model value `mixed`; usage and cost still aggregate across steps, and `cost_source` may be `mixed`.

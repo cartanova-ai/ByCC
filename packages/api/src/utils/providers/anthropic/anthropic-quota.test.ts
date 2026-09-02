@@ -34,7 +34,7 @@ describe("readAnthropicQuotaUsage", () => {
     });
   });
 
-  it("uses the separate Fable 5 limit only for Fable requests", async () => {
+  it("uses the separate Fable 7-day limit only for Fable family requests", async () => {
     const usage = {
       data: {
         five_hour: { utilization: 10, resets_at: null },
@@ -45,6 +45,12 @@ describe("readAnthropicQuotaUsage", () => {
     fetchUsageWithMetaMock.mockResolvedValue(usage);
 
     await expect(readAnthropicQuotaUsage("access-token", "claude-fable-5")).resolves.toMatchObject({
+      kind: "ok",
+      utilizationPct: 100,
+    });
+    await expect(
+      readAnthropicQuotaUsage("access-token", "claude-fable-5-1"),
+    ).resolves.toMatchObject({
       kind: "ok",
       utilizationPct: 100,
     });

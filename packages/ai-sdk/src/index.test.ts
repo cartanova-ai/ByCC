@@ -158,7 +158,7 @@ describe("qgrid AI SDK provider", () => {
           timeoutMs: 360_000,
           logger: false,
           tokenName: "openai/yds",
-          fallbackModels: ["openai/gpt-5.4-mini"],
+          fallbackModels: ["openai/gpt-5.6-luna"],
         },
       },
     } as never);

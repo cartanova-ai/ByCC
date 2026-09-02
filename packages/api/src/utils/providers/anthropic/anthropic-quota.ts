@@ -2,6 +2,7 @@ import {
   fetchUsageWithMeta,
   invalidateAnthropicQuotaUsage,
 } from "../../../application/qgrid/oauth";
+import { isFableFamilyModel } from "./anthropic-constants";
 
 export { invalidateAnthropicQuotaUsage };
 
@@ -18,7 +19,8 @@ export async function readAnthropicQuotaUsage(
     if (data.error) return { kind: "lookup_failed", reason: data.error };
 
     const utilizations = [data.five_hour?.utilization];
-    if (model === "claude-fable-5") {
+    // Fable 계열(5, 5.1)은 5시간 창과 별개로 usage credits 기반 7일 버킷도 소진될 수 있다.
+    if (isFableFamilyModel(model)) {
       utilizations.push(data.seven_day_overage_included?.utilization);
     }
     const utilization = Math.max(

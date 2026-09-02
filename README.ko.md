@@ -33,7 +33,7 @@ Qgrid는 두 구독 기반 런타임 위에 AI SDK `LanguageModelV3` custom prov
 - **Tool Calling + Agent Loop** — 구독 토큰으로 tool-call, multi-step agent loop 가능. 단순 텍스트 프록시가 아님.
 - **AI SDK 호환** — 기존 코드에서 `model` 한 줄만 교체. `generateText`, `streamText`, structured output, tool-call 전부 동작.
   ```ts
-  model: qgrid("openai/gpt-5.4-mini")  // 이것만 바꾸면 됨
+  model: qgrid("openai/gpt-5.6-luna")  // 이것만 바꾸면 됨
   ```
 - **N개 구독 풀링** — 팀원 구독 계정을 모아서 병렬 처리. smooth weighted routing으로 요청을 토큰에 분산. 토큰별 quota threshold로 사용률 초과 토큰은 라우팅에서 자동 제외.
 - **Request Log 대시보드** — 매 요청의 토큰 사용량, 비용, 캐시 적중, TTFT, tool-call 내역, reasoning을 웹 UI에서 실시간 확인.
@@ -82,8 +82,8 @@ pnpm add @cartanova/qgrid-ai-sdk
 +import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
  const { text } = await generateText({
--  model: openai("gpt-5.4-mini"),
-+  model: qgrid("openai/gpt-5.4-mini"),
+-  model: openai("gpt-5.6-luna"),
++  model: qgrid("openai/gpt-5.6-luna"),
    prompt: "서울 날씨 알려줘",
  });
 ```
@@ -127,7 +127,7 @@ pnpm add @cartanova/qgrid-ai-sdk
 
 ```typescript
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   system: "당신은 학술 논문 요약가입니다.",
   prompt: paperText,
 });
@@ -137,7 +137,7 @@ const { text } = await generateText({
 
 ```typescript
 const { output } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: paperText,
   output: Output.object({
     schema: z.object({
@@ -153,7 +153,7 @@ const { output } = await generateText({
 
 ```typescript
 const { textStream } = streamText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "TypeScript의 장점을 설명해줘",
 });
 
@@ -166,7 +166,7 @@ for await (const chunk of textStream) {
 
 ```typescript
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "서울 날씨 알려줘",
   tools: {
     getWeather: tool({
@@ -184,7 +184,7 @@ const { text } = await generateText({
 ```typescript
 // 전체 history를 재전송하고 불투명 prompt-cache affinity 유지 (OpenAI)
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: nextTurn,
   providerOptions: { qgrid: { sessionKey: "chat-room-42" } },
 });
@@ -195,7 +195,7 @@ const { text } = await generateText({
 ```typescript
 // OpenAI 경로 + generateText 전용 — 해당 요청에만 codex image_generation tool 활성화
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "우주를 나는 고래 일러스트",
   providerOptions: { qgrid: { imageGeneration: true } },
 });
@@ -207,7 +207,7 @@ const image = result.files[0]; // mediaType: "image/png", base64
 
 ```typescript
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   messages: [
     {
       role: "user",
@@ -276,10 +276,12 @@ QGRID_PROJECT_NAME=my-service   # request log 프로젝트 라벨
 
 | Provider | 모델 |
 |---|---|
-| OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
-| Anthropic | `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
+| OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.3-codex-spark` |
+| Anthropic | `anthropic/claude-fable-5-1`, `anthropic/claude-fable-5`, `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
 
-> `claude-opus-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8`은 자동으로 1M 토큰 컨텍스트로 실행됩니다. Opus 5는 기본 adaptive thinking 동작을 유지하며, qgrid의 `effort` 옵션으로 추론 깊이를 조절합니다.
+> `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, `openai/gpt-5.3-codex`는 하위 호환을 위해 SDK 타입에는 남아 있지만, qgrid가 사용하는 ChatGPT 구독 Codex 경로에서는 더 이상 제공되지 않습니다. `gpt-5.4`와 `gpt-5.4-mini`는 2026-08-31에 retire되었으며 `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`로 대체하세요.
+
+> `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8`은 자동으로 1M 토큰 컨텍스트로 실행됩니다. Fable 5.1/5는 adaptive thinking이 항상 켜져 있고 Opus 5는 기본 adaptive thinking 동작을 유지하며, qgrid의 `effort` 옵션으로 추론 깊이를 조절합니다. Fable 5.1은 Fable 5와 같은 1M tokens당 $10/$50 단가지만 cache read는 $1 대신 $0.25로 과금됩니다.
 
 ---
 

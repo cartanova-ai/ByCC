@@ -5,6 +5,7 @@ import {
   assertSupportedOneMillionSuffix,
   canonicalAnthropicModel,
   hasOneMillionSuffix,
+  isFableFamilyModel,
   needsCli1mSuffix,
   supports1MContext,
   usesAdaptiveThinking,
@@ -18,6 +19,7 @@ describe("canonicalAnthropicModel", () => {
   it("provider prefix 를 제거한다", () => {
     expect(canonicalAnthropicModel("anthropic/claude-opus-4-8")).toBe("claude-opus-4-8");
     expect(canonicalAnthropicModel("anthropic/claude-fable-5")).toBe("claude-fable-5");
+    expect(canonicalAnthropicModel("anthropic/claude-fable-5-1")).toBe("claude-fable-5-1");
   });
 
   it("[1m] suffix 를 base canonical 에서 제거한다", () => {
@@ -28,6 +30,7 @@ describe("canonicalAnthropicModel", () => {
 
 describe("Anthropic 1M context policy", () => {
   it("지원 모델은 실측 확인된 exact set 만 true", () => {
+    expect(supports1MContext("claude-fable-5-1")).toBe(true);
     expect(supports1MContext("claude-fable-5")).toBe(true);
     expect(supports1MContext("claude-opus-5")).toBe(true);
     expect(supports1MContext("claude-sonnet-5")).toBe(true);
@@ -42,6 +45,7 @@ describe("Anthropic 1M context policy", () => {
   });
 
   it("CLI suffix 필요 모델과 기본 1M 모델을 분리한다", () => {
+    expect(needsCli1mSuffix("claude-fable-5-1")).toBe(false);
     expect(needsCli1mSuffix("claude-fable-5")).toBe(false);
     expect(needsCli1mSuffix("claude-opus-5")).toBe(false);
     expect(needsCli1mSuffix("claude-sonnet-5")).toBe(false);
@@ -65,15 +69,35 @@ describe("Anthropic 1M context policy", () => {
     );
     expect(() => assertSupportedOneMillionSuffix("anthropic/claude-sonnet-4-6[1m]")).not.toThrow();
   });
+
+  it("native 1M 모델의 [1m] suffix 는 허용하되 CLI 에는 suffix 없이 전달한다", () => {
+    expect(() => assertSupportedOneMillionSuffix("anthropic/claude-fable-5-1[1m]")).not.toThrow();
+    expect(supports1MContext("anthropic/claude-fable-5-1[1m]")).toBe(true);
+    expect(needsCli1mSuffix("anthropic/claude-fable-5-1[1m]")).toBe(false);
+  });
 });
 
 describe("Anthropic thinking policy", () => {
-  it("Fable 5 와 Opus 5 는 adaptive thinking 을 보존한다", () => {
+  it("Fable 5/5.1 과 Opus 5 는 adaptive thinking 을 보존한다", () => {
+    expect(usesAdaptiveThinking("claude-fable-5-1")).toBe(true);
+    expect(usesAdaptiveThinking("anthropic/claude-fable-5-1")).toBe(true);
     expect(usesAdaptiveThinking("claude-fable-5")).toBe(true);
     expect(usesAdaptiveThinking("anthropic/claude-fable-5")).toBe(true);
     expect(usesAdaptiveThinking("claude-opus-5")).toBe(true);
     expect(usesAdaptiveThinking("anthropic/claude-opus-5")).toBe(true);
     expect(usesAdaptiveThinking("claude-sonnet-5")).toBe(false);
     expect(usesAdaptiveThinking("claude-opus-4-8")).toBe(false);
+  });
+});
+
+describe("Anthropic Fable family", () => {
+  it("Fable 5/5.1 만 Fable 계열로 판정하고 prefix/[1m] 은 무시한다", () => {
+    expect(isFableFamilyModel("claude-fable-5-1")).toBe(true);
+    expect(isFableFamilyModel("claude-fable-5")).toBe(true);
+    expect(isFableFamilyModel("anthropic/claude-fable-5-1[1m]")).toBe(true);
+
+    expect(isFableFamilyModel("claude-opus-5")).toBe(false);
+    expect(isFableFamilyModel("claude-sonnet-4-6")).toBe(false);
+    expect(isFableFamilyModel(undefined)).toBe(false);
   });
 });

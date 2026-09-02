@@ -33,7 +33,7 @@ As a result:
 - **Tool Calling + Agent Loop** — Run tool calls and multi-step agent loops on a subscription token. Not just a plain text proxy.
 - **AI SDK compatible** — Swap a single `model` line in your existing code. `generateText`, `streamText`, structured output, and tool calls all work.
   ```ts
-  model: qgrid("openai/gpt-5.4-mini")  // just change this
+  model: qgrid("openai/gpt-5.6-luna")  // just change this
   ```
 - **Pool N subscriptions** — Combine teammates' subscription accounts for parallel processing. Smooth weighted routing distributes requests across tokens, while per-token quota thresholds exclude overloaded tokens.
 - **Request Log dashboard** — Inspect token usage, cost, cache hits, TTFT, tool-call traces, and reasoning for every request in real time through a web UI.
@@ -82,8 +82,8 @@ pnpm add @cartanova/qgrid-ai-sdk
 +import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
  const { text } = await generateText({
--  model: openai("gpt-5.4-mini"),
-+  model: qgrid("openai/gpt-5.4-mini"),
+-  model: openai("gpt-5.6-luna"),
++  model: qgrid("openai/gpt-5.6-luna"),
    prompt: "What's the weather in Seoul?",
  });
 ```
@@ -127,7 +127,7 @@ For detailed usage, see the [`@cartanova/qgrid-ai-sdk` README](./packages/ai-sdk
 
 ```typescript
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   system: "You are an academic paper summarizer.",
   prompt: paperText,
 });
@@ -137,7 +137,7 @@ const { text } = await generateText({
 
 ```typescript
 const { output } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: paperText,
   output: Output.object({
     schema: z.object({
@@ -153,7 +153,7 @@ const { output } = await generateText({
 
 ```typescript
 const { textStream } = streamText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "Explain the benefits of TypeScript",
 });
 
@@ -166,7 +166,7 @@ for await (const chunk of textStream) {
 
 ```typescript
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "What's the weather in Seoul?",
   tools: {
     getWeather: tool({
@@ -184,7 +184,7 @@ const { text } = await generateText({
 ```typescript
 // Replay full history with stable opaque prompt-cache affinity (OpenAI)
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: nextTurn,
   providerOptions: { qgrid: { sessionKey: "chat-room-42" } },
 });
@@ -195,7 +195,7 @@ const { text } = await generateText({
 ```typescript
 // OpenAI route, generateText only — enables Codex's image_generation tool for this request
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "An illustration of a whale flying through space",
   providerOptions: { qgrid: { imageGeneration: true } },
 });
@@ -207,7 +207,7 @@ Reference images are supported through AI SDK multimodal message parts:
 
 ```typescript
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   messages: [
     {
       role: "user",
@@ -277,10 +277,12 @@ In the dashboard you can filter the whole team's request logs by project — set
 
 | Provider | Models |
 |---|---|
-| OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.3-codex`, `openai/gpt-5.3-codex-spark`, `openai/gpt-5.2` |
-| Anthropic | `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
+| OpenAI | `openai/gpt-5.6-sol`, `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`, `openai/gpt-5.5`, `openai/gpt-5.3-codex-spark` |
+| Anthropic | `anthropic/claude-fable-5-1`, `anthropic/claude-fable-5`, `anthropic/claude-opus-5`, `anthropic/claude-sonnet-5`, `anthropic/claude-opus-4-8`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-opus-4-5`, `anthropic/claude-opus-4-1`, `anthropic/claude-opus-4`, `anthropic/claude-sonnet-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5`, `anthropic/claude-sonnet-4`, `anthropic/claude-haiku-4-5` |
 
-> `claude-opus-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-8` automatically run with a 1M-token context window. Opus 5 keeps its default adaptive thinking behavior; qgrid's `effort` option controls its reasoning depth.
+> `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, and `openai/gpt-5.3-codex` are still accepted by the SDK type for backward compatibility, but the ChatGPT-subscription Codex route that qgrid uses no longer serves them. `gpt-5.4` and `gpt-5.4-mini` retired on 2026-08-31; use `openai/gpt-5.6-terra` and `openai/gpt-5.6-luna` instead.
+
+> `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-8` automatically run with a 1M-token context window. Fable 5.1/5 always run with adaptive thinking and Opus 5 keeps its default adaptive thinking behavior; qgrid's `effort` option controls reasoning depth. Fable 5.1 shares Fable 5's $10/$50 per-1M-token pricing but bills cache reads at $0.25 instead of $1.
 
 ### GPT-5.6 specifications
 

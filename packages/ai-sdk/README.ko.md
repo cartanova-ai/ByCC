@@ -12,8 +12,8 @@ AI SDK v6 custom `LanguageModelV3` provider for [qgrid](https://github.com/carta
 +import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
  const { text } = await generateText({
--  model: openai("gpt-5.4-mini"),
-+  model: qgrid("openai/gpt-5.4-mini"),
+-  model: openai("gpt-5.6-luna"),
++  model: qgrid("openai/gpt-5.6-luna"),
    prompt: "서울 날씨 알려줘",
  });
 ```
@@ -43,7 +43,7 @@ import { generateText } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "서울 날씨 알려줘",
 });
 ```
@@ -62,7 +62,7 @@ import { generateText } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   system: "당신은 학술 논문 요약가입니다.",
   prompt: paperText,
 });
@@ -77,7 +77,7 @@ import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
 const { output } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   system: "논문 메타데이터를 추출해주세요.",
   prompt: paperText,
   output: Output.object({
@@ -104,7 +104,7 @@ import { streamText } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
 const { textStream } = streamText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "TypeScript의 장점을 설명해줘",
 });
 
@@ -121,7 +121,7 @@ import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "서울 날씨 알려줘",
   tools: {
     getWeather: tool({
@@ -149,7 +149,7 @@ import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
 const { output } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "서울 날씨를 조회해서 예보를 반환해줘.",
   tools: {
     getWeather: tool({
@@ -187,7 +187,7 @@ import { generateText } from "ai";
 import { qgrid, type QgridProviderOptions } from "@cartanova/qgrid-ai-sdk";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "복잡한 문제를 분석해줘",
   providerOptions: {
     qgrid: {
@@ -240,7 +240,7 @@ Anthropic `generateText` 요청에는 전역 설정을 바꾸지 않는 요청�
 
 ```typescript
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: nextTurnPrompt,
   providerOptions: { qgrid: { sessionKey: "game-session-123" } },
 });
@@ -255,7 +255,7 @@ OpenAI/codex 경로 전용, `generateText` 전용입니다. 해당 요청에만 
 
 ```typescript
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "우주를 나는 고래 일러스트",
   providerOptions: {
     qgrid: {
@@ -272,7 +272,7 @@ const image = result.files[0]; // mediaType: "image/png", base64
 
 ```typescript
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   messages: [
     {
       role: "user",
@@ -370,6 +370,7 @@ type QgridSupportedModel =
   | "openai/gpt-5.3-codex"
   | "openai/gpt-5.3-codex-spark"
   // Anthropic
+  | "anthropic/claude-fable-5-1"
   | "anthropic/claude-fable-5"
   | "anthropic/claude-haiku-4-5"
   | "anthropic/claude-sonnet-4"
@@ -386,6 +387,8 @@ type QgridSupportedModel =
   | "anthropic/claude-opus-5"
 ```
 
+`openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, `openai/gpt-5.3-codex`는 하위 호환을 위해 타입에 남아 있지만, qgrid가 사용하는 ChatGPT 구독 Codex 경로에서는 더 이상 제공되지 않습니다. `gpt-5.4`와 `gpt-5.4-mini`는 2026-08-31에 retire되었고(대체: `openai/gpt-5.6-terra`, `openai/gpt-5.6-luna`), `gpt-5.2`와 `gpt-5.3-codex`는 그보다 먼저 해당 경로에서 제거되었습니다. 이 id로 요청하면 백엔드에서 실패합니다.
+
 ### GPT-5.6 사양
 
 | 모델 | Context (qgrid OpenAI 경로) | 최대 출력 | 1M tokens당 input / cached input / output |
@@ -398,9 +401,11 @@ type QgridSupportedModel =
 
 `anthropic/claude-fable-5`는 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 표준 단가는 input $10, cache read $1, 5분 cache write $12.50, 1시간 cache write $20, output $50입니다. qgrid는 Claude 응답의 5분/1시간 cache creation breakdown을 보존해 TTL별 단가를 각각 적용하며, breakdown이 없는 구버전 응답에서만 Claude Code가 subscription OAuth 경로에 자동 적용하는 1시간 TTL 단가로 fallback합니다. Fable은 adaptive thinking이 항상 켜져 있어야 하므로 qgrid는 이 모델의 adaptive thinking을 보존합니다.
 
+`anthropic/claude-fable-5-1`(2026-09-01 출시)은 Fable 5와 같은 1M context, 128K 최대 출력, 항상 켜진 adaptive thinking, input $10 / output $50 단가를 공유합니다. cache read만 Fable 5의 $1 대신 1M tokens당 $0.25(input의 0.025x)로 과금되며, cache write는 $12.50(5분)/$20(1시간)으로 같습니다. Fable 5.1의 API 수준 파괴적 변경(forced `tool_choice` 거부, 모델에 귀속된 thinking 블록)은 qgrid에 영향을 주지 않습니다. qgrid는 도구를 끈 Claude Code를 fresh 프로세스로 실행하고 히스토리를 텍스트로 평탄화해 전달하기 때문입니다.
+
 `anthropic/claude-opus-5`는 기본 1M context와 128K 최대 출력을 지원합니다. 1M tokens당 단가는 input $5, cache read $0.50, 5분 cache write $6.25, 1시간 cache write $10, output $25입니다. qgrid는 Opus 5의 기본 adaptive thinking 동작을 유지하고 `effort`로 추론 깊이를 조절합니다. 따라서 `xhigh` 또는 `max` effort에서 허용되지 않는 `thinking: disabled` 조합도 만들지 않습니다.
 
-Claude Code는 Fable의 safety refusal을 Opus 4.8로 자동 재시도할 수 있습니다. 이 경우 AI SDK 응답의 `response.modelId`와 `providerMetadata.qgrid.model`은 실제 serving 모델인 Opus를 가리킵니다. `providerMetadata.qgrid.requestedModel`은 Fable로 유지되고, `providerMetadata.qgrid.modelFallbacks`에 refusal fallback 이력이 담깁니다. 같은 metadata에서 `costSource`와 5분/1시간 cache-write 토큰 분해도 확인할 수 있습니다.
+Claude Code는 Fable의 safety refusal을 다른 Opus 모델로 자동 재시도할 수 있습니다. 현재 CLI는 refusal 카테고리에 따라 Opus 5 또는 Opus 4.8을 고릅니다. 이 경우 AI SDK 응답의 `response.modelId`와 `providerMetadata.qgrid.model`은 실제 serving 모델인 Opus를 가리킵니다. `providerMetadata.qgrid.requestedModel`은 Fable로 유지되고, `providerMetadata.qgrid.modelFallbacks`에 refusal fallback 이력이 담깁니다. 같은 metadata에서 `costSource`와 5분/1시간 cache-write 토큰 분해도 확인할 수 있습니다.
 
 `openai/gpt-5.3-codex-spark`는 아직 token 단가가 확정·공개되지 않은 research preview입니다. 따라서 qgrid는 generic fallback 추정치를 보고하며, 이를 공식 단가로 취급하지 않습니다.
 

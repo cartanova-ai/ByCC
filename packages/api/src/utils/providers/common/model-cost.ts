@@ -79,6 +79,9 @@ const OPENAI_COSTS: Record<string, ModelCosts> = {
     cachedInputTokens: 0.5,
     longContext: LONG_CONTEXT_272K,
   },
+  // 아래 gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.2 는 qgrid 가 쓰는 ChatGPT 구독 Codex 경로에서
+  // 더 이상 제공되지 않는다(5.4 계열은 2026-08-31 retired, 대체 gpt-5.6-terra / gpt-5.6-luna).
+  // 과거 request log 재산정(cost_source 없는 legacy 행)에 필요하므로 단가 행은 유지한다.
   // https://openai.com/index/introducing-gpt-5-4/ (2026-03 출시)
   "gpt-5.4": {
     inputTokens: 2.5,
@@ -95,11 +98,16 @@ const OPENAI_COSTS: Record<string, ModelCosts> = {
 
 // ── Anthropic ───────────────────────────────────────────────────────
 
-function anthropicCosts(inputTokens: number, outputTokens: number): ModelCosts {
+function anthropicCosts(
+  inputTokens: number,
+  outputTokens: number,
+  overrides: Pick<Partial<ModelCosts>, "cachedInputTokens"> = {},
+): ModelCosts {
   return {
     inputTokens,
     outputTokens,
-    cachedInputTokens: inputTokens / 10,
+    // 표준 cache read 는 base input 의 0.1x. Fable 5.1 처럼 공식 특례 단가가 있으면 override 한다.
+    cachedInputTokens: overrides.cachedInputTokens ?? inputTokens / 10,
     // Claude Code subscription OAuth 는 1h TTL 을 자동 선택한다. 구버전처럼 응답에
     // TTL breakdown 이 없을 때만 이 1h 단가를 fallback 으로 사용한다.
     cacheCreationInputTokens: inputTokens * 2,
@@ -108,7 +116,11 @@ function anthropicCosts(inputTokens: number, outputTokens: number): ModelCosts {
   };
 }
 
+// 가격 출처: https://platform.claude.com/docs/en/about-claude/pricing (2026-09-02 확인)
 const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
+  // Fable 5.1 (2026-09-01 출시): input/output 은 Fable 5 와 같고 cache read 만 0.025x($0.25) 특례.
+  // @see https://platform.claude.com/docs/en/models/fable-5-1/overview
+  "claude-fable-5-1": anthropicCosts(10, 50, { cachedInputTokens: 0.25 }),
   "claude-fable-5": anthropicCosts(10, 50),
   sonnet: anthropicCosts(3, 15),
   "claude-3-5-haiku": anthropicCosts(0.8, 4),
@@ -126,26 +138,18 @@ const ANTHROPIC_COSTS: Record<string, ModelCosts> = {
   "claude-opus-4-7": anthropicCosts(5, 25),
   "claude-opus-4-8": anthropicCosts(5, 25),
   "claude-opus-5": anthropicCosts(5, 25),
+  // Sonnet 5 의 introductory $2/$10 이 정식 단가로 확정됐다. 2026-09-01 에 예정됐던 $3/$15 인상은
+  // 취소됐으므로 날짜 분기 없이 고정 단가로 계산한다.
+  "claude-sonnet-5": anthropicCosts(2, 10),
 };
-
-// Anthropic 공식 introductory pricing: 2026-08-31까지 $2/$10, 이후 $3/$15.
-// qgrid 는 요청 시점에 계산하므로 배포를 다시 하지 않아도 2026-09-01 UTC부터 표준 단가로 전환한다.
-const CLAUDE_SONNET_5_INTRO_PRICING_END_MS = Date.UTC(2026, 8, 1);
-const CLAUDE_SONNET_5_INTRO_COSTS = anthropicCosts(2, 10);
-const CLAUDE_SONNET_5_STANDARD_COSTS = anthropicCosts(3, 15);
 
 // gpt-5.3-codex-spark 는 research preview 로 공식 token 단가가 아직 final 이 아니다.
 // 지원 타입은 유지하되, 공식 단가가 공개될 때까지 아래 generic estimate 로 계산한다.
 // @see https://help.openai.com/en/articles/20001106-codex-rate-card
 const DEFAULT_COSTS: ModelCosts = { inputTokens: 3, outputTokens: 15, cachedInputTokens: 0.3 };
 
-export function getModelCosts(model: string, atMs = Date.now()): ModelCosts {
+export function getModelCosts(model: string): ModelCosts {
   const normalizedModel = (model.split("/").pop() ?? model).replace(/\[1m\]$/i, "");
-  if (normalizedModel === "claude-sonnet-5") {
-    return atMs < CLAUDE_SONNET_5_INTRO_PRICING_END_MS
-      ? CLAUDE_SONNET_5_INTRO_COSTS
-      : CLAUDE_SONNET_5_STANDARD_COSTS;
-  }
   return OPENAI_COSTS[normalizedModel] ?? ANTHROPIC_COSTS[normalizedModel] ?? DEFAULT_COSTS;
 }
 
@@ -159,9 +163,8 @@ export function calculateCostUsd(
     cacheCreationInputTokens5m?: number;
     cacheCreationInputTokens1h?: number;
   },
-  atMs = Date.now(),
 ): number {
-  const costs = getModelCosts(model, atMs);
+  const costs = getModelCosts(model);
   const cachedInput = usage.cachedInputTokens ?? 0;
   const cacheCreationInput5m = Math.max(usage.cacheCreationInputTokens5m ?? 0, 0);
   const cacheCreationInput1h = Math.max(usage.cacheCreationInputTokens1h ?? 0, 0);

@@ -12,8 +12,8 @@ AI SDK v6 custom `LanguageModelV3` provider for [qgrid](https://github.com/carta
 +import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
  const { text } = await generateText({
--  model: openai("gpt-5.4-mini"),
-+  model: qgrid("openai/gpt-5.4-mini"),
+-  model: openai("gpt-5.6-luna"),
++  model: qgrid("openai/gpt-5.6-luna"),
    prompt: "What's the weather in Seoul?",
  });
 ```
@@ -43,7 +43,7 @@ import { generateText } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "What's the weather in Seoul?",
 });
 ```
@@ -62,7 +62,7 @@ import { generateText } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   system: "You are an academic paper summarizer.",
   prompt: paperText,
 });
@@ -77,7 +77,7 @@ import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
 const { output } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   system: "Extract the paper metadata.",
   prompt: paperText,
   output: Output.object({
@@ -112,7 +112,7 @@ import { streamText } from "ai";
 import { qgrid } from "@cartanova/qgrid-ai-sdk";
 
 const { textStream } = streamText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "Explain the benefits of TypeScript",
 });
 
@@ -129,7 +129,7 @@ import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: "What's the weather in Seoul?",
   tools: {
     getWeather: tool({
@@ -157,7 +157,7 @@ import { qgrid } from "@cartanova/qgrid-ai-sdk";
 import { z } from "zod";
 
 const { output } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "Look up Seoul's weather and return a forecast.",
   tools: {
     getWeather: tool({
@@ -196,7 +196,7 @@ import { generateText } from "ai";
 import { qgrid, type QgridProviderOptions } from "@cartanova/qgrid-ai-sdk";
 
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "Analyze this complex problem",
   providerOptions: {
     qgrid: {
@@ -249,7 +249,7 @@ For multi-turn conversations, pass a caller-side domain ID (game session ID, cha
 
 ```typescript
 const { text } = await generateText({
-  model: qgrid("openai/gpt-5.4-mini"),
+  model: qgrid("openai/gpt-5.6-luna"),
   prompt: nextTurnPrompt,
   providerOptions: { qgrid: { sessionKey: "game-session-123" } },
 });
@@ -264,7 +264,7 @@ OpenAI/codex route only, `generateText` only. Enables codex's built-in `image_ge
 
 ```typescript
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   prompt: "An illustration of a whale flying through space",
   providerOptions: {
     qgrid: {
@@ -281,7 +281,7 @@ Reference images can be passed through normal AI SDK multimodal message parts:
 
 ```typescript
 const result = await generateText({
-  model: qgrid("openai/gpt-5.4"),
+  model: qgrid("openai/gpt-5.6-terra"),
   messages: [
     {
       role: "user",
@@ -380,6 +380,7 @@ type QgridSupportedModel =
   | "openai/gpt-5.3-codex"
   | "openai/gpt-5.3-codex-spark"
   // Anthropic
+  | "anthropic/claude-fable-5-1"
   | "anthropic/claude-fable-5"
   | "anthropic/claude-haiku-4-5"
   | "anthropic/claude-sonnet-4"
@@ -396,6 +397,8 @@ type QgridSupportedModel =
   | "anthropic/claude-opus-5"
 ```
 
+`openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, and `openai/gpt-5.3-codex` remain in the type for backward compatibility, but the ChatGPT-subscription Codex route that qgrid uses no longer serves them. `gpt-5.4` and `gpt-5.4-mini` retired on 2026-08-31 (replacements: `openai/gpt-5.6-terra` and `openai/gpt-5.6-luna`); `gpt-5.2` and `gpt-5.3-codex` were removed from that route earlier. Requests for these ids fail at the backend.
+
 ### GPT-5.6 specifications
 
 | Model | Context (qgrid OpenAI route) | Max output | Input / cached input / output per 1M tokens |
@@ -408,9 +411,11 @@ All GPT-5.6 models support reasoning through `max`. Qgrid retains the observed s
 
 `anthropic/claude-fable-5` has a 1M context window and 128K max output. Its standard prices per 1M tokens are $10 input, $1 cache read, $12.50 five-minute cache write, $20 one-hour cache write, and $50 output. qgrid preserves Claude's 5m/1h cache-creation breakdown and prices each TTL separately; only legacy responses without that breakdown fall back to the one-hour TTL automatically selected by Claude Code on subscription OAuth. Fable requires always-on adaptive thinking, so qgrid preserves adaptive thinking for this model.
 
+`anthropic/claude-fable-5-1` (released 2026-09-01) shares Fable 5's 1M context window, 128K max output, always-on adaptive thinking, and $10 input / $50 output pricing. Its cache reads cost $0.25 per 1M tokens (0.025x the input price) instead of Fable 5's $1; cache writes stay at $12.50 (5m) and $20 (1h). Fable 5.1's API-level breaking changes (forced `tool_choice` rejection, model-bound thinking blocks) do not affect qgrid, which runs Claude Code with tools disabled and replays history as flattened text in a fresh process.
+
 `anthropic/claude-opus-5` has a default 1M context window and 128K max output. Its prices per 1M tokens are $5 input, $0.50 cache read, $6.25 five-minute cache write, $10 one-hour cache write, and $25 output. qgrid keeps Opus 5's default adaptive thinking behavior and uses `effort` to control reasoning depth. This also avoids the invalid `thinking: disabled` combination at `xhigh` or `max` effort.
 
-Claude Code may automatically retry a Fable safety refusal on Opus 4.8. In that case, the AI SDK response's `response.modelId` and `providerMetadata.qgrid.model` identify Opus as the actual serving model. `providerMetadata.qgrid.requestedModel` remains Fable, and `providerMetadata.qgrid.modelFallbacks` contains the refusal fallback history. The metadata also exposes `costSource` and the 5m/1h cache-write token split.
+Claude Code may automatically retry a Fable safety refusal on another Opus model; the current CLI picks Opus 5 or Opus 4.8 by refusal category. In that case, the AI SDK response's `response.modelId` and `providerMetadata.qgrid.model` identify Opus as the actual serving model. `providerMetadata.qgrid.requestedModel` remains Fable, and `providerMetadata.qgrid.modelFallbacks` contains the refusal fallback history. The metadata also exposes `costSource` and the 5m/1h cache-write token split.
 
 `openai/gpt-5.3-codex-spark` remains a research preview without final published per-token rates. qgrid therefore reports its generic fallback estimate rather than presenting that estimate as official pricing.
 

@@ -45,6 +45,7 @@ export function hasOneMillionSuffix(model?: string): boolean {
 // 1M 지원 여부는 Claude Code 내부의 광범위한 prefix 판정이 아니라 qgrid에서 확인한 exact set 으로
 // 고정한다. opus-4-7 은 실측 전까지 미포함. 새 모델 추가 시 공식 사양과 실제 CLI 동작을 확인한다.
 const ONE_MILLION_CONTEXT_MODELS = new Set([
+  "claude-fable-5-1",
   "claude-fable-5",
   "claude-opus-5",
   "claude-sonnet-5",
@@ -54,10 +55,16 @@ const ONE_MILLION_CONTEXT_MODELS = new Set([
 ]);
 
 const CLI_ONE_MILLION_SUFFIX_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-6"]);
-// Fable 5 는 adaptive thinking 이 유일한 모드다. Opus 5 는 disabled 를 high 이하에서 지원하지만,
-// 공식 기본값·권장 동작인 adaptive thinking 을 유지한다. qgrid 기본 effort=low 가 비용/지연 제어를
-// 맡으며, 이 정책은 disabled+xhigh/max 400 오류와 disabled 시 tool/XML 출력 오염도 피한다.
-const ADAPTIVE_THINKING_MODELS = new Set(["claude-fable-5", "claude-opus-5"]);
+// Fable 5/5.1 은 adaptive thinking 이 유일한 모드다(CLI 카탈로그 `rejects_disabled_thinking`). Opus 5 는
+// disabled 를 high 이하에서 지원하지만, 공식 기본값·권장 동작인 adaptive thinking 을 유지한다. qgrid
+// 기본 effort=low 가 비용/지연 제어를 맡으며, 이 정책은 disabled+xhigh/max 400 오류와 disabled 시
+// tool/XML 출력 오염도 피한다.
+const ADAPTIVE_THINKING_MODELS = new Set(["claude-fable-5-1", "claude-fable-5", "claude-opus-5"]);
+
+// Fable 계열: 구독 플랜에서 usage credits 가 필요한 최상위 티어. 구독 usage API 의
+// `seven_day_overage_included` 버킷은 이 계열에만 적용되므로 quota threshold 판정이 참조한다.
+// Mythos 는 Project Glasswing 조직 전용이라 구독 토큰 경로에서 도달할 수 없어 포함하지 않는다.
+const FABLE_FAMILY_MODELS = new Set(["claude-fable-5-1", "claude-fable-5"]);
 
 // 불변 계약: suffix 가 필요한 모델은 반드시 1M 지원 모델의 부분집합이어야 한다. 역방향 불일치(suffix
 // 대상인데 지원 집합엔 없음)면 needsCli1mSuffix=true·supports1MContext=false 가 동시에 나서
@@ -66,6 +73,13 @@ const ADAPTIVE_THINKING_MODELS = new Set(["claude-fable-5", "claude-opus-5"]);
 for (const model of CLI_ONE_MILLION_SUFFIX_MODELS) {
   if (!ONE_MILLION_CONTEXT_MODELS.has(model)) {
     throw new Error(`[invariant] CLI 1M suffix model not in context set: ${model}`);
+  }
+}
+// Fable 계열은 공식 사양상 1M 기본 컨텍스트 + adaptive thinking 필수다. 새 Fable 버전을 계열 Set
+// 에만 넣고 나머지를 빠뜨리는 실수를 같은 방식으로 모듈 로드 시점에 잡는다.
+for (const model of FABLE_FAMILY_MODELS) {
+  if (!ONE_MILLION_CONTEXT_MODELS.has(model) || !ADAPTIVE_THINKING_MODELS.has(model)) {
+    throw new Error(`[invariant] Fable family model missing from 1M/adaptive set: ${model}`);
   }
 }
 
@@ -81,6 +95,11 @@ export function needsCli1mSuffix(model?: string): boolean {
 // 저비용/비추론 경로를 유지한다.
 export function usesAdaptiveThinking(model?: string): boolean {
   return ADAPTIVE_THINKING_MODELS.has(canonicalAnthropicModel(model));
+}
+
+// 구독 usage 의 Fable 전용 7일 버킷을 quota 판정에 포함할지 결정한다.
+export function isFableFamilyModel(model?: string): boolean {
+  return FABLE_FAMILY_MODELS.has(canonicalAnthropicModel(model));
 }
 
 export function assertSupportedOneMillionSuffix(model?: string): void {

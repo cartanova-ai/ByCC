@@ -45,7 +45,8 @@ Anthropic tokens live in an in-memory `Map<tokenId, PooledToken>`.
 Quota threshold:
 
 - `quota_threshold` checks `five_hour.utilization` for every model and also checks
-  `seven_day_overage_included.utilization` for Fable 5, using the higher utilization.
+  `seven_day_overage_included.utilization` for the Fable family (Fable 5 and 5.1,
+  `isFableFamilyModel` in `anthropic-constants.ts`), using the higher utilization.
 - A runtime quota-exhausted result invalidates every 60-second usage-cache key used before and
   after a possible OAuth refresh, so the next untargeted request rechecks usage and can select
   another token.
@@ -76,7 +77,7 @@ claude -p
   --model <canonical-model-or-1m-suffix>
   --system-prompt <text>                  # small system prompt
   --system-prompt-file <path>             # large system prompt
-  --thinking disabled                       # omitted for Fable 5 and Opus 5
+  --thinking disabled                       # omitted for Fable 5/5.1 and Opus 5
   --effort <effort-or-low>
   --disable-slash-commands
   --session-id <uuid>
@@ -96,7 +97,7 @@ Important details:
 - Large system prompts over 64 KiB are written to a temporary file to avoid argv `E2BIG` — this
   same branch absorbs large injected schema contracts, so the old 64 KiB schema argv limit no
   longer applies (only the global 512 KiB caller-schema complexity limit remains).
-- `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 requires always-on adaptive thinking. Opus 5 defaults to adaptive thinking and rejects disabled thinking at `xhigh`/`max` effort. qgrid omits all three suppressors for both models and uses `effort` to control depth.
+- `--thinking disabled`, `MAX_THINKING_TOKENS=0`, and adaptive thinking env suppression keep thinking off for existing models. Fable 5 and Fable 5.1 require always-on adaptive thinking (CLI catalog `rejects_disabled_thinking`). Opus 5 defaults to adaptive thinking and rejects disabled thinking at `xhigh`/`max` effort. qgrid omits all three suppressors for these models (`usesAdaptiveThinking`) and uses `effort` to control depth.
 
 ## Spawn env
 
@@ -109,13 +110,13 @@ Included env:
 - `CLAUDE_CODE_OAUTH_TOKEN`
 - `CLAUDE_CONFIG_DIR`
 - `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
-- `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` except for Fable 5 and Opus 5
+- `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` except for Fable 5/5.1 and Opus 5
 - `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`
 - `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`
 - `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
 - `CLAUDE_CODE_DISABLE_WORKFLOWS=1`
 - `CLAUDE_CODE_ATTRIBUTION_HEADER=0`
-- `MAX_THINKING_TOKENS=0` except for Fable 5 and Opus 5
+- `MAX_THINKING_TOKENS=0` except for Fable 5/5.1 and Opus 5
 - `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` when model does not support qgrid's 1M path
 - `MAX_STRUCTURED_OUTPUT_RETRIES` for streaming structured output only (not non-streaming `generate`)
 
@@ -184,11 +185,13 @@ cacheCreationInputTokens1h = cache_creation.ephemeral_1h_input_tokens
 
 ## Fable refusal fallback
 
-Fable 5 runs upstream safety classifiers. A refusal is a successful HTTP response with
+Fable 5 and Fable 5.1 run upstream safety classifiers. A refusal is a successful HTTP response with
 `stop_reason: "refusal"`, not an HTTP/provider error, and can happen before output or after
-partial streamed output. Claude Code handles the refusal fallback and can retry on Opus 4.8.
-This is distinct from the CLI `--fallback-model` flag, which is for overload on the default
-model. qgrid does not configure either mechanism or add another retry.
+partial streamed output. Claude Code handles the refusal fallback and can retry on another Opus
+model; the current CLI routes by refusal category (bio → Opus 5, cyber → Opus 4.8). Do not
+hardcode the fallback target in qgrid: read it from the stream evidence below. This is distinct
+from the CLI `--fallback-model` flag, which is for overload on the default model. qgrid does not
+configure either mechanism or add another retry.
 
 The stream adapter must preserve all observable routing evidence:
 
@@ -251,6 +254,7 @@ Model normalization strips provider prefix and `[1m]` for canonical model/cost k
 
 qgrid's exact 1M support set currently includes:
 
+- `claude-fable-5-1`
 - `claude-fable-5`
 - `claude-opus-5`
 - `claude-sonnet-5`

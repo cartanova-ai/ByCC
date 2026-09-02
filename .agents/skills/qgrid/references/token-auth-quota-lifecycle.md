@@ -115,8 +115,8 @@ Usage/quota:
 
 - Usage API is `https://api.anthropic.com/api/oauth/usage`.
 - qgrid caches Anthropic usage by access-token suffix for 60 seconds.
-- Quota threshold uses `five_hour.utilization`; Fable 5 additionally uses the model-specific
-  `seven_day_overage_included.utilization`, and either window can exclude the token.
+- Quota threshold uses `five_hour.utilization`; Fable family models (Fable 5 and 5.1) additionally
+  use the usage-credit `seven_day_overage_included.utilization`, and either window can exclude the token.
 - Usage lookup failure is fail-open for routing.
 
 ## OpenAI OAuth And Refresh Flow

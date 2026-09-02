@@ -213,10 +213,10 @@ For tools plus structured output, qgrid serializes the final schema-constrained
 
 When `imageGeneration` was requested and the server returns no image part, the AI SDK provider throws a version-skew/error guard instead of silently accepting text-only output.
 
-For a successful Fable 5 refusal fallback:
+For a successful Fable refusal fallback (Fable 5 or 5.1):
 
-- `response.modelId` and `providerMetadata.qgrid.model` are the actual serving model, normally `claude-opus-4-8`.
-- `providerMetadata.qgrid.requestedModel` remains `claude-fable-5`.
+- `response.modelId` and `providerMetadata.qgrid.model` are the actual serving model, an Opus model such as `claude-opus-5` or `claude-opus-4-8`.
+- `providerMetadata.qgrid.requestedModel` remains the requested Fable model, for example `claude-fable-5-1`.
 - `providerMetadata.qgrid.modelFallbacks` preserves the refusal route and optional category/explanation.
 - `providerMetadata.qgrid.costSource` reports whether cost came from Claude Code or qgrid's pricing table. Prefer the provider-reported combined cost for this path.
 

@@ -24,16 +24,46 @@ import {
 } from "./chat-token-selection";
 
 const CHAT_PROJECT_NAME = "qgrid_chat";
-const DEFAULT_MODEL = "openai/gpt-5.6-terra";
+const DEFAULT_MODEL = "anthropic/claude-fable-5-1";
 
 // dispatcher 는 provider prefix 없는 모델을 라우팅하지 못하므로 항상 접두사를 포함한다.
-const MODEL_PRESETS = [
-  "openai/gpt-5.6-terra",
-  "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-luna",
-  "openai/gpt-5.5",
-  "anthropic/claude-fable-5",
-  "anthropic/claude-sonnet-4-6",
+// ai-sdk 의 QgridSupportedModel union 중 실제로 서비스되는 모델만 provider 별로 최신순 나열한다.
+// web 은 ai-sdk 에 의존하지 않아 런타임 공유가 없으므로, 모델을 추가할 때 두 곳을 함께 갱신한다.
+// union 에는 남아 있지만 여기서 제외한 항목:
+//  - `gpt-5.4`, `gpt-5.4-mini`: qgrid 가 쓰는 ChatGPT 구독 Codex 경로에서 2026-08-31 retired
+//    (대체 gpt-5.6-terra / gpt-5.6-luna).
+//  - `gpt-5.2`, `gpt-5.3-codex`: 같은 경로에서 이미 제공 종료.
+//  - `claude-sonnet-4-7`: 공식 카탈로그에 없는 유령 항목.
+const MODEL_PRESET_GROUPS: { label: string; models: string[] }[] = [
+  {
+    label: "OpenAI",
+    models: [
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.5",
+      "openai/gpt-5.3-codex-spark",
+    ],
+  },
+  {
+    label: "Anthropic",
+    models: [
+      "anthropic/claude-fable-5-1",
+      "anthropic/claude-fable-5",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-4-8",
+      "anthropic/claude-opus-4-7",
+      "anthropic/claude-opus-4-6",
+      "anthropic/claude-opus-4-5",
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-sonnet-4-5",
+      "anthropic/claude-haiku-4-5",
+      "anthropic/claude-opus-4-1",
+      "anthropic/claude-opus-4",
+      "anthropic/claude-sonnet-4",
+    ],
+  },
 ];
 const EFFORT_PRESETS = ["low", "medium", "high"];
 
@@ -401,10 +431,14 @@ export function ChatWidget() {
                   disabled={busy}
                   className="min-w-0 flex-1 rounded-xl border border-sand-200/80 bg-white px-2 py-1.5 text-[12px] text-sand-800 focus:outline-none focus:border-sienna-300 disabled:opacity-50"
                 >
-                  {MODEL_PRESETS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
+                  {MODEL_PRESET_GROUPS.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.models.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <select

@@ -134,7 +134,9 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(oneMillionEnv(false)).toEqual({ CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" });
   });
 
-  it("thinkingEnv: Fable 5/Opus 5 는 adaptive thinking 을 보존하고 나머지는 비활성화", () => {
+  it("thinkingEnv: Fable 5/5.1/Opus 5 는 adaptive thinking 을 보존하고 나머지는 비활성화", () => {
+    expect(thinkingEnv("claude-fable-5-1")).toEqual({});
+    expect(thinkingEnv("anthropic/claude-fable-5-1")).toEqual({});
     expect(thinkingEnv("claude-fable-5")).toEqual({});
     expect(thinkingEnv("anthropic/claude-fable-5")).toEqual({});
     expect(thinkingEnv("claude-opus-5")).toEqual({});
@@ -262,15 +264,17 @@ describe("buildClaudeArgs (멀티턴/격리/structured)", () => {
     expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-5");
   });
 
-  it("Fable 5 는 항상 켜진 adaptive thinking 을 끄지 않고 effort 만 전달한다", () => {
-    const args = buildClaudeArgs({
-      model: "claude-fable-5",
-      sessionId: "u",
-      effort: "low",
-    });
-    expect(args[args.indexOf("--model") + 1]).toBe("claude-fable-5");
-    expect(args).not.toContain("--thinking");
-    expect(args[args.indexOf("--effort") + 1]).toBe("low");
+  it("Fable 5/5.1 은 항상 켜진 adaptive thinking 을 끄지 않고 effort 만 전달한다", () => {
+    for (const model of ["claude-fable-5", "claude-fable-5-1"]) {
+      const args = buildClaudeArgs({
+        model,
+        sessionId: "u",
+        effort: "low",
+      });
+      expect(args[args.indexOf("--model") + 1]).toBe(model);
+      expect(args).not.toContain("--thinking");
+      expect(args[args.indexOf("--effort") + 1]).toBe("low");
+    }
   });
 
   it("Opus 5 는 adaptive thinking 을 보존해 xhigh/max effort 조합도 거부되지 않게 한다", () => {
