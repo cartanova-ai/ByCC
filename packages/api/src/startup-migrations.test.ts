@@ -4,19 +4,24 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { latest } = vi.hoisted(() => ({ latest: vi.fn() }));
-
-vi.mock("./application/token/token.model", () => ({
-  TokenModel: {
-    getDB: () => ({ migrate: { latest } }),
-  },
-}));
-
 import {
   createStartupMigrationSource,
   resolveStartupMigrationDirs,
   runRequiredMigrations,
+  type StartupMigrationDeps,
 } from "./startup-migrations";
+
+// 실제 TokenModel/process.exit 대신 주입한다. 전체 스위트에서 모듈 목이 새면 진짜 exit(1) 이
+// vitest worker 를 죽여 이 파일의 나머지 테스트가 조용히 pending 으로 빠지기 때문이다.
+function makeDeps() {
+  const latest = vi.fn();
+  const exitError = new Error("process.exit called");
+  const exit = vi.fn((code: number) => {
+    throw Object.assign(exitError, { code });
+  }) as unknown as StartupMigrationDeps["exit"];
+  const deps: StartupMigrationDeps = { getKnex: () => ({ migrate: { latest } }) as never, exit };
+  return { latest, exit, exitError, deps };
+}
 
 const tempRoots: string[] = [];
 
@@ -114,24 +119,23 @@ describe("createStartupMigrationSource", () => {
 describe("required startup migrations", () => {
   it("knex 기본 directory 대신 migrationSource 로 latest 를 실행한다", async () => {
     const dirs = await makeDirs();
+    const { latest, exit, deps } = makeDeps();
     latest.mockResolvedValueOnce([3, ["20260901163614_alter_tokens_add1_alter1.ts"]]);
 
-    await runRequiredMigrations(dirs);
+    await runRequiredMigrations(dirs, deps);
 
     expect(latest).toHaveBeenCalledWith({ migrationSource: expect.any(Object) });
     const call = latest.mock.calls.at(-1)?.[0] as { migrationSource: unknown; directory?: string };
     expect(call.directory).toBeUndefined();
+    expect(exit).not.toHaveBeenCalled();
   });
 
   it("terminates with a failure status when migration fails", async () => {
     const dirs = await makeDirs();
-    const failure = new Error("tokens.weight migration failed");
-    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
-      throw failure;
-    });
-    latest.mockRejectedValueOnce(failure);
+    const { latest, exit, exitError, deps } = makeDeps();
+    latest.mockRejectedValueOnce(new Error("tokens.weight migration failed"));
 
-    await expect(runRequiredMigrations(dirs)).rejects.toBe(failure);
+    await expect(runRequiredMigrations(dirs, deps)).rejects.toBe(exitError);
 
     expect(exit).toHaveBeenCalledWith(1);
   });

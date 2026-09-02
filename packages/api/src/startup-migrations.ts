@@ -68,12 +68,20 @@ export function createStartupMigrationSource(
   };
 }
 
+export type StartupMigrationDeps = {
+  getKnex: () => Pick<Knex, "migrate">;
+  exit: (code: number) => never;
+};
+
+// 테스트는 deps 를 주입한다. 모듈 목으로 TokenModel 을 바꾸는 방식은 전체 스위트에서 목이 새면
+// 실제 process.exit(1) 이 worker 를 죽여 남은 테스트가 조용히 pending 으로 빠진다.
 export async function runRequiredMigrations(
   dirs: StartupMigrationDirs = resolveStartupMigrationDirs(),
+  deps: StartupMigrationDeps = { getKnex: () => TokenModel.getDB("w"), exit: process.exit },
 ): Promise<void> {
   const log = getLogger(["qgrid", "startup"]);
   try {
-    const knex = TokenModel.getDB("w");
+    const knex = deps.getKnex();
     const [batch, migrations] = await knex.migrate.latest({
       migrationSource: createStartupMigrationSource(dirs),
     });
@@ -82,6 +90,6 @@ export async function runRequiredMigrations(
     }
   } catch (error) {
     log.error(`migration failed: ${(error as Error).message}`);
-    process.exit(1);
+    deps.exit(1);
   }
 }
