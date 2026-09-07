@@ -2,15 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TokenSubscriber } from "./token-subscriber";
 
-const { findOneMock, findActiveMock } = vi.hoisted(() => ({
+const { findOneMock, findActiveMock, deactivateExpiredTokensMock } = vi.hoisted(() => ({
   findOneMock: vi.fn(),
   findActiveMock: vi.fn(),
+  deactivateExpiredTokensMock: vi.fn(),
 }));
 
 vi.mock("../token/token.model", () => ({
   TokenModel: {
     findOne: findOneMock,
     findActive: findActiveMock,
+    deactivateExpiredTokens: deactivateExpiredTokensMock,
   },
 }));
 
@@ -263,6 +265,8 @@ describe("TokenSubscriber OpenAI notifications", () => {
     ]);
 
     await subscriber.reconcile();
+
+    expect(deactivateExpiredTokensMock).toHaveBeenCalled();
 
     expect(anthropicDispatcher.replaceTokens).toHaveBeenCalledWith([
       expect.objectContaining({ id: 1, quotaThreshold: 80, weight: 4 }),

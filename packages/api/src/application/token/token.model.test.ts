@@ -213,7 +213,25 @@ describe("TokenModel.markReauthRequired", () => {
     await Sonamu.initForTesting();
   });
 
-  it("serializes provider deaths, preserves one active token, and rejects stale credentials", async () => {
+  it("repairs legacy active expired tokens without changing healthy or manually inactive tokens", async () => {
+    const ids = await TokenModel.save([
+      { ...baseToken, name: "legacy-expired", active: true, reauth_required: true },
+      { ...baseToken, name: "healthy", active: true, reauth_required: false },
+      { ...baseToken, name: "manual-inactive", active: false, reauth_required: false },
+    ]);
+    try {
+      await TokenModel.deactivateExpiredTokens();
+      await TokenModel.deactivateExpiredTokens();
+      const { rows } = await TokenModel.findMany("A", { id: ids, num: 3 });
+      expect(rows.find((row) => row.id === ids[0])).toMatchObject({ active: false, reauth_required: true });
+      expect(rows.find((row) => row.id === ids[1])).toMatchObject({ active: true, reauth_required: false });
+      expect(rows.find((row) => row.id === ids[2])).toMatchObject({ active: false, reauth_required: false });
+    } finally {
+      await TokenModel.del(ids);
+    }
+  });
+
+  it("deactivates every expired token and rejects stale credentials", async () => {
     const suffix = randomUUID();
     const tokens = [
       {
@@ -237,7 +255,7 @@ describe("TokenModel.markReauthRequired", () => {
         }),
       ).resolves.toEqual({
         marked: false,
-        keptAsLastActive: false,
+        wasLastActive: false,
         staleCredentials: true,
       });
 
@@ -246,16 +264,17 @@ describe("TokenModel.markReauthRequired", () => {
         TokenModel.markReauthRequired(ids[1]!, tokens[1]!.credentials),
       ]);
       expect(results.every((result) => result.marked)).toBe(true);
+      expect(results.filter((result) => result.wasLastActive)).toHaveLength(1);
 
       const { rows } = await TokenModel.findMany("A", { id: ids, num: 2 });
       expect(rows.every((row) => row.reauth_required)).toBe(true);
-      expect(rows.filter((row) => row.active)).toHaveLength(1);
+      expect(rows.filter((row) => row.active)).toHaveLength(0);
 
       await expect(
         TokenModel.markReauthRequired(ids[0]!, tokens[0]!.credentials),
       ).resolves.toEqual({
         marked: false,
-        keptAsLastActive: false,
+        wasLastActive: false,
         staleCredentials: false,
       });
 
@@ -278,7 +297,7 @@ describe("TokenModel.markReauthRequired", () => {
         TokenModel.markReauthRequired(inactive.id, inactive.credentials),
       ).resolves.toEqual({
         marked: false,
-        keptAsLastActive: false,
+        wasLastActive: false,
         staleCredentials: true,
       });
 

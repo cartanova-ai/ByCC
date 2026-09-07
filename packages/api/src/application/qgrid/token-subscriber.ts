@@ -271,6 +271,7 @@ export class TokenSubscriber {
             .map((row) => row.id),
         )
       : null;
+    await TokenModel.deactivateExpiredTokens();
     const rows = await TokenModel.findActive("A");
     this.dispatcher.replaceCache(rows);
     // NOTIFY 유실 대비: AnthropicDispatcher 풀도 DB active anthropic 토큰 기준으로 재동기화.

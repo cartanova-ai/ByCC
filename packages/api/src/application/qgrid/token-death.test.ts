@@ -39,7 +39,7 @@ describe("deactivateAuthDeadToken", () => {
   it("deactivates and notifies when the failed attempt used the current refresh token", async () => {
     deactivateMock.mockResolvedValue({
       marked: true,
-      keptAsLastActive: false,
+      wasLastActive: false,
       staleCredentials: false,
     });
 
@@ -60,7 +60,7 @@ describe("deactivateAuthDeadToken", () => {
   it("skips deactivation when credentials rotated since the failed attempt", async () => {
     deactivateMock.mockResolvedValue({
       marked: false,
-      keptAsLastActive: false,
+      wasLastActive: false,
       staleCredentials: true,
     });
 
@@ -73,7 +73,7 @@ describe("deactivateAuthDeadToken", () => {
   it("does not notify when another process won the deactivation race", async () => {
     deactivateMock.mockResolvedValue({
       marked: false,
-      keptAsLastActive: false,
+      wasLastActive: false,
       staleCredentials: false,
     });
 
@@ -82,18 +82,19 @@ describe("deactivateAuthDeadToken", () => {
     expect(notifySlackMock).not.toHaveBeenCalled();
   });
 
-  it("alerts instead of deactivating when the dying token is the last active one", async () => {
+  it("deactivates the last active token and sends an urgent expiry alert", async () => {
     deactivateMock.mockResolvedValue({
       marked: true,
-      keptAsLastActive: true,
+      wasLastActive: true,
       staleCredentials: false,
     });
 
-    await expect(deactivateAuthDeadToken(token, "anthropic:400")).resolves.toBe(false);
+    await expect(deactivateAuthDeadToken(token, "anthropic:400")).resolves.toBe(true);
 
     expect(notifySlackMock).toHaveBeenCalledTimes(1);
     const notification = notifySlackMock.mock.calls[0]![0] as { title: string; context: string };
-    expect(notification.title).toContain("마지막");
+    expect(notification.title).toBe("세션 만료");
+    expect(notifySlackMock.mock.calls[0]![0]).toMatchObject({ urgent: true });
     expect(notification.context).toContain("anthropic:400");
   });
 
@@ -101,12 +102,12 @@ describe("deactivateAuthDeadToken", () => {
     deactivateMock
       .mockResolvedValueOnce({
         marked: true,
-        keptAsLastActive: true,
+        wasLastActive: true,
         staleCredentials: false,
       })
       .mockResolvedValue({
         marked: false,
-        keptAsLastActive: false,
+        wasLastActive: false,
         staleCredentials: false,
       });
 
@@ -120,7 +121,7 @@ describe("deactivateAuthDeadToken", () => {
   it("never puts the raw provider error body in the notification", async () => {
     deactivateMock.mockResolvedValue({
       marked: true,
-      keptAsLastActive: false,
+      wasLastActive: false,
       staleCredentials: false,
     });
 

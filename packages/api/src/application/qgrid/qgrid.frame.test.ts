@@ -1336,6 +1336,26 @@ describe("QgridFrame.usage", () => {
     getRateLimitsByTokenIdMock.mockReset();
   });
 
+  it("does not fetch usage for confirmed expired tokens", async () => {
+    findManyMock.mockResolvedValueOnce({
+      rows: [{ ...tokenEntry, provider: "openai", active: false, reauth_required: true }],
+    });
+    await expect(QgridFrame.usage(1)).resolves.toEqual({ error: "re-login required" });
+    expect(getRateLimitsByTokenIdMock).not.toHaveBeenCalled();
+  });
+
+  it("does not label transient refresh failures as expired sessions", async () => {
+    findManyMock.mockResolvedValueOnce({
+      rows: [{ ...tokenEntry, provider: "anthropic", credentials: {
+        accessToken: "access", refreshToken: "refresh", expiresAt: 0, accountUuid: "account",
+      } }],
+    });
+    vi.spyOn(QgridFrame, "refreshToken").mockRejectedValueOnce(new Error("network timeout"));
+    await expect(QgridFrame.usage(1)).resolves.toEqual({
+      error: "Token refresh failed; usage is unavailable",
+    });
+  });
+
   it("returns empty usage for inactive OpenAI tokens without asking for workers", async () => {
     findManyMock.mockResolvedValueOnce({
       rows: [

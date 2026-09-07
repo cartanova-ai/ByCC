@@ -716,6 +716,7 @@ class QgridFrameClass extends BaseFrameClass {
       : allTokens.findLast((e) => e.active && e.provider === "anthropic");
 
     if (!entry) return { error: "NOT_FOUND" };
+    if (entry.reauth_required) return { error: "re-login required" };
 
     if (entry.provider === "openai") {
       if (!entry.active) {
@@ -759,7 +760,7 @@ class QgridFrameClass extends BaseFrameClass {
         accessToken = await this.refreshToken(entry);
       } catch (e) {
         oauthLogger.warn(`refresh failed for ${entry.name}: ${(e as Error).message}`);
-        return { error: "re-login required" };
+        return { error: "Token refresh failed; usage is unavailable" };
       }
     }
 
@@ -772,7 +773,7 @@ class QgridFrameClass extends BaseFrameClass {
         return convertAnthropicUsage(retried);
       } catch (e) {
         oauthLogger.warn(`refresh failed for ${entry.name}: ${(e as Error).message}`);
-        return { error: "re-login required" };
+        return { error: "Token refresh failed; usage is unavailable" };
       }
     }
     if (raw.error) return { error: raw.error };

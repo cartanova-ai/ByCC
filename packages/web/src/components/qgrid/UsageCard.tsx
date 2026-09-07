@@ -162,7 +162,21 @@ function UsageRow({
 }
 
 function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
-  const { data, isLoading } = QgridService.useUsage(token.id);
+  const queryClient = useQueryClient();
+  const { data, isLoading, dataUpdatedAt } = QgridService.useUsage(token.id);
+  // A usage refresh can confirm expiry after the parent loaded its token list.
+  // Re-read persisted state once per failed lookup, without interpreting error text.
+  useEffect(() => {
+    if (data?.error) void queryClient.invalidateQueries({ queryKey: ["Token"] });
+  }, [data?.error, dataUpdatedAt, queryClient]);
+  if (token.reauth_required) {
+    return (
+      <div className="py-1">
+        <p className="text-[11px] text-amber-600">Session expired</p>
+        <p className="text-[10px] text-sand-400 mt-0.5">Please re-login via OAuth</p>
+      </div>
+    );
+  }
   if (isLoading) {
     return (
       <div className="animate-pulse space-y-2 py-2">
@@ -173,18 +187,10 @@ function TokenUsage({ token, theme }: { token: Token; theme: ProviderTheme }) {
   }
 
   if (data?.error) {
-    const isExpired =
-      data.error.includes("re-login") ||
-      data.error.includes("token_revoked") ||
-      data.error.includes("401");
     return (
       <div className="py-1">
-        <p className="text-[11px] text-amber-600">
-          {isExpired ? "Session expired" : "Unavailable"}
-        </p>
-        <p className="text-[10px] text-sand-400 mt-0.5">
-          {isExpired ? "Please re-login via OAuth" : data.error}
-        </p>
+        <p className="text-[11px] text-amber-600">Unavailable</p>
+        <p className="text-[10px] text-sand-400 mt-0.5">{data.error}</p>
       </div>
     );
   }

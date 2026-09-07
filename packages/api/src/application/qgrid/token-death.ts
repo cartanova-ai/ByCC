@@ -24,7 +24,7 @@ export async function deactivateAuthDeadToken(
   token: DeadTokenRef,
   reasonCode: string,
 ): Promise<boolean> {
-  const { marked, keptAsLastActive, staleCredentials } = await TokenModel.markReauthRequired(
+  const { marked, wasLastActive, staleCredentials } = await TokenModel.markReauthRequired(
     token.id,
     token.credentials,
   );
@@ -35,10 +35,6 @@ export async function deactivateAuthDeadToken(
     return false;
   }
   if (!marked) return false;
-  if (keptAsLastActive) {
-    notifyLastActiveTokenDying(token, reasonCode);
-    return false;
-  }
 
   logger.warn(`token requires re-login: ${token.name}(id=${token.id}) reason=${reasonCode}`);
   // 만료 직후가 재로그인하기 가장 좋은 타이밍이다. 소유자를 멘션해 그 순간 당사자에게
@@ -47,27 +43,19 @@ export async function deactivateAuthDeadToken(
   void notifySlack({
     title: "세션 만료",
     subject: token.name,
-    context: [mention, token.provider, reasonCode, "재로그인이 필요합니다"]
+    context: [
+      mention,
+      token.provider,
+      reasonCode,
+      "재로그인이 필요합니다",
+      wasLastActive ? "사용 가능한 토큰이 없습니다" : null,
+    ]
       .filter(Boolean)
       .join(" · "),
     color: SLACK_COLOR.bad,
+    urgent: wasLastActive,
   });
   return true;
-}
-
-function notifyLastActiveTokenDying(token: DeadTokenRef, reasonCode: string): void {
-  const mention = mentionFor(token.name, getSlackUserMap());
-  void notifySlack({
-    title: "마지막 토큰 사망",
-    subject: token.name,
-    context:
-      [mention, token.provider, reasonCode].filter(Boolean).join(" · ") +
-      ` · 풀이 비지 않도록 유지 중입니다. ` +
-      `전 토큰이 동시에 실패했다면 client_id 취소나 OAuth 계약 변경을 의심하세요`,
-    color: SLACK_COLOR.bad,
-    // provider 전체가 죽었다는 신호다. 조용 시간에 묻히면 다음 근무일까지 서비스가 멈춘다.
-    urgent: true,
-  });
 }
 
 /** 로그인이 완료돼 토큰이 저장됐을 때. 신규·재로그인을 가리지 않는다. */

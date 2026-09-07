@@ -267,14 +267,13 @@ class TokenModelClass extends BaseModelClass<
   }
 
   /**
-   * 인증 사망을 한 번만 기록하고, 다른 활성 토큰이 있으면 라우팅에서도 제외한다.
-   * 마지막 활성 토큰은 systemic 장애 안전판 때문에 active 상태를 유지하되 재로그인
-   * 필요 상태는 기록한다. `marked`가 공유 DB 인스턴스들의 알림 발송 게이트다.
+   * Record confirmed expiry and remove the token from routing atomically.
+   * The last active token is also deactivated; its notification is urgent.
    */
   async markReauthRequired(
     id: number,
     expectedCredentials: TokenCredentials,
-  ): Promise<{ marked: boolean; keptAsLastActive: boolean; staleCredentials: boolean }> {
+  ): Promise<{ marked: boolean; wasLastActive: boolean; staleCredentials: boolean }> {
     const wdb = this.getPuri("w");
     return wdb.transaction(async (trx) => {
       const token = await trx
@@ -288,40 +287,48 @@ class TokenModelClass extends BaseModelClass<
         .forUpdate()
         .first();
       if (!token || token.reauth_required) {
-        return { marked: false, keptAsLastActive: false, staleCredentials: false };
+        return { marked: false, wasLastActive: false, staleCredentials: false };
       }
       if (!isDeepStrictEqual(token.credentials, expectedCredentials)) {
-        return { marked: false, keptAsLastActive: false, staleCredentials: true };
+        return { marked: false, wasLastActive: false, staleCredentials: true };
       }
 
       await trx.knex.raw("SELECT pg_advisory_xact_lock(?, hashtext(?))", [
         TOKEN_AUTH_DEATH_LOCK_CLASS_ID,
         token.provider,
       ]);
-      const updated = await trx.knex.raw<{ rows: { active: boolean }[] }>(
-        `UPDATE tokens
+      const updated = await trx.knex.raw<{ rows: { was_last_active: boolean }[] }>(
+        `WITH previous AS (
+           SELECT active AND NOT EXISTS (
+             SELECT 1 FROM tokens peer
+             WHERE peer.provider = tokens.provider AND peer.active
+               AND NOT peer.reauth_required AND peer.id <> tokens.id
+           ) AS was_last_active FROM tokens WHERE id = ?
+         )
+         UPDATE tokens
          SET reauth_required = true,
-             active = CASE
-               WHEN active AND (SELECT count(*) FROM tokens peer
-                 WHERE peer.provider = tokens.provider AND peer.active) > 1
-               THEN false
-               ELSE active
-             END
+             active = false
          WHERE id = ? AND reauth_required = false
-         RETURNING active`,
-        [id],
+         RETURNING (SELECT was_last_active FROM previous) AS was_last_active`,
+        [id, id],
       );
       const marked = updated.rows[0];
-      if (!marked) return { marked: false, keptAsLastActive: false, staleCredentials: false };
+      if (!marked) return { marked: false, wasLastActive: false, staleCredentials: false };
 
-      if (marked.active) {
-        logger.error(
-          `refusing to auto-deactivate token ${id}: last active provider token — ` +
-            `systemic refresh failure suspected, keeping the pool non-empty`,
-        );
+      if (marked.was_last_active) {
+        logger.error(`deactivated expired token ${id}: no usable provider tokens remain`);
       }
-      return { marked: true, keptAsLastActive: marked.active, staleCredentials: false };
+      return { marked: true, wasLastActive: marked.was_last_active, staleCredentials: false };
     });
+  }
+
+  /** Repair rows retained by the former last-active exception before pool reconciliation. */
+  async deactivateExpiredTokens(): Promise<void> {
+    await this.getPuri("w")
+      .table("tokens")
+      .where("reauth_required", true)
+      .where("active", true)
+      .update({ active: false });
   }
 
   @api({ httpMethod: "POST", clients: ["axios", "tanstack-mutation"] })
