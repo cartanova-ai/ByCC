@@ -19,6 +19,7 @@ Before changing code, identify the affected path:
 - Public AI SDK provider: read `references/ai-sdk-provider-contract.md`.
 - CLI startup, env vars, server boot, OAuth callback URL: read `references/cli-env-and-server-boot.md`.
 - OpenAI direct transport, permits, routing, cache affinity, OAuth, or quota behavior: read `references/openai-codex-runtime.md`.
+- Adding an OpenAI model, its pricing, or reasoning levels: follow the model-addition checklist in `references/openai-codex-runtime.md`.
 - Anthropic models or Claude Code spawn/stream-json behavior: read `references/anthropic-claude-code-runtime.md`.
 - Token registration, OAuth, token sync, active/inactive behavior, quota thresholds, or weighted token routing: read `references/token-auth-quota-lifecycle.md`.
 - Provider comparisons, routing, or cross-provider bugs: read `references/provider-runtime-differences.md`.

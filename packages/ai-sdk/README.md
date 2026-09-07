@@ -213,7 +213,7 @@ const { text } = await generateText({
 | `tokenName` | provider-prefixed token name | both providers | Strictly targets one active token, such as `anthropic/yds`. The prefix must match the model provider; empty, missing, inactive, or over-threshold targets fail without fallback |
 | `logger` | `boolean` | both providers | qgrid request logging. Defaults to `true`; `false` disables request-log persistence for this generation without disabling client tools or multi-step continuation |
 | `sessionKey` | `string` | OpenAI only | Multi-turn conversation identifier used to derive opaque prompt-cache affinity while replaying full history (see [below](#multi-turn-prompt-cache-sessionkey)) |
-| `effort` | OpenAI: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| `"ultra"` | OpenAI only (`QgridOpenAIProviderOptions`) | Reasoning depth on the ChatGPT-subscription Codex route. `"max"`/`"ultra"` exist on GPT-5.6 models only; a value the model does not support is silently ignored by the server and the backend default applies. The public OpenAI API's `"none"`/`"minimal"` do not exist on this route |
+| `effort` | OpenAI: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| `"ultra"` | OpenAI only (`QgridOpenAIProviderOptions`) | Reasoning depth on the ChatGPT-subscription Codex route. GPT-6 Astra and GPT-5.6 Sol/Terra support effort through `"ultra"`; GPT-5.6 Luna supports it through `"max"`; a value the model does not support is silently ignored by the server and the backend default applies. The public OpenAI API's `"none"`/`"minimal"` do not exist on this route |
 | `effort` | Anthropic: `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | Anthropic only (`QgridAnthropicProviderOptions`) | Claude Code `--effort` levels. Values outside this set are silently ignored and qgrid's default (`"low"`) applies; per-model limits (for example no `"xhigh"` on Sonnet 4.6) are handled by Claude Code |
 | `verbosity` | `"low"` \| `"medium"` \| `"high"` | OpenAI only | Response text verbosity |
 | `reasoningSummary` | `"auto"` \| `"concise"` \| `"detailed"` \| `"none"` | OpenAI only | Reasoning summary output mode |
@@ -371,6 +371,7 @@ The `qgrid()` provider has its own lifecycle, so the logger automatically suppre
 ```typescript
 type QgridSupportedModel =
   // OpenAI (direct private Codex Responses backend)
+  | "openai/gpt-6-astra"
   | "openai/gpt-5.6-sol"
   | "openai/gpt-5.6-terra"
   | "openai/gpt-5.6-luna"
@@ -400,15 +401,25 @@ type QgridSupportedModel =
 
 `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.2`, and `openai/gpt-5.3-codex` remain in the type for backward compatibility, but the ChatGPT-subscription Codex route that qgrid uses no longer serves them. `gpt-5.4` and `gpt-5.4-mini` retired on 2026-08-31 (replacements: `openai/gpt-5.6-terra` and `openai/gpt-5.6-luna`); `gpt-5.2` and `gpt-5.3-codex` were removed from that route earlier. Requests for these ids fail at the backend.
 
+### GPT-6 Astra specifications
+
+| Model | Context (Codex catalog) | Max output (public API) | Input / cached input / output per 1M tokens |
+|---|---:|---:|---:|
+| `openai/gpt-6-astra` | 272K | 128K | $10 / $1 / $50 |
+
+The Codex catalog fetched on 2026-09-07 advertises a 272K context window and `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` reasoning effort (backend default: `medium`). Qgrid's SDK still defaults to `low`; select an effort explicitly to override it. The [public API model page](https://developers.openai.com/api/docs/models/gpt-6-astra) separately lists a 1.05M context window, 922K maximum input, 128K maximum output, and reasoning effort through `max` (no `ultra`). Those public limits do not establish the subscription route's limits. [Standard API pricing](https://developers.openai.com/api/docs/pricing) is used for qgrid's cost estimate: cache writes cost $12.50 per 1M tokens, and input over 272K tokens applies 2x input/cache and 1.5x output rates to the full request.
+
 ### GPT-5.6 specifications
 
-| Model | Context (qgrid OpenAI route) | Max output | Input / cached input / output per 1M tokens |
+| Model | Context (Codex catalog) | Max output (public API) | Input / cached input / cache write / output per 1M tokens |
 |---|---:|---:|---:|
-| `openai/gpt-5.6-sol` | 372K | 128K | $5 / $0.50 / $30 |
-| `openai/gpt-5.6-terra` | 372K | 128K | $2.50 / $0.25 / $15 |
-| `openai/gpt-5.6-luna` | 372K | 128K | $1 / $0.10 / $6 |
+| `openai/gpt-5.6-sol` | 272K | 128K | $4 / $0.40 / $5 / $20 |
+| `openai/gpt-5.6-terra` | 272K | 128K | $2 / $0.20 / $2.50 / $12 |
+| `openai/gpt-5.6-luna` | 272K | 128K | $0.20 / $0.02 / $0.25 / $1.20 |
 
-All GPT-5.6 models support reasoning through `max`. Qgrid retains the observed subscription-route limits used by its model configuration: a 372K context window (95% effective — about 353K of usable input) and 128K maximum output. This is narrower than the 1.05M context listed for the public OpenAI API and is not attributed to a local runtime. Prompts over 272K input tokens apply a 2x input and 1.5x output surcharge to the full request; cache writes cost 1.25x the uncached input rate.
+The Codex catalog fetched on 2026-09-07 advertises a 272K context window for all three models. Sol and Terra support reasoning effort through `ultra`; Luna supports it through `max`. Backend defaults are `low` for Sol and `medium` for Terra and Luna, while qgrid's SDK defaults to `low` for all three. The public API model pages for [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol), [Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra), and [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) separately list 1.05M context, 922K maximum input, and 128K maximum output; these do not establish the subscription route's limits.
+
+Qgrid uses [Standard API pricing](https://developers.openai.com/api/docs/pricing) for cost estimates. Sol's listed promotional pricing is available at least through 2026-11-21; no later rate is assumed. Input over 272K tokens applies 2x input/cache and 1.5x output rates to the full request. Cache writes cost 1.25x the uncached input rate.
 
 `anthropic/claude-fable-5` has a 1M context window and 128K max output. Its standard prices per 1M tokens are $10 input, $1 cache read, $12.50 five-minute cache write, $20 one-hour cache write, and $50 output. qgrid preserves Claude's 5m/1h cache-creation breakdown and prices each TTL separately; only legacy responses without that breakdown fall back to the one-hour TTL automatically selected by Claude Code on subscription OAuth. Fable requires always-on adaptive thinking, so qgrid preserves adaptive thinking for this model.
 

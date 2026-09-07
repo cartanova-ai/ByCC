@@ -1,7 +1,8 @@
 /**
  * OpenAI 경로(ChatGPT 구독 Codex 백엔드)의 reasoning effort. 백엔드 모델 카탈로그의
  * supported_reasoning_levels 합집합이며, 공개 OpenAI API 의 `none`/`minimal` 은 이 경로에 없다.
- * `max`/`ultra` 는 GPT-5.6 계열만 받고, 모델이 지원하지 않는 값은 서버가 조용히 무시한다.
+ * GPT-6 Astra와 GPT-5.6 Sol/Terra는 `ultra`, Luna는 `max`까지 지원한다.
+ * 모델이 지원하지 않는 값은 서버가 조용히 무시한다.
  */
 export type QgridOpenAIEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 /**
@@ -117,6 +118,7 @@ export type QgridInputPart =
   | { type: "image"; url: string };
 
 export type QgridSupportedModel =
+  | "openai/gpt-6-astra"
   | "openai/gpt-5.6-sol"
   | "openai/gpt-5.6-terra"
   | "openai/gpt-5.6-luna"

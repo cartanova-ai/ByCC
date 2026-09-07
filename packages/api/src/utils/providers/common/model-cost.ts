@@ -34,7 +34,7 @@ export interface ModelCosts {
 
 // ── OpenAI ─────────────────────────────────────────────────────────
 //
-// 가격 출처: https://developers.openai.com/api/docs/models (2026-07-18 확인)
+// Standard pricing verified 2026-09-07: https://developers.openai.com/api/docs/pricing
 // 신모델 출시마다 단가가 바뀌므로(5.2→5.4→5.5) 모델 추가 시 반드시 공식 페이지 재확인해야함
 
 // GPT-5.4에서 처음 도입된 long-context 할증 (5.2/5.3-codex는 해당 없음, 5.4-mini/nano는 공식 표에서 long-context 단가 없음)
@@ -48,38 +48,52 @@ const LONG_CONTEXT_272K: NonNullable<ModelCosts["longContext"]> = {
 };
 
 // OpenAI 모델 카탈로그. 단가와 함께 Codex 백엔드가 모델별로 받는 최대 reasoning effort 를 한 곳에 둔다.
-// maxEffort 출처: ~/.codex/models_cache.json 의 supported_reasoning_levels (2026-09-02 확인).
+// maxEffort 출처: ~/.codex/models_cache.json 의 supported_reasoning_levels (2026-09-07 확인).
 // 미기재 모델은 xhigh 까지만 받는다.
 type OpenAIModelSpec = ModelCosts & { maxEffort?: OpenAIEffort };
 
 const OPENAI_COSTS: Record<string, OpenAIModelSpec> = {
+  // GPT-6 Astra: Standard API-equivalent pricing, verified 2026-09-07.
+  // Codex subscription catalog supports ultra; the public API lists only through max.
+  // @see https://developers.openai.com/api/docs/models/gpt-6-astra
+  // @see https://developers.openai.com/api/docs/pricing
+  "gpt-6-astra": {
+    maxEffort: "ultra",
+    inputTokens: 10,
+    outputTokens: 50,
+    cachedInputTokens: 1,
+    cacheCreationInputTokens: 12.5,
+    longContext: LONG_CONTEXT_272K,
+  },
   // GPT-5.6 Sol, Terra, Luna. cache write 단가는 외부 logger/manual usage 입력을 위해
   // 유지한다. 현재 OpenAI 응답 usage 에 cache write 토큰 필드가 없으면 비용은 0으로 계산된다.
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-sol
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-terra
   // @see https://developers.openai.com/api/docs/models/gpt-5.6-luna
+  // Sol promotional rates are available at least through 2026-11-21.
+  // No confirmed end date/replacement rate: recheck official pricing instead of auto-reverting.
   "gpt-5.6-sol": {
     maxEffort: "ultra",
-    inputTokens: 5,
-    outputTokens: 30,
-    cachedInputTokens: 0.5,
-    cacheCreationInputTokens: 6.25,
+    inputTokens: 4,
+    outputTokens: 20,
+    cachedInputTokens: 0.4,
+    cacheCreationInputTokens: 5,
     longContext: LONG_CONTEXT_272K,
   },
   "gpt-5.6-terra": {
     maxEffort: "ultra",
-    inputTokens: 2.5,
-    outputTokens: 15,
-    cachedInputTokens: 0.25,
-    cacheCreationInputTokens: 3.125,
+    inputTokens: 2,
+    outputTokens: 12,
+    cachedInputTokens: 0.2,
+    cacheCreationInputTokens: 2.5,
     longContext: LONG_CONTEXT_272K,
   },
   "gpt-5.6-luna": {
     maxEffort: "max",
-    inputTokens: 1,
-    outputTokens: 6,
-    cachedInputTokens: 0.1,
-    cacheCreationInputTokens: 1.25,
+    inputTokens: 0.2,
+    outputTokens: 1.2,
+    cachedInputTokens: 0.02,
+    cacheCreationInputTokens: 0.25,
     longContext: LONG_CONTEXT_272K,
   },
   // https://openai.com/index/introducing-gpt-5-5/ (2026-04 출시)

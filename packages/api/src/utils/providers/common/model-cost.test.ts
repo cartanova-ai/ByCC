@@ -4,9 +4,18 @@ import { calculateCostUsd, getModelCosts } from "./model-cost";
 
 describe("calculateCostUsd", () => {
   it.each([
-    ["gpt-5.6-sol", 5, 30, 0.5, 6.25],
-    ["gpt-5.6-terra", 2.5, 15, 0.25, 3.125],
-    ["gpt-5.6-luna", 1, 6, 0.1, 1.25],
+    [272_000, 2.77],
+    [272_001, 5.51502],
+  ])("Astra applies the long-context rate only above 272K (%i input)", (inputTokens, expected) => {
+    expect(
+      calculateCostUsd("openai/gpt-6-astra", { inputTokens, outputTokens: 1_000 }),
+    ).toBeCloseTo(expected, 10);
+  });
+  it.each([
+    ["gpt-6-astra", 10, 50, 1, 12.5],
+    ["gpt-5.6-sol", 4, 20, 0.4, 5],
+    ["gpt-5.6-terra", 2, 12, 0.2, 2.5],
+    ["gpt-5.6-luna", 0.2, 1.2, 0.02, 0.25],
     ["gpt-5.5", 5, 30, 0.5, undefined],
     ["gpt-5.4", 2.5, 15, 0.25, undefined],
     ["gpt-5.4-mini", 0.75, 4.5, 0.075, undefined],
@@ -77,13 +86,15 @@ describe("calculateCostUsd", () => {
     expect(getModelCosts("anthropic/claude-sonnet-4-6[1m]")).toBe(
       getModelCosts("claude-sonnet-4-6"),
     );
+    expect(getModelCosts("openai/gpt-6-astra")).toBe(getModelCosts("gpt-6-astra"));
     expect(getModelCosts("openai/gpt-5.6-sol")).toBe(getModelCosts("gpt-5.6-sol"));
   });
 
   it.each([
-    ["gpt-5.6-sol", 5, 30, 0.5, 6.25, 3.30625],
-    ["gpt-5.6-terra", 2.5, 15, 0.25, 3.125, 1.653125],
-    ["gpt-5.6-luna", 1, 6, 0.1, 1.25, 0.66125],
+    ["gpt-6-astra", 10, 50, 1, 12.5, 5.6125],
+    ["gpt-5.6-sol", 4, 20, 0.4, 5, 2.245],
+    ["gpt-5.6-terra", 2, 12, 0.2, 2.5, 1.3225],
+    ["gpt-5.6-luna", 0.2, 1.2, 0.02, 0.25, 0.13225],
   ])(
     "%s applies published input, output, cache-read, and cache-write pricing",
     (model, inputTokens, outputTokens, cachedInputTokens, cacheCreationInputTokens, expectedCost) => {
@@ -106,9 +117,10 @@ describe("calculateCostUsd", () => {
   );
 
   it.each([
-    ["gpt-5.6-sol", 1.245],
-    ["gpt-5.6-terra", 0.6225],
-    ["gpt-5.6-luna", 0.249],
+    ["gpt-6-astra", 2.475],
+    ["gpt-5.6-sol", 0.99],
+    ["gpt-5.6-terra", 0.498],
+    ["gpt-5.6-luna", 0.0498],
   ])("%s applies the published long-context surcharge", (model, expectedCost) => {
     expect(
       calculateCostUsd(model, {
@@ -120,9 +132,10 @@ describe("calculateCostUsd", () => {
   });
 
   it.each([
-    ["gpt-5.6-sol", 1.37],
-    ["gpt-5.6-terra", 0.685],
-    ["gpt-5.6-luna", 0.274],
+    ["gpt-6-astra", 2.725],
+    ["gpt-5.6-sol", 1.09],
+    ["gpt-5.6-terra", 0.548],
+    ["gpt-5.6-luna", 0.0548],
   ])("%s applies the long-context input multiplier to cache writes", (model, expectedCost) => {
     expect(
       calculateCostUsd(model, {

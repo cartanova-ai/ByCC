@@ -12,6 +12,77 @@ Use this reference before changing OpenAI transport, concurrency, routing, promp
 - Direct quota lookup: `openai-quota.ts`.
 - Provider integration and history: `packages/api/src/application/qgrid/qgrid.dispatcher.ts`, `conv-routing.ts`.
 
+## Adding an OpenAI model
+
+Use this checklist whenever a model is added. A public API release does not by itself prove
+availability or identical limits on qgrid's ChatGPT-subscription route.
+
+1. Fetch the official model page and pricing table. Record the exact ID, Standard input/output,
+   cache-read and cache-write prices, long-context threshold and multipliers, modalities,
+   structured-output support, and reasoning restrictions. Do not infer pricing from a related model.
+2. Inspect the current Codex model catalog (`~/.codex/models_cache.json`) for the exact slug,
+   `supported_reasoning_levels`, and `context_window`. Separate public API specifications from
+   subscription catalog values. Catalog availability is not a successful generation test.
+3. Add pricing and the subscription `maxEffort` to `OPENAI_COSTS` in
+   `packages/api/src/utils/providers/common/model-cost.ts`. Preserve existing historical model
+   rows. The shared calculator also prices request logs; no separate dashboard price table is needed.
+4. Add `openai/<slug>` to `QgridSupportedModel` in `packages/ai-sdk/src/index.types.ts` and
+   `MODEL_PRESET_GROUPS` in `packages/web/src/components/qgrid/ChatWidget.tsx`. The web package
+   does not import the SDK model union. Keep existing defaults unless a default change is requested.
+5. Verify model ID and effort propagation through SDK generation/streaming, provider dispatch,
+   Responses construction, and returned model metadata. New models use the existing OpenAI
+   route; do not add a second transport or enable built-in tools automatically.
+6. Update the root and AI SDK README model lists, type snippets, capability/pricing tables,
+   and affected skill contracts. Sync the canonical skill to its checked mirror.
+7. Test prices, cache accounting, the long-context boundary, reasoning levels, and SDK request
+   propagation. Run relevant provider tests, API/web/SDK type checks, SDK build, and `mise run check`.
+   Report mocked tests separately from any live smoke test. Model registration does not authorize
+   a release, version bump, deployment, or remote migration.
+
+### GPT-6 Astra
+
+`openai/gpt-6-astra` uses the existing text generation, streaming and structured-output paths.
+The model supports image input, but qgrid keeps its existing SDK restriction: image parts are
+forwarded only for opt-in `imageGeneration` reference-image requests, not general vision chat.
+Standard API-equivalent prices per million tokens are input $10, cached input $1, cache write
+$12.50, and output $50. Above 272,000 input tokens, the full request uses 2x input/cache rates and
+1.5x output rates. These are qgrid's cost estimates, not subscription billing amounts or Fast-tier prices.
+
+Sources: [model specification](https://developers.openai.com/api/docs/models/gpt-6-astra) and
+[pricing](https://developers.openai.com/api/docs/pricing), checked 2026-09-07. The public model page
+lists a 1,050,000-token context window, 922,000 maximum input and 128,000 maximum output, with effort
+through `max`. The Codex subscription catalog checked on the same date lists `context_window=272000`
+and `low | medium | high | xhigh | max | ultra`; qgrid therefore permits `ultra` on this route.
+Do not present the public 1.05M context as a verified subscription-route limit.
+
+## Existing OpenAI model pricing and limits
+
+Checked 2026-09-07 against the official [Standard pricing table](https://developers.openai.com/api/docs/pricing)
+and the local Codex subscription catalog. Prices are USD per million tokens:
+
+| Model | Input | Cached input | Cache write | Output | Codex context | Maximum Codex effort |
+|---|---:|---:|---:|---:|---:|---|
+| GPT-5.6 Sol | 4 | 0.40 | 5 | 20 | 272K | ultra |
+| GPT-5.6 Terra | 2 | 0.20 | 2.50 | 12 | 272K | ultra |
+| GPT-5.6 Luna | 0.20 | 0.02 | 0.25 | 1.20 | 272K | max |
+| GPT-5.5 | 5 | 0.50 | Not published | 30 | 272K | xhigh |
+
+GPT-5.3-Codex-Spark has a 128K catalog context and effort through `xhigh`; its token pricing
+remains an explicitly documented generic estimate. Retired model pricing rows remain for legacy logs.
+The catalog does not establish a maximum output size. GPT-5.6 public API specifications list 1.05M
+context, 922K maximum input and 128K maximum output; do not conflate them with the subscription limits.
+Codex default effort is `low` for Sol, `medium` for Terra/Luna/GPT-5.5, and `high` for Spark.
+The SDK default remains `low` regardless of the backend default.
+
+[Sol's model page](https://developers.openai.com/api/docs/models/gpt-5.6-sol) guarantees promotional
+pricing at least through 2026-11-21. That is not an announced expiration date. Keep the latest verified
+rates until another official rate is published; never guess a future reversion. Above 272K input,
+GPT-5.6 and GPT-5.5 apply 2x input/cache and 1.5x output to the full request.
+
+Changing the price table affects new calculations and legacy estimates that resolve rates on read.
+It does not rewrite persisted request-log costs or backfill historical records. Report a historical
+recalculation as a separate data change; do not silently include it in a pricing update.
+
 ## Private backend boundary
 
 OpenAI requests go directly to `https://chatgpt.com/backend-api/codex/responses` with an HTTPS `POST`. The response is an SSE stream. Qgrid sends the subscription bearer token, ChatGPT account id, content negotiation fields, and Codex CLI `originator` and `User-Agent` identity headers.

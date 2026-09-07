@@ -12,7 +12,7 @@ Use this reference when comparing OpenAI and Anthropic behavior, debugging provi
 | Token selection | Smooth weighted RR over quota-eligible tokens; valid affinity may prefer its token | Smooth weighted RR over quota-eligible tokens per request |
 | Model routing | `openai/*`; qgrid strips provider prefix before provider call | `anthropic/*`; provider canonicalizes model and strips prefix/`[1m]` |
 | Prefix-less models | Fallback not implemented | Fallback not implemented |
-| Effort vocabulary | Codex catalog levels `low`..`ultra` (`max`/`ultra` GPT-5.6 only); public-API `none`/`minimal` absent | Claude Code `--effort` levels `low`..`max`; per-model caps handled by Claude Code |
+| Effort vocabulary | Codex catalog levels `low`..`ultra` (Astra/Sol/Terra through `ultra`, Luna through `max`); public-API `none`/`minimal` absent | Claude Code `--effort` levels `low`..`max`; per-model caps handled by Claude Code |
 | Unsupported effort | Server drops it silently before the request (`resolveOpenAIEffort`), backend default applies | Server drops it silently (`resolveAnthropicEffort`), qgrid default `low` applies |
 | Thread/session | No provider thread retained | Fresh Claude `--session-id` per request |
 | `sessionKey` | AI SDK derives and replays opaque `prompt_cache_key` affinity | AI SDK intentionally disables storage/replay |

@@ -79,6 +79,68 @@ function sseDone(data: unknown) {
 }
 
 describe("qgrid AI SDK provider", () => {
+  it.each(["generate", "stream"] as const)(
+    "forwards GPT-6 Astra and ultra effort through %s and preserves response model metadata",
+    async (mode) => {
+      let requestArgs: unknown;
+      const response = {
+        text: "astra reply",
+        content: [{ type: "text", text: "astra reply" }],
+        finishReason: "stop",
+        model: "gpt-6-astra",
+        usage,
+        durationMs: 50,
+        costUsd: 0.001,
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes("/queryStream")) {
+            return new Response(sseDone(response), { status: 200 });
+          }
+          requestArgs = JSON.parse(String(init?.body)).args;
+          return new Response(
+            JSON.stringify(url.includes("/prepareStream") ? { streamId: "astra" } : response),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }),
+      );
+
+      const model = qgrid("openai/gpt-6-astra");
+      const options = {
+        prompt: [{ role: "user" as const, content: [{ type: "text" as const, text: "hello" }] }],
+        providerOptions: { qgrid: { effort: "ultra" } satisfies QgridOpenAIProviderOptions },
+      };
+      if (mode === "generate") {
+        const result = await model.doGenerate(options);
+        expect(result.response?.modelId).toBe("gpt-6-astra");
+        expect(result.providerMetadata?.qgrid).toMatchObject({ model: "gpt-6-astra" });
+      } else {
+        const result = await model.doStream(options);
+        const parts = [];
+        for await (const part of result.stream) {
+          parts.push(part);
+        }
+        expect(parts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "response-metadata", modelId: "gpt-6-astra" }),
+            expect.objectContaining({
+              type: "finish",
+              providerMetadata: expect.objectContaining({
+                qgrid: expect.objectContaining({ model: "gpt-6-astra" }),
+              }),
+            }),
+          ]),
+        );
+      }
+      expect(requestArgs).toMatchObject({
+        model: "openai/gpt-6-astra",
+        effort: "ultra",
+        prompt: "hello",
+      });
+    },
+  );
+
   it("rejects an explicitly empty tokenName before generate or stream transport", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

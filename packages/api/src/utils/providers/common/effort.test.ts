@@ -8,6 +8,14 @@ import {
 } from "./effort";
 
 describe("resolveOpenAIEffort", () => {
+  it("preserves every Astra Codex catalog effort including ultra", () => {
+    for (const effort of OPENAI_EFFORTS) {
+      expect(resolveOpenAIEffort("gpt-6-astra", effort)).toBe(effort);
+    }
+    expect(resolveOpenAIEffort("gpt-6-astra", "none")).toBeUndefined();
+    expect(resolveOpenAIEffort("gpt-6-astra", "minimal")).toBeUndefined();
+  });
+
   it("Codex 카탈로그 어휘는 그대로 통과한다", () => {
     for (const effort of ["low", "medium", "high", "xhigh"]) {
       expect(resolveOpenAIEffort("gpt-5.5", effort)).toBe(effort);
